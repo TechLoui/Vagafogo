@@ -143,6 +143,54 @@ app.delete('/api/pacotes/:id', async (req, res) => {
   }
 });
 
+// GET /api/atividades
+app.get('/api/atividades', async (req, res) => {
+  try {
+    const snapshot = await db.collection('Atividades').get();
+    const atividades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(atividades);
+  } catch (error) {
+    console.error('Erro ao buscar atividades:', error);
+    res.json([]);
+  }
+});
+
+// GET /api/dias-fechados
+app.get('/api/dias-fechados', async (req, res) => {
+  try {
+    const snapshot = await db.collection('Dias_fechados').get();
+    const dias = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(dias);
+  } catch (error) {
+    console.error('Erro ao buscar dias fechados:', error);
+    res.json([]);
+  }
+});
+
+// GET /api/usuarios
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const snapshot = await db.collection('Usuario').get();
+    const usuarios = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(usuarios);
+  } catch (error) {
+    console.error('Erro ao buscar usuários:', error);
+    res.json([]);
+  }
+});
+
+// GET /api/clientes
+app.get('/api/clientes', async (req, res) => {
+  try {
+    const snapshot = await db.collection('clientes').get();
+    const clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(clientes);
+  } catch (error) {
+    console.error('Erro ao buscar clientes:', error);
+    res.json([]);
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
