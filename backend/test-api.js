@@ -14,7 +14,7 @@ try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   } else {
     // Fallback para arquivo local (desenvolvimento)
-    serviceAccount = require('./banco-vaga-fogo-firebase-adminsdk-fbsvc-8bef52c2d8.json');
+    serviceAccount = require('./banco-vaga-fogo-firebase-adminsdk-fbsvc-497b4ae1e7.json');
   }
 } catch (error) {
   console.error('Erro ao carregar credenciais Firebase:', error.message);
@@ -32,7 +32,7 @@ const db = admin.firestore();
 // GET /api/reservas
 app.get('/api/reservas', async (req, res) => {
   try {
-    console.log('Buscando reservas no Firebase...');
+    console.log('Buscando reservas no Firebase com novas credenciais...');
     const snapshot = await db.collection('reservas').get();
     console.log(`Encontradas ${snapshot.size} reservas`);
     
@@ -54,19 +54,21 @@ app.get('/api/reservas', async (req, res) => {
     res.json([
       {
         id: 'exemplo1',
-        nome: 'João Silva (Exemplo)',
+        nome: 'João Silva (Exemplo - Erro Firebase)',
         cpf: '123.456.789-00',
-        telefone: '(11) 99999-9999',
+        telefone: '(62) 91234-5678',
         adultos: 2,
         criancas: 1,
         naoPagante: 0,
         bariatrica: 0,
         data: '2025-08-27',
         horario: '09:00',
-        atividade: 'Trilha Ecológica',
+        atividade: 'Brunch Gastronômico',
         valor: 150,
         status: 'pago',
-        temPet: false
+        participantes: 4,
+        email: 'joao@email.com',
+        observacao: 'Vegetariano'
       }
     ]);
   }

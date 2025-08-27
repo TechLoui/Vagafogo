@@ -7,7 +7,6 @@ import { api } from '../sevices/api';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
-import { FirebaseTest } from './FirebaseTest';
 import { ConnectionStatus } from './ConnectionStatus';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
@@ -408,8 +407,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Teste Firebase */}
-      <FirebaseTest />
+      {/* Teste Firebase removido - usando API */}
 
       {/* Abas */}
       <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">
