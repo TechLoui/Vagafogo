@@ -6,23 +6,28 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inicializar Firebase Admin - USAR ARQUIVO DIRETO
+// Inicializar Firebase Admin
 let serviceAccount;
 try {
-  console.log('Carregando credenciais do arquivo...');
-  serviceAccount = require('./banco-vaga-fogo-firebase-adminsdk-fbsvc-497b4ae1e7.json');
-  console.log('Credenciais carregadas:', {
-    project_id: serviceAccount.project_id,
-    client_email: serviceAccount.client_email
-  });
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.log('Usando variável de ambiente FIREBASE_SERVICE_ACCOUNT');
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    console.log('Credenciais carregadas:', {
+      project_id: serviceAccount.project_id,
+      client_email: serviceAccount.client_email
+    });
+  } else {
+    console.log('Variável FIREBASE_SERVICE_ACCOUNT não encontrada');
+    throw new Error('FIREBASE_SERVICE_ACCOUNT não configurada');
+  }
 } catch (error) {
-  console.error('Erro ao carregar arquivo de credenciais:', error.message);
+  console.error('Erro ao carregar credenciais:', error.message);
   process.exit(1);
 }
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'banco-vaga-fogo'
+  projectId: 'banco-vagafogo'
 });
 
 // Usar Firestore padrão
