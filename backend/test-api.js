@@ -30,57 +30,70 @@ const db = admin.firestore();
 
 // GET /api/reservas
 app.get('/api/reservas', async (req, res) => {
-  try {
-    const snapshot = await db.collection('reservas').get();
-    const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(reservas);
-  } catch (error) {
-    console.error('Erro ao buscar reservas:', error);
-    // Retornar dados de exemplo em caso de erro
-    res.json([
-      {
-        id: 'exemplo1',
-        nome: 'João Silva',
-        cpf: '123.456.789-00',
-        telefone: '(11) 99999-9999',
-        adultos: 2,
-        criancas: 1,
-        naoPagante: 0,
-        bariatrica: 0,
-        data: '2025-08-27',
-        horario: '09:00',
-        atividade: 'Trilha Ecológica',
-        valor: 150,
-        status: 'pago',
-        temPet: false
-      }
-    ]);
-  }
+  // Dados mockados para teste
+  res.json([
+    {
+      id: 'exemplo1',
+      nome: 'João Silva',
+      cpf: '123.456.789-00',
+      telefone: '(11) 99999-9999',
+      adultos: 2,
+      criancas: 1,
+      naoPagante: 0,
+      bariatrica: 0,
+      data: '2025-08-27',
+      horario: '09:00',
+      atividade: 'Trilha Ecológica',
+      valor: 150,
+      status: 'pago',
+      temPet: false
+    },
+    {
+      id: 'exemplo2',
+      nome: 'Maria Santos',
+      cpf: '987.654.321-00',
+      telefone: '(11) 88888-8888',
+      adultos: 1,
+      criancas: 2,
+      naoPagante: 0,
+      bariatrica: 0,
+      data: '2025-08-27',
+      horario: '10:00',
+      atividade: 'Brunch Gastronômico',
+      valor: 200,
+      status: 'pago',
+      temPet: true
+    }
+  ]);
 });
 
 // GET /api/pacotes
 app.get('/api/pacotes', async (req, res) => {
-  try {
-    const snapshot = await db.collection('pacotes').get();
-    const pacotes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(pacotes);
-  } catch (error) {
-    console.error('Erro ao buscar pacotes:', error);
-    // Retornar dados de exemplo em caso de erro
-    res.json([
-      {
-        id: 'exemplo1',
-        nome: 'Trilha Ecológica',
-        tipo: 'Aventura',
-        precoAdulto: 50,
-        precoCrianca: 25,
-        precoBariatrica: 60,
-        horarios: ['08:00', '09:00', '14:00'],
-        dias: [0, 1, 2, 3, 4, 5, 6],
-        limite: 20
-      }
-    ]);
-  }
+  // Dados mockados para teste
+  res.json([
+    {
+      id: 'exemplo1',
+      nome: 'Trilha Ecológica',
+      tipo: 'Aventura',
+      precoAdulto: 50,
+      precoCrianca: 25,
+      precoBariatrica: 60,
+      horarios: ['08:00', '09:00', '14:00'],
+      dias: [0, 1, 2, 3, 4, 5, 6],
+      limite: 20
+    },
+    {
+      id: 'exemplo2',
+      nome: 'Brunch Gastronômico',
+      tipo: 'Gastronomia',
+      precoAdulto: 80,
+      precoCrianca: 40,
+      precoBariatrica: 90,
+      horarios: ['10:00', '11:00'],
+      dias: [0, 6],
+      limite: 15
+    }
+  ]);
 });
 
 // POST /api/reservas
@@ -191,16 +204,52 @@ app.get('/api/clientes', async (req, res) => {
   }
 });
 
-// GET /api/collections - Listar todas as coleções
-app.get('/api/collections', async (req, res) => {
+// GET /api/test - Criar dados de teste
+app.get('/api/test', async (req, res) => {
   try {
-    const collections = await db.listCollections();
-    const collectionNames = collections.map(col => col.id);
-    res.json({ collections: collectionNames });
+    // Criar reserva de teste
+    await db.collection('reservas').add({
+      nome: 'João Silva',
+      cpf: '123.456.789-00',
+      telefone: '(11) 99999-9999',
+      adultos: 2,
+      criancas: 1,
+      naoPagante: 0,
+      bariatrica: 0,
+      data: '2025-08-27',
+      horario: '09:00',
+      atividade: 'Trilha Ecológica',
+      valor: 150,
+      status: 'pago',
+      temPet: false
+    });
+    
+    // Criar pacote de teste
+    await db.collection('pacotes').add({
+      nome: 'Trilha Ecológica',
+      tipo: 'Aventura',
+      precoAdulto: 50,
+      precoCrianca: 25,
+      precoBariatrica: 60,
+      horarios: ['08:00', '09:00', '14:00'],
+      dias: [0, 1, 2, 3, 4, 5, 6],
+      limite: 20
+    });
+    
+    res.json({ success: true, message: 'Dados de teste criados!' });
   } catch (error) {
-    console.error('Erro ao listar coleções:', error);
+    console.error('Erro ao criar dados de teste:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// GET /api/status - Status da API
+app.get('/api/status', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    project: process.env.FIREBASE_SERVICE_ACCOUNT ? 'Connected' : 'No credentials'
+  });
 });
 
 const PORT = process.env.PORT || 3001;
