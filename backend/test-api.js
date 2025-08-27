@@ -6,18 +6,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inicializar Firebase Admin
+// Inicializar Firebase Admin - USAR ARQUIVO DIRETO
 let serviceAccount;
 try {
-  // Tentar usar variável de ambiente primeiro
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  } else {
-    // Fallback para arquivo local (desenvolvimento)
-    serviceAccount = require('./banco-vaga-fogo-firebase-adminsdk-fbsvc-497b4ae1e7.json');
-  }
+  console.log('Carregando credenciais do arquivo...');
+  serviceAccount = require('./banco-vaga-fogo-firebase-adminsdk-fbsvc-497b4ae1e7.json');
+  console.log('Credenciais carregadas:', {
+    project_id: serviceAccount.project_id,
+    client_email: serviceAccount.client_email
+  });
 } catch (error) {
-  console.error('Erro ao carregar credenciais Firebase:', error.message);
+  console.error('Erro ao carregar arquivo de credenciais:', error.message);
   process.exit(1);
 }
 
@@ -26,12 +25,9 @@ admin.initializeApp({
   projectId: 'banco-vaga-fogo'
 });
 
-// Configurar Firestore para região southamerica-east1
+// Usar Firestore padrão
 const db = admin.firestore();
-db.settings({
-  host: 'southamerica-east1-firestore.googleapis.com',
-  ssl: true
-});
+console.log('Firestore inicializado');
 
 // GET /api/test-firebase - Testar conexão Firebase
 app.get('/api/test-firebase', async (req, res) => {
