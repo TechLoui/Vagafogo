@@ -191,6 +191,18 @@ app.get('/api/clientes', async (req, res) => {
   }
 });
 
+// GET /api/collections - Listar todas as coleções
+app.get('/api/collections', async (req, res) => {
+  try {
+    const collections = await db.listCollections();
+    const collectionNames = collections.map(col => col.id);
+    res.json({ collections: collectionNames });
+  } catch (error) {
+    console.error('Erro ao listar coleções:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
