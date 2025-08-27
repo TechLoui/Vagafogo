@@ -23,38 +23,71 @@ try {
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'banco-vaga-fogo',
-  databaseURL: 'https://banco-vaga-fogo-default-rtdb.firebaseio.com/'
+  projectId: 'banco-vaga-fogo'
 });
 
+// Configurar Firestore para região southamerica-east1
 const db = admin.firestore();
+db.settings({
+  host: 'southamerica-east1-firestore.googleapis.com',
+  ssl: true
+});
+
+// GET /api/test-firebase - Testar conexão Firebase
+app.get('/api/test-firebase', async (req, res) => {
+  try {
+    console.log('Testando conexão Firebase...');
+    console.log('Project ID:', admin.app().options.projectId);
+    console.log('Service Account Email:', admin.app().options.credential.clientEmail);
+    
+    // Tentar listar coleções
+    const collections = await db.listCollections();
+    const collectionNames = collections.map(col => col.id);
+    console.log('Coleções encontradas:', collectionNames);
+    
+    res.json({ 
+      success: true, 
+      projectId: admin.app().options.projectId,
+      collections: collectionNames 
+    });
+  } catch (error) {
+    console.error('Erro no teste Firebase:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // GET /api/reservas
 app.get('/api/reservas', async (req, res) => {
   try {
-    console.log('Buscando reservas no Firebase com novas credenciais...');
+    console.log('Buscando reservas no Firebase...');
+    console.log('Tentando acessar coleção: reservas');
+    
     const snapshot = await db.collection('reservas').get();
     console.log(`Encontradas ${snapshot.size} reservas`);
     
     if (snapshot.empty) {
-      console.log('Nenhuma reserva encontrada, retornando array vazio');
+      console.log('Coleção vazia, retornando array vazio');
       return res.json([]);
     }
     
     const reservas = snapshot.docs.map(doc => {
       const data = doc.data();
-      console.log(`Reserva ${doc.id}:`, data);
       return { id: doc.id, ...data };
     });
     
+    console.log('Reservas carregadas com sucesso:', reservas.length);
     res.json(reservas);
   } catch (error) {
-    console.error('Erro ao buscar reservas:', error);
+    console.error('Erro detalhado ao buscar reservas:');
+    console.error('- Mensagem:', error.message);
+    console.error('- Código:', error.code);
+    console.error('- Stack:', error.stack);
+    
     // Fallback para dados de exemplo
     res.json([
       {
         id: 'exemplo1',
-        nome: 'João Silva (Exemplo - Erro Firebase)',
+        nome: 'João Silva (Erro Firebase)',
         cpf: '123.456.789-00',
         telefone: '(62) 91234-5678',
         adultos: 2,
@@ -68,7 +101,7 @@ app.get('/api/reservas', async (req, res) => {
         status: 'pago',
         participantes: 4,
         email: 'joao@email.com',
-        observacao: 'Vegetariano'
+        observacao: 'Erro de conexão'
       }
     ]);
   }
