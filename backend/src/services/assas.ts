@@ -88,9 +88,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   try {
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = query(
-      collection(db, "reservas"),
-      where("Data", "==", data),
-      where("Horario", "==", horarioFormatado)
+      collection(db, "Reservas"),
+      where("data", "==", data),
+      where("horario", "==", horarioFormatado)
     );
 
     const snapshot = await getDocs(reservasQuery);
@@ -98,7 +98,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     let totalReservados = 0;
     snapshot.forEach((doc) => {
       const dados = doc.data();
-      totalReservados += dados.Participantes || 0;
+      totalReservados += dados.participantes || 0;
     });
 
     if (totalReservados + participantes > 30) {

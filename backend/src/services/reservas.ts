@@ -43,7 +43,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
 
   // 🔹 Gera um ID único (reservaId)
   const reservaId = uuidv4();
-  const reservaRef = doc(db, "reservas", reservaId);
+  const reservaRef = doc(db, "Reservas", reservaId);
 
   // 🔹 Cria o documento com ID fixo
   await setDoc(reservaRef, {
