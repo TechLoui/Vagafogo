@@ -9,7 +9,7 @@ const firebase_admin_1 = __importDefault(require("firebase-admin"));
 exports.admin = firebase_admin_1.default;
 // Inicializar Admin SDK se ainda não foi inicializado
 if (!firebase_admin_1.default.apps.length) {
-    const serviceAccount = require('../../banco-vaga-fogo-firebase-adminsdk-fbsvc-8bef52c2d8.json');
+    const serviceAccount = require('../banco-vaga-fogo-firebase-adminsdk-fbsvc-8bef52c2d8.json');
     firebase_admin_1.default.initializeApp({
         credential: firebase_admin_1.default.credential.cert(serviceAccount),
         projectId: 'banco-vaga-fogo'

@@ -1,22 +1,16 @@
-// Importar Firebase App e Firestore
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+// Usar Admin SDK no backend
+import admin from 'firebase-admin';
 
-// Config do Firebase
-const firebaseConfig = {
-  apiKey: "AIzaSyAL-cotN2Pn58ZH4NjxWDVNdlkIjZEBfUE",
-  authDomain: "banco-vaga-fogo.firebaseapp.com",
-  projectId: "banco-vaga-fogo",
-  storageBucket: "banco-vaga-fogo.firebasestorage.app",
-  messagingSenderId: "274156176093",
-  appId: "1:274156176093:web:bcc2f4f1e881b10ead9134"
-};
+// Inicializar Admin SDK se ainda não foi inicializado
+if (!admin.apps.length) {
+  const serviceAccount = require('../banco-vaga-fogo-firebase-adminsdk-fbsvc-8bef52c2d8.json');
+  
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    projectId: 'banco-vaga-fogo'
+  });
+}
 
-// Inicializa o Firebase
-const app = initializeApp(firebaseConfig);
-
-// Instância do Firestore para usar no projeto
-export const db = getFirestore(app);
-
-// Se precisar usar o app em outros lugares:
-export { app };
+// Instância do Firestore Admin
+export const db = admin.firestore();
+export { admin };
