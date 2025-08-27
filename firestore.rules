@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regras completamente abertas - SEM RESTRIÇÕES
+    match /{document=**} {
+      allow read, write, create, update, delete: if true;
+    }
+    
+    // Regras específicas para coleções
+    match /reservas/{document} {
+      allow read, write, create, update, delete: if true;
+    }
+    
+    match /pacotes/{document} {
+      allow read, write, create, update, delete: if true;
+    }
+    
+    match /teste/{document} {
+      allow read, write, create, update, delete: if true;
+    }
+    
+    match /teste_conexao/{document} {
+      allow read, write, create, update, delete: if true;
+    }
+  }
+}

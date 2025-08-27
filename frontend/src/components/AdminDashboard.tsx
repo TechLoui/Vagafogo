@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import React from 'react';
-import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../../firebase';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { api } from '../sevices/api';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
+import { FirebaseTest } from './FirebaseTest';
+import { ConnectionStatus } from './ConnectionStatus';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -47,7 +51,56 @@ const horariosDisponiveis = [
 ];
 
 export default function AdminDashboard() {
+  const [user, loading] = useAuthState(auth);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa'>('reservas');
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      setLoginError('Email ou senha incorretos');
+    }
+  };
+
+  if (loading) return <div className="flex items-center justify-center min-h-screen">Carregando...</div>;
+  
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <form onSubmit={handleLogin} className="bg-white p-8 rounded shadow-md w-96">
+          <h2 className="text-2xl font-bold mb-6 text-center">Login Admin</h2>
+          {loginError && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{loginError}</div>}
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-2">Email:</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full border px-3 py-2 rounded"
+              required
+            />
+          </div>
+          <div className="mb-6">
+            <label className="block text-sm font-medium mb-2">Senha:</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full border px-3 py-2 rounded"
+              required
+            />
+          </div>
+          <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+            Entrar
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   // Reservas
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -72,23 +125,49 @@ export default function AdminDashboard() {
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
+    console.log('🔍 Buscando reservas para:', formatted);
+    
     try {
-      const q = query(collection(db, 'reservas'), where('data', '==', formatted));
-      const snapshot = await getDocs(q);
-      const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
-      console.log('📊 Reservas encontradas:', dados.map(r => ({ nome: r.nome, status: r.status })));
-      const reservasPagas = dados.filter(r => r.status === 'pago');
+      console.log('📡 Chamando API...');
+      const dados: Reserva[] = await api.getReservas();
+      console.log('📊 Total de reservas carregadas:', dados.length);
+      
+      if (dados.length === 0) {
+        console.log('⚠️ Nenhuma reserva encontrada');
+        setReservas({});
+        setFeedback({ type: 'error', message: 'Nenhuma reserva encontrada no banco de dados.' });
+        return;
+      }
+      
+      // Filtrar por data
+      const reservasDaData = dados.filter(r => r.data === formatted);
+      console.log('📊 Reservas da data', formatted, ':', reservasDaData.length);
+      
+      // Filtrar apenas reservas pagas
+      const reservasPagas = reservasDaData.filter(r => r.status === 'pago');
       console.log('✅ Reservas pagas:', reservasPagas.length);
+      
+      // Agrupar por horário
       const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
         const horario = reserva.horario || 'Não especificado';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
         return acc;
       }, {} as Record<string, Reserva[]>);
+      
       setReservas(reservasPorHorario);
-    } catch (error) {
+      
+      if (reservasPagas.length === 0 && reservasDaData.length > 0) {
+        setFeedback({ type: 'error', message: `Encontradas ${reservasDaData.length} reservas para esta data, mas nenhuma com status "pago".` });
+      }
+      
+    } catch (error: any) {
       console.error('❌ Erro ao buscar reservas:', error);
       setReservas({});
+      setFeedback({ 
+        type: 'error', 
+        message: `Erro ao conectar com a API: ${error?.message || 'Erro desconhecido'}` 
+      });
     }
   };
 
@@ -119,9 +198,12 @@ export default function AdminDashboard() {
   const excluirReserva = async (id: string) => {
     if (confirm("Tem certeza que deseja excluir esta reserva?")) {
       try {
-        await deleteDoc(doc(db, "reservas", id));
+        await api.deleteReserva(id);
         fetchReservas(selectedDate);
-      } catch (error) { }
+        setFeedback({ type: 'success', message: 'Reserva excluída com sucesso!' });
+      } catch (error) {
+        setFeedback({ type: 'error', message: 'Erro ao excluir reserva.' });
+      }
     }
   };
 
@@ -166,21 +248,17 @@ export default function AdminDashboard() {
     }
     try {
       const participantes = calcularParticipantes(editReserva);
+      const reservaData = {
+        ...editReserva,
+        participantes,
+        status: 'pago',
+      };
 
       if (isEditingReserva && editReserva.id) {
-        const ref = doc(db, "reservas", editReserva.id);
-        await updateDoc(ref, {
-          ...editReserva,
-          participantes,
-          status: 'pago',
-        });
+        await api.updateReserva(editReserva.id, reservaData);
         setFeedback({ type: 'success', message: 'Reserva atualizada com sucesso!' });
       } else {
-        await addDoc(collection(db, "reservas"), {
-          ...editReserva,
-          participantes,
-          status: 'pago',
-        });
+        await api.createReserva(reservaData);
         setFeedback({ type: 'success', message: 'Reserva cadastrada com sucesso!' });
       }
       setModalReserva(false);
@@ -193,8 +271,29 @@ export default function AdminDashboard() {
 
   // Pacotes Logic
   const fetchPacotes = async () => {
-    const snap = await getDocs(collection(db, 'pacotes'));
-    setPacotes(snap.docs.map(d => ({ id: d.id, ...d.data() } as Pacote)));
+    try {
+      console.log('📦 Buscando pacotes...');
+      const pacotesData: Pacote[] = await api.getPacotes();
+      console.log('📦 Pacotes encontrados:', pacotesData.length);
+      
+      if (pacotesData.length === 0) {
+        console.log('⚠️ Nenhum pacote encontrado');
+        setPacotes([]);
+        setFeedback({ type: 'error', message: 'Nenhum pacote encontrado no banco de dados.' });
+        return;
+      }
+      
+      setPacotes(pacotesData);
+      console.log('✅ Pacotes carregados com sucesso:', pacotesData.length);
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar pacotes:', error);
+      setPacotes([]);
+      setFeedback({ 
+        type: 'error', 
+        message: `Erro ao carregar pacotes: ${error?.message || 'Erro desconhecido'}` 
+      });
+    }
   };
 
   useEffect(() => {
@@ -229,14 +328,10 @@ export default function AdminDashboard() {
     }
     try {
       if (isEditingPacote && editPacote.id) {
-        await updateDoc(doc(db, 'pacotes', editPacote.id), {
-          ...editPacote
-        });
+        await api.updatePacote(editPacote.id, editPacote);
         setFeedback({ type: 'success', message: 'Pacote atualizado com sucesso!' });
       } else {
-        await addDoc(collection(db, 'pacotes'), {
-          ...editPacote
-        });
+        await api.createPacote(editPacote);
         setFeedback({ type: 'success', message: 'Pacote cadastrado com sucesso!' });
       }
       setModalPacote(false);
@@ -249,29 +344,52 @@ export default function AdminDashboard() {
 
   const excluirPacote = async (id: string) => {
     if (window.confirm('Excluir pacote?')) {
-      await deleteDoc(doc(db, 'pacotes', id));
-      fetchPacotes();
+      try {
+        await api.deletePacote(id);
+        fetchPacotes();
+        setFeedback({ type: 'success', message: 'Pacote excluído com sucesso!' });
+      } catch (error) {
+        setFeedback({ type: 'error', message: 'Erro ao excluir pacote.' });
+      }
     }
   };
 
   // Pesquisa Clientes
   const pesquisarClientes = async () => {
-    if (!termoPesquisa.trim()) return;
+    if (!termoPesquisa.trim()) {
+      setFeedback({ type: 'error', message: 'Digite um termo para pesquisar.' });
+      return;
+    }
+    
     setCarregandoPesquisa(true);
     try {
-      const q = query(collection(db, 'reservas'));
-      const snapshot = await getDocs(q);
-      const matches = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as Reserva))
-        .filter(
-          (r: Reserva) =>
-            (r.nome && r.nome.toLowerCase().includes(termoPesquisa.toLowerCase())) ||
-            (r.cpf && r.cpf.includes(termoPesquisa)) ||
-            (r.telefone && r.telefone.includes(termoPesquisa))
+      console.log('🔍 Pesquisando clientes com termo:', termoPesquisa);
+      const dados: Reserva[] = await api.getReservas();
+      console.log('📊 Total de reservas para pesquisa:', dados.length);
+      
+      const matches = dados.filter((r: Reserva) => {
+        const termo = termoPesquisa.toLowerCase();
+        return (
+          (r.nome && r.nome.toLowerCase().includes(termo)) ||
+          (r.cpf && r.cpf.includes(termoPesquisa)) ||
+          (r.telefone && r.telefone.includes(termoPesquisa))
         );
+      });
+      
+      console.log('🔍 Resultados encontrados:', matches.length);
       setResultadosPesquisa(matches);
-    } catch (e) {
+      
+      if (matches.length === 0) {
+        setFeedback({ type: 'error', message: 'Nenhum cliente encontrado com esse termo.' });
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Erro na pesquisa:', error);
       setResultadosPesquisa([]);
+      setFeedback({ 
+        type: 'error', 
+        message: `Erro na pesquisa: ${error?.message || 'Erro desconhecido'}` 
+      });
     }
     setCarregandoPesquisa(false);
   };
@@ -279,12 +397,16 @@ export default function AdminDashboard() {
   // Render
   return (
     <main className="min-h-screen w-full bg-gray-50">
+      <ConnectionStatus />
       {/* Feedback */}
       {feedback && (
         <div className={`fixed top-4 right-4 z-[99] px-6 py-2 rounded shadow transition-all text-white ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
           {feedback.message}
         </div>
       )}
+
+      {/* Teste Firebase */}
+      <FirebaseTest />
 
       {/* Abas */}
       <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">

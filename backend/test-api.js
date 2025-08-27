@@ -60,6 +60,56 @@ app.post('/api/reservas', async (req, res) => {
   }
 });
 
+// POST /api/pacotes
+app.post('/api/pacotes', async (req, res) => {
+  try {
+    const docRef = await db.collection('pacotes').add(req.body);
+    res.json({ id: docRef.id, ...req.body });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/reservas/:id
+app.put('/api/reservas/:id', async (req, res) => {
+  try {
+    await db.collection('reservas').doc(req.params.id).update(req.body);
+    res.json({ id: req.params.id, ...req.body });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/pacotes/:id
+app.put('/api/pacotes/:id', async (req, res) => {
+  try {
+    await db.collection('pacotes').doc(req.params.id).update(req.body);
+    res.json({ id: req.params.id, ...req.body });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/reservas/:id
+app.delete('/api/reservas/:id', async (req, res) => {
+  try {
+    await db.collection('reservas').doc(req.params.id).delete();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/pacotes/:id
+app.delete('/api/pacotes/:id', async (req, res) => {
+  try {
+    await db.collection('pacotes').doc(req.params.id).delete();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
