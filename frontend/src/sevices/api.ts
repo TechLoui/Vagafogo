@@ -4,7 +4,11 @@ export const api = {
   // Reservas
   async getReservas() {
     const response = await fetch(`${API_BASE}/api/reservas`);
-    return response.json();
+    if (!response.ok) {
+      throw new Error(`Erro ${response.status}: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async createReserva(reserva: any) {
@@ -35,7 +39,11 @@ export const api = {
   // Pacotes
   async getPacotes() {
     const response = await fetch(`${API_BASE}/api/pacotes`);
-    return response.json();
+    if (!response.ok) {
+      throw new Error(`Erro ${response.status}: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async createPacote(pacote: any) {
