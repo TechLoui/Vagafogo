@@ -4,12 +4,12 @@ import { getFirestore } from "firebase/firestore";
 
 // Config do Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyAL-cotN2Pn58ZH4NjxWDVNdlkIjZEBfUE",
-  authDomain: "banco-vaga-fogo.firebaseapp.com",
-  projectId: "banco-vaga-fogo",
-  storageBucket: "banco-vaga-fogo.firebasestorage.app",
-  messagingSenderId: "274156176093",
-  appId: "1:274156176093:web:bcc2f4f1e881b10ead9134"
+  apiKey: "AIzaSyBBm3tDxQvD8SmB5AIerpe-QL-IXk1N1O4",
+  authDomain: "banco-vagafogo.firebaseapp.com",
+  projectId: "banco-vagafogo",
+  storageBucket: "banco-vagafogo.firebasestorage.app",
+  messagingSenderId: "1037581590966",
+  appId: "1:1037581590966:web:35195eccc16e8f3c742117"
 };
 
 // Inicializa o Firebase
