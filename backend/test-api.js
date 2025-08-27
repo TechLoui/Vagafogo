@@ -35,6 +35,11 @@ db.settings({
 
 // GET /api/test-firebase - Testar conexão Firebase
 app.get('/api/test-firebase', async (req, res) => {
+  res.set({
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
   try {
     console.log('Testando conexão Firebase...');
     console.log('Project ID:', admin.app().options.projectId);
@@ -58,12 +63,38 @@ app.get('/api/test-firebase', async (req, res) => {
 
 // GET /api/reservas
 app.get('/api/reservas', async (req, res) => {
+  // Headers para evitar cache
+  res.set({
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
   try {
     console.log('Buscando reservas no Firebase...');
-    console.log('Tentando acessar coleção: reservas');
     
-    const snapshot = await db.collection('reservas').get();
-    console.log(`Encontradas ${snapshot.size} reservas`);
+    // Tentar primeiro 'reservas' (minúsculo)
+    let snapshot;
+    let collectionUsed = '';
+    
+    try {
+      console.log('Tentando coleção: reservas (minúsculo)');
+      snapshot = await db.collection('reservas').get();
+      collectionUsed = 'reservas';
+      console.log(`Coleção 'reservas': ${snapshot.size} documentos`);
+    } catch (error1) {
+      console.log('Erro na coleção reservas:', error1.message);
+      
+      try {
+        console.log('Tentando coleção: Reservas (maiúsculo)');
+        snapshot = await db.collection('Reservas').get();
+        collectionUsed = 'Reservas';
+        console.log(`Coleção 'Reservas': ${snapshot.size} documentos`);
+      } catch (error2) {
+        console.log('Erro na coleção Reservas:', error2.message);
+        throw error2;
+      }
+    }
+    console.log(`Encontradas ${snapshot.size} reservas na coleção '${collectionUsed}'`);
     
     if (snapshot.empty) {
       console.log('Coleção vazia, retornando array vazio');
@@ -72,10 +103,11 @@ app.get('/api/reservas', async (req, res) => {
     
     const reservas = snapshot.docs.map(doc => {
       const data = doc.data();
+      console.log(`Reserva ${doc.id} da coleção '${collectionUsed}':`, data);
       return { id: doc.id, ...data };
     });
     
-    console.log('Reservas carregadas com sucesso:', reservas.length);
+    console.log(`Reservas carregadas com sucesso da coleção '${collectionUsed}':`, reservas.length);
     res.json(reservas);
   } catch (error) {
     console.error('Erro detalhado ao buscar reservas:');
