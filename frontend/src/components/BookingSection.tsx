@@ -124,7 +124,7 @@ export function BookingSection() {
     const dataStr = data.toISOString().slice(0, 10);
     try {
       const q = query(
-        collection(db, "Reservas"),
+        collection(db, "reservas"),
         where("data", "==", dataStr),
         where("horario", "==", horario),
         where("status", "==", "pago")
@@ -186,7 +186,7 @@ export function BookingSection() {
       if (horariosDisponiveis.length > 0) {
         whereFilters.push(where("horario", "==", horario));
       }
-      const q = query(collection(db, "Reservas"), ...whereFilters);
+      const q = query(collection(db, "reservas"), ...whereFilters);
       const querySnapshot = await getDocs(q);
 
       let totalReservas = 0;

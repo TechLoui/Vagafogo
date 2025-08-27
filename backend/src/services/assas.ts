@@ -88,7 +88,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   try {
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = query(
-      collection(db, "Reservas"),
+      collection(db, "reservas"),
       where("data", "==", data),
       where("horario", "==", horarioFormatado)
     );

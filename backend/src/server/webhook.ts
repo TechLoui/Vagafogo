@@ -31,7 +31,7 @@ router.post('/', async (req, res) => {
   try {
     console.log(`🔄 Atualizando reserva com ID: ${externalId}`);
     
-    const reservaRef = doc(db, 'Reservas', externalId);
+    const reservaRef = doc(db, 'reservas', externalId);
     await updateDoc(reservaRef, {
       status: 'pago',
       dataPagamento: new Date()

@@ -73,7 +73,7 @@ export default function AdminDashboard() {
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
     try {
-      const q = query(collection(db, 'Reservas'), where('data', '==', formatted));
+      const q = query(collection(db, 'reservas'), where('data', '==', formatted));
       const snapshot = await getDocs(q);
       const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
       console.log('📊 Reservas encontradas:', dados.map(r => ({ nome: r.nome, status: r.status })));
@@ -168,7 +168,7 @@ export default function AdminDashboard() {
       const participantes = calcularParticipantes(editReserva);
 
       if (isEditingReserva && editReserva.id) {
-        const ref = doc(db, "Reservas", editReserva.id);
+        const ref = doc(db, "reservas", editReserva.id);
         await updateDoc(ref, {
           ...editReserva,
           participantes,
@@ -176,7 +176,7 @@ export default function AdminDashboard() {
         });
         setFeedback({ type: 'success', message: 'Reserva atualizada com sucesso!' });
       } else {
-        await addDoc(collection(db, "Reservas"), {
+        await addDoc(collection(db, "reservas"), {
           ...editReserva,
           participantes,
           status: 'pago',
@@ -259,7 +259,7 @@ export default function AdminDashboard() {
     if (!termoPesquisa.trim()) return;
     setCarregandoPesquisa(true);
     try {
-      const q = query(collection(db, 'Reservas'));
+      const q = query(collection(db, 'reservas'));
       const snapshot = await getDocs(q);
       const matches = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as Reserva))
