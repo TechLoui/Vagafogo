@@ -30,78 +30,94 @@ const db = admin.firestore();
 
 // GET /api/reservas
 app.get('/api/reservas', async (req, res) => {
-  // Dados mockados para teste
-  res.json([
-    {
-      id: 'exemplo1',
-      nome: 'João Silva',
-      cpf: '123.456.789-00',
-      telefone: '(11) 99999-9999',
-      adultos: 2,
-      criancas: 1,
-      naoPagante: 0,
-      bariatrica: 0,
-      data: '2025-08-27',
-      horario: '09:00',
-      atividade: 'Trilha Ecológica',
-      valor: 150,
-      status: 'pago',
-      temPet: false
-    },
-    {
-      id: 'exemplo2',
-      nome: 'Maria Santos',
-      cpf: '987.654.321-00',
-      telefone: '(11) 88888-8888',
-      adultos: 1,
-      criancas: 2,
-      naoPagante: 0,
-      bariatrica: 0,
-      data: '2025-08-27',
-      horario: '10:00',
-      atividade: 'Brunch Gastronômico',
-      valor: 200,
-      status: 'pago',
-      temPet: true
+  try {
+    console.log('Buscando reservas no Firebase...');
+    const snapshot = await db.collection('reservas').get();
+    console.log(`Encontradas ${snapshot.size} reservas`);
+    
+    if (snapshot.empty) {
+      console.log('Nenhuma reserva encontrada, retornando array vazio');
+      return res.json([]);
     }
-  ]);
+    
+    const reservas = snapshot.docs.map(doc => {
+      const data = doc.data();
+      console.log(`Reserva ${doc.id}:`, data);
+      return { id: doc.id, ...data };
+    });
+    
+    res.json(reservas);
+  } catch (error) {
+    console.error('Erro ao buscar reservas:', error);
+    // Fallback para dados de exemplo
+    res.json([
+      {
+        id: 'exemplo1',
+        nome: 'João Silva (Exemplo)',
+        cpf: '123.456.789-00',
+        telefone: '(11) 99999-9999',
+        adultos: 2,
+        criancas: 1,
+        naoPagante: 0,
+        bariatrica: 0,
+        data: '2025-08-27',
+        horario: '09:00',
+        atividade: 'Trilha Ecológica',
+        valor: 150,
+        status: 'pago',
+        temPet: false
+      }
+    ]);
+  }
 });
 
 // GET /api/pacotes
 app.get('/api/pacotes', async (req, res) => {
-  // Dados mockados para teste
-  res.json([
-    {
-      id: 'exemplo1',
-      nome: 'Trilha Ecológica',
-      tipo: 'Aventura',
-      precoAdulto: 50,
-      precoCrianca: 25,
-      precoBariatrica: 60,
-      horarios: ['08:00', '09:00', '14:00'],
-      dias: [0, 1, 2, 3, 4, 5, 6],
-      limite: 20
-    },
-    {
-      id: 'exemplo2',
-      nome: 'Brunch Gastronômico',
-      tipo: 'Gastronomia',
-      precoAdulto: 80,
-      precoCrianca: 40,
-      precoBariatrica: 90,
-      horarios: ['10:00', '11:00'],
-      dias: [0, 6],
-      limite: 15
+  try {
+    console.log('Buscando pacotes no Firebase...');
+    const snapshot = await db.collection('pacotes').get();
+    console.log(`Encontrados ${snapshot.size} pacotes`);
+    
+    if (snapshot.empty) {
+      console.log('Nenhum pacote encontrado, retornando array vazio');
+      return res.json([]);
     }
-  ]);
+    
+    const pacotes = snapshot.docs.map(doc => {
+      const data = doc.data();
+      console.log(`Pacote ${doc.id}:`, data);
+      return { id: doc.id, ...data };
+    });
+    
+    res.json(pacotes);
+  } catch (error) {
+    console.error('Erro ao buscar pacotes:', error);
+    // Fallback para dados de exemplo
+    res.json([
+      {
+        id: 'exemplo1',
+        nome: 'Trilha Ecológica (Exemplo)',
+        tipo: 'Aventura',
+        precoAdulto: 50,
+        precoCrianca: 25,
+        precoBariatrica: 60,
+        horarios: ['08:00', '09:00', '14:00'],
+        dias: [0, 1, 2, 3, 4, 5, 6],
+        limite: 20
+      }
+    ]);
+  }
 });
 
 // POST /api/reservas
 app.post('/api/reservas', async (req, res) => {
   try {
+    console.log('Criando nova reserva:', req.body);
     const docRef = await db.collection('reservas').add(req.body);
+    console.log('Reserva criada com ID:', docRef.id);
     res.json({ id: docRef.id, ...req.body });
   } catch (error) {
+    console.error('Erro ao criar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -119,9 +135,12 @@ app.post('/api/pacotes', async (req, res) => {
 // PUT /api/reservas/:id
 app.put('/api/reservas/:id', async (req, res) => {
   try {
+    console.log(`Atualizando reserva ${req.params.id}:`, req.body);
     await db.collection('reservas').doc(req.params.id).update(req.body);
+    console.log('Reserva atualizada com sucesso');
     res.json({ id: req.params.id, ...req.body });
   } catch (error) {
+    console.error('Erro ao atualizar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -139,9 +158,12 @@ app.put('/api/pacotes/:id', async (req, res) => {
 // DELETE /api/reservas/:id
 app.delete('/api/reservas/:id', async (req, res) => {
   try {
+    console.log(`Deletando reserva ${req.params.id}`);
     await db.collection('reservas').doc(req.params.id).delete();
+    console.log('Reserva deletada com sucesso');
     res.json({ success: true });
   } catch (error) {
+    console.error('Erro ao deletar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
