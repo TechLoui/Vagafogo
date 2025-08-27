@@ -24,11 +24,14 @@ interface Reserva {
   naoPagante?: number;
   bariatrica?: number;
   data: string;
-  horario: string;
+  horario?: string;
   atividade: string;
   valor?: number;
   status?: string;
   temPet?: boolean;
+  participantes?: number;
+  email?: string;
+  observacao?: string;
 }
 
 interface Pacote {
@@ -149,7 +152,7 @@ export default function AdminDashboard() {
       
       // Agrupar por horário
       const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
-        const horario = reserva.horario || 'Não especificado';
+        const horario = reserva.horario || 'Sem horário';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
         return acc;

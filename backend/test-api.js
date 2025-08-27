@@ -23,7 +23,8 @@ try {
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'banco-vaga-fogo'
+  projectId: 'banco-vaga-fogo',
+  databaseURL: 'https://banco-vaga-fogo-default-rtdb.firebaseio.com/'
 });
 
 const db = admin.firestore();
@@ -32,7 +33,7 @@ const db = admin.firestore();
 app.get('/api/reservas', async (req, res) => {
   try {
     console.log('Buscando reservas no Firebase...');
-    const snapshot = await db.collection('Reservas').get();
+    const snapshot = await db.collection('reservas').get();
     console.log(`Encontradas ${snapshot.size} reservas`);
     
     if (snapshot.empty) {
@@ -113,7 +114,7 @@ app.get('/api/pacotes', async (req, res) => {
 app.post('/api/reservas', async (req, res) => {
   try {
     console.log('Criando nova reserva:', req.body);
-    const docRef = await db.collection('Reservas').add(req.body);
+    const docRef = await db.collection('reservas').add(req.body);
     console.log('Reserva criada com ID:', docRef.id);
     res.json({ id: docRef.id, ...req.body });
   } catch (error) {
@@ -136,7 +137,7 @@ app.post('/api/pacotes', async (req, res) => {
 app.put('/api/reservas/:id', async (req, res) => {
   try {
     console.log(`Atualizando reserva ${req.params.id}:`, req.body);
-    await db.collection('Reservas').doc(req.params.id).update(req.body);
+    await db.collection('reservas').doc(req.params.id).update(req.body);
     console.log('Reserva atualizada com sucesso');
     res.json({ id: req.params.id, ...req.body });
   } catch (error) {
@@ -159,7 +160,7 @@ app.put('/api/pacotes/:id', async (req, res) => {
 app.delete('/api/reservas/:id', async (req, res) => {
   try {
     console.log(`Deletando reserva ${req.params.id}`);
-    await db.collection('Reservas').doc(req.params.id).delete();
+    await db.collection('reservas').doc(req.params.id).delete();
     console.log('Reserva deletada com sucesso');
     res.json({ success: true });
   } catch (error) {
