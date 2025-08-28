@@ -302,14 +302,94 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// Webhook simples em JavaScript
+app.post('/webhook', async (req, res) => {
+  const data = req.body;
+  console.log("📩 Webhook recebido:", JSON.stringify(data, null, 2));
+
+  const evento = data.event;
+  const pagamento = data.payment;
+  const metodo = pagamento?.billingType;
+  const status = pagamento?.status;
+  const externalId = pagamento?.externalReference;
+
+  const isCartaoPago = evento === 'PAYMENT_CONFIRMED' && status === 'CONFIRMED';
+  const isPixPago = evento === 'PAYMENT_RECEIVED' && metodo === 'PIX' && status === 'RECEIVED';
+
+  if (!isCartaoPago && !isPixPago) {
+    console.log("⏭️ Evento ignorado:", evento, "| Status:", status, "| Método:", metodo);
+    return res.sendStatus(204);
+  }
+
+  if (!externalId) {
+    console.warn("⚠️ externalReference ausente no webhook.");
+    return res.status(400).send('externalReference ausente');
+  }
+
+  try {
+    console.log(`🔄 Criando reserva com ID: ${externalId}`);
+    
+    // Buscar dados do pagamento no Asaas
+    const paymentResponse = await fetch(`https://api.asaas.com/v3/payments/${pagamento.id}`, {
+      headers: {
+        'access_token': process.env.ASAAS_API_KEY,
+      },
+    });
+    
+    if (!paymentResponse.ok) {
+      console.error('Erro ao buscar dados do pagamento');
+      return res.sendStatus(500);
+    }
+    
+    const paymentData = await paymentResponse.json();
+    const customer = paymentData.customer;
+    
+    // Extrair dados da reserva da descrição
+    const description = paymentData.description || '';
+    const parts = description.split(' - ');
+    const atividade = parts[0] || 'Atividade';
+    const dataHorario = parts[1] || '';
+    const participantesInfo = parts[2] || '1p';
+    const petInfo = parts[3] || 'Pet:false';
+    
+    const dataReserva = dataHorario.split(' ')[0] || new Date().toISOString().slice(0, 10);
+    const horario = dataHorario.split(' ')[1] || 'Sem horário';
+    const participantes = parseInt(participantesInfo.replace('p', '')) || 1;
+    const temPet = petInfo.includes('true');
+    
+    // Criar reserva no Firebase
+    const reservaData = {
+      nome: customer.name,
+      email: customer.email,
+      cpf: customer.cpfCnpj,
+      telefone: customer.phone,
+      valor: paymentData.value,
+      atividade,
+      data: dataReserva,
+      horario,
+      participantes,
+      temPet,
+      status: 'pago',
+      dataPagamento: new Date(),
+      criadoEm: new Date(),
+    };
+    
+    await db.collection('reservas').doc(externalId).set(reservaData);
+    console.log(`✅ Reserva criada no Firebase: ${externalId}`);
+    
+    res.sendStatus(200);
+
+  } catch (error) {
+    console.error('❌ Erro ao processar webhook:', error);
+    res.status(500).send('Erro ao processar o webhook');
+  }
+});
+
 // Importar e adicionar a rota de cobrança
 const { criarCobrancaHandler } = require('./src/services/assas.js');
-const webhookRouter = require('./src/server/webhook.js');
 require('dotenv/config');
 
-// Adicionar as rotas que estavam faltando
 app.post('/criar-cobranca', criarCobrancaHandler);
-app.use('/webhook', webhookRouter);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
