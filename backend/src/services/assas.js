@@ -72,6 +72,23 @@ async function criarCobrancaHandler(req, res) {
   }
 
   try {
+    // 🔍 Verificar se já existe reserva com mesmo CPF, data e horário
+    const duplicataQuery = db.collection("reservas")
+      .where("cpf", "==", cpf)
+      .where("data", "==", data)
+      .where("horario", "==", horarioFormatado);
+
+    const duplicataSnapshot = await duplicataQuery.get();
+    
+    if (!duplicataSnapshot.empty) {
+      console.log("⚠️ Tentativa de reserva duplicada:", cpf, data, horarioFormatado);
+      res.status(400).json({
+        status: "erro",
+        error: "Já existe uma reserva para este CPF na mesma data e horário.",
+      });
+      return;
+    }
+
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = db.collection("reservas")
       .where("data", "==", data)
@@ -92,26 +109,6 @@ async function criarCobrancaHandler(req, res) {
       });
       return;
     }
-
-    // ✅ Criar reserva no Firebase
-    const reservaId = await criarReserva({
-      nome,
-      cpf,
-      email,
-      telefone,
-      atividade,
-      valor,
-      data,
-      participantes,
-      adultos,
-      bariatrica,
-      criancas,
-      naoPagante,
-      observacao: "",
-      horario: horarioFormatado,
-      status: "aguardando",
-      temPet,
-    });
 
     const dataHoje = new Date().toISOString().split("T")[0];
 
@@ -162,6 +159,26 @@ async function criarCobrancaHandler(req, res) {
       console.log("🆕 Cliente criado:", customerId);
     }
 
+    // ✅ Criar reserva no Firebase APENAS após confirmar cliente
+    const reservaId = await criarReserva({
+      nome,
+      cpf,
+      email,
+      telefone,
+      atividade,
+      valor,
+      data,
+      participantes,
+      adultos,
+      bariatrica,
+      criancas,
+      naoPagante,
+      observacao: "",
+      horario: horarioFormatado,
+      status: "aguardando",
+      temPet,
+    });
+
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
       method: "POST",
@@ -184,6 +201,8 @@ async function criarCobrancaHandler(req, res) {
 
     if (!paymentResponse.ok) {
       console.error("❌ Erro ao criar cobrança:", cobrancaData);
+      // Deletar reserva se cobrança falhou
+      await db.collection('reservas').doc(reservaId).delete();
       res.status(400).json({ status: "erro", erro: cobrancaData });
       return;
     }

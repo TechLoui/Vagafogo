@@ -345,10 +345,12 @@ app.get('/api/status', (req, res) => {
 
 // Importar e adicionar a rota de cobrança
 const { criarCobrancaHandler } = require('./src/services/assas.js');
+const webhookRouter = require('./src/server/webhook.js');
 require('dotenv/config');
 
-// Adicionar a rota que estava faltando
+// Adicionar as rotas que estavam faltando
 app.post('/criar-cobranca', criarCobrancaHandler);
+app.use('/webhook', webhookRouter);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
