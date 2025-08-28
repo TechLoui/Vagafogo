@@ -541,7 +541,7 @@ export default function AdminDashboard() {
                 <button onClick={handleAddReserva} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 shadow-sm">
                   <FaPlus /> Nova Reserva
                 </button>
-                <a href="/" target="_blank" className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 shadow-sm">
+                <a href={`/#reservas?data=${dayjs(selectedDate).format('YYYY-MM-DD')}`} target="_blank" className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 shadow-sm">
                   📅 Abrir Agenda
                 </a>
               </div>
