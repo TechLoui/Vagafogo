@@ -142,7 +142,7 @@ async function criarCobrancaHandler(req, res) {
       observacao: "",
       horario: horarioFormatado,
       temPet,
-      status: 'pendente',
+      status: 'Aguardando',
       criadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
     
@@ -176,6 +176,7 @@ async function criarCobrancaHandler(req, res) {
     }
 
     console.log("✅ Cobrança criada:", cobrancaData.id);
+    console.log("💾 Reserva criada no banco com ID:", reservaId, "- Status: pendente");
     res.status(200).json({
       status: "ok",
       cobranca: {

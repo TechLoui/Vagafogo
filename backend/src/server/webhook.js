@@ -4,6 +4,12 @@ const admin = require('firebase-admin');
 const router = express.Router();
 const db = admin.firestore();
 
+// Rota de teste para verificar se webhook está acessível
+router.get('/', (req, res) => {
+  console.log('🔧 Webhook GET - Teste de conectividade');
+  res.json({ status: 'Webhook funcionando', timestamp: new Date().toISOString() });
+});
+
 router.post('/', async (req, res) => {
   const data = req.body;
   console.log("📩 WEBHOOK CHAMADO - Evento:", data.event, "Status:", data.payment?.status, "ID:", data.payment?.externalReference);
@@ -31,7 +37,7 @@ router.post('/', async (req, res) => {
     // Atualizar status para aguardando (pago)
     const reservaRef = db.collection('reservas').doc(externalId);
     await reservaRef.update({
-      status: 'aguardando',
+      status: 'Pago',
       dataPagamento: admin.firestore.FieldValue.serverTimestamp()
     });
     
