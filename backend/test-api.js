@@ -62,7 +62,7 @@ app.get('/api/test-firebase', async (req, res) => {
   }
 });
 
-// GET /api/reservas
+// GET /api/reservas - apenas reservas pagas
 app.get('/api/reservas', async (req, res) => {
   // Headers para evitar cache
   res.set({
@@ -71,11 +71,8 @@ app.get('/api/reservas', async (req, res) => {
     'Expires': '0'
   });
   try {
-    const snapshot = await db.collection('reservas').get();
-    console.log('Total reservas no banco:', snapshot.size);
-    snapshot.docs.forEach(doc => {
-      console.log('Reserva:', doc.id, 'Status:', doc.data().status);
-    });
+    const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
+    console.log('Total reservas pagas no banco:', snapshot.size);
     
     if (snapshot.empty) {
       return res.json([]);
@@ -148,11 +145,12 @@ app.get('/api/pacotes', async (req, res) => {
   }
 });
 
-// POST /api/reservas
+// POST /api/reservas - apenas para admin com status pago
 app.post('/api/reservas', async (req, res) => {
   try {
-    const docRef = await db.collection('reservas').add(req.body);
-    res.json({ id: docRef.id, ...req.body });
+    const reservaData = { ...req.body, status: 'pago' };
+    const docRef = await db.collection('reservas').add(reservaData);
+    res.json({ id: docRef.id, ...reservaData });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
