@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import { criarReserva } from "./reservas";
 import { getDocs, collection, query, where } from "firebase/firestore";
 import { db } from "./firebase";
 
