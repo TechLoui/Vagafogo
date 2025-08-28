@@ -23,7 +23,8 @@ async function criarCobrancaHandler(req, res) {
     temPet,
   } = req.body;
 
-  console.log("📥 Dados recebidos:", req.body);
+  console.log("📥 Dados recebidos:", JSON.stringify(req.body, null, 2));
+  console.log("🔍 Validando campos obrigatórios...");
 
   const horarioFormatado = horario?.toString().trim();
 
@@ -42,10 +43,23 @@ async function criarCobrancaHandler(req, res) {
 
   if (camposFaltando.length > 0) {
     console.log("❌ Campos faltando:", camposFaltando);
+    console.log("📝 Dados recebidos para debug:", {
+      nome: nome || 'VAZIO',
+      email: email || 'VAZIO', 
+      valor: valor || 'VAZIO',
+      cpf: cpf || 'VAZIO',
+      telefone: telefone || 'VAZIO',
+      atividade: atividade || 'VAZIO',
+      data: data || 'VAZIO',
+      horario: horario || 'VAZIO',
+      participantes: participantes || 'VAZIO',
+      billingType: billingType || 'VAZIO'
+    });
     res.status(400).json({
       status: "erro",
       error: `Dados incompletos. Campos faltando: ${camposFaltando.join(', ')}`,
-      camposFaltando
+      camposFaltando,
+      dadosRecebidos: req.body
     });
     return;
   }
