@@ -71,44 +71,15 @@ app.get('/api/reservas', async (req, res) => {
     'Expires': '0'
   });
   try {
-    console.log('Buscando reservas no Firebase...');
-    
-    // Tentar primeiro 'reservas' (minúsculo)
-    let snapshot;
-    let collectionUsed = '';
-    
-    try {
-      console.log('Tentando coleção: reservas (minúsculo)');
-      snapshot = await db.collection('reservas').get();
-      collectionUsed = 'reservas';
-      console.log(`Coleção 'reservas': ${snapshot.size} documentos`);
-    } catch (error1) {
-      console.log('Erro na coleção reservas:', error1.message);
-      
-      try {
-        console.log('Tentando coleção: Reservas (maiúsculo)');
-        snapshot = await db.collection('Reservas').get();
-        collectionUsed = 'Reservas';
-        console.log(`Coleção 'Reservas': ${snapshot.size} documentos`);
-      } catch (error2) {
-        console.log('Erro na coleção Reservas:', error2.message);
-        throw error2;
-      }
-    }
-    console.log(`Encontradas ${snapshot.size} reservas na coleção '${collectionUsed}'`);
+    const snapshot = await db.collection('reservas').get();
     
     if (snapshot.empty) {
-      console.log('Coleção vazia, retornando array vazio');
       return res.json([]);
     }
     
     const reservas = snapshot.docs.map(doc => {
-      const data = doc.data();
-      console.log(`Reserva ${doc.id} da coleção '${collectionUsed}':`, data);
-      return { id: doc.id, ...data };
+      return { id: doc.id, ...doc.data() };
     });
-    
-    console.log(`Reservas carregadas com sucesso da coleção '${collectionUsed}':`, reservas.length);
     res.json(reservas);
   } catch (error) {
     console.error('Erro detalhado ao buscar reservas:');
@@ -143,19 +114,14 @@ app.get('/api/reservas', async (req, res) => {
 // GET /api/pacotes
 app.get('/api/pacotes', async (req, res) => {
   try {
-    console.log('Buscando pacotes no Firebase...');
     const snapshot = await db.collection('pacotes').get();
-    console.log(`Encontrados ${snapshot.size} pacotes`);
     
     if (snapshot.empty) {
-      console.log('Nenhum pacote encontrado, retornando array vazio');
       return res.json([]);
     }
     
     const pacotes = snapshot.docs.map(doc => {
-      const data = doc.data();
-      console.log(`Pacote ${doc.id}:`, data);
-      return { id: doc.id, ...data };
+      return { id: doc.id, ...doc.data() };
     });
     
     res.json(pacotes);
@@ -181,12 +147,9 @@ app.get('/api/pacotes', async (req, res) => {
 // POST /api/reservas
 app.post('/api/reservas', async (req, res) => {
   try {
-    console.log('Criando nova reserva:', req.body);
     const docRef = await db.collection('reservas').add(req.body);
-    console.log('Reserva criada com ID:', docRef.id);
     res.json({ id: docRef.id, ...req.body });
   } catch (error) {
-    console.error('Erro ao criar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -204,12 +167,9 @@ app.post('/api/pacotes', async (req, res) => {
 // PUT /api/reservas/:id
 app.put('/api/reservas/:id', async (req, res) => {
   try {
-    console.log(`Atualizando reserva ${req.params.id}:`, req.body);
     await db.collection('reservas').doc(req.params.id).update(req.body);
-    console.log('Reserva atualizada com sucesso');
     res.json({ id: req.params.id, ...req.body });
   } catch (error) {
-    console.error('Erro ao atualizar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -227,12 +187,9 @@ app.put('/api/pacotes/:id', async (req, res) => {
 // DELETE /api/reservas/:id
 app.delete('/api/reservas/:id', async (req, res) => {
   try {
-    console.log(`Deletando reserva ${req.params.id}`);
     await db.collection('reservas').doc(req.params.id).delete();
-    console.log('Reserva deletada com sucesso');
     res.json({ success: true });
   } catch (error) {
-    console.error('Erro ao deletar reserva:', error);
     res.status(500).json({ error: error.message });
   }
 });
