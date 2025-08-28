@@ -9,8 +9,10 @@ app.use(express.json());
 // GET /api/reservas - apenas reservas pagas
 app.get('/api/reservas', async (req, res) => {
   try {
+    console.log('🔍 Buscando apenas reservas com status = pago');
     const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
     const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    console.log(`📊 Encontradas ${reservas.length} reservas pagas`);
     res.json(reservas);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
