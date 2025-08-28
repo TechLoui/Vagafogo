@@ -71,7 +71,11 @@ app.get('/api/reservas', async (req, res) => {
     'Expires': '0'
   });
   try {
-    const snapshot = await db.collection('reservas').where('status', '==', 'Pago').get();
+    const snapshot = await db.collection('reservas').get();
+    console.log('Total reservas no banco:', snapshot.size);
+    snapshot.docs.forEach(doc => {
+      console.log('Reserva:', doc.id, 'Status:', doc.data().status);
+    });
     
     if (snapshot.empty) {
       return res.json([]);
