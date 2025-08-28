@@ -109,10 +109,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       return;
     }
 
-    // ✅ Usar timestamp como ID temporário
-    const reservaId = Date.now().toString();
-
     const dataHoje = new Date().toISOString().split("T")[0];
+    const reservaId = Date.now().toString();
 
     // 🔍 Verificar se o cliente já existe no Asaas (pelo CPF)
     const customerSearch = await fetch(
@@ -174,7 +172,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         customer: customerId,
         value: valor,
         dueDate: dataHoje,
-        description: `Cobrança de ${nome}`,
+        description: `${atividade} - ${data} ${horarioFormatado} - ${participantes}p - Pet:${temPet}`,
         externalReference: reservaId,
       }),
     });

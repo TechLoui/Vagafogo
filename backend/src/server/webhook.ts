@@ -46,6 +46,19 @@ router.post('/', async (req, res) => {
     const paymentData = await paymentResponse.json();
     const customer = paymentData.customer;
     
+    // Extrair dados da reserva da descrição
+    const description = paymentData.description || '';
+    const parts = description.split(' - ');
+    const atividade = parts[0] || 'Atividade';
+    const dataHorario = parts[1] || '';
+    const participantesInfo = parts[2] || '1p';
+    const petInfo = parts[3] || 'Pet:false';
+    
+    const data = dataHorario.split(' ')[0] || new Date().toISOString().slice(0, 10);
+    const horario = dataHorario.split(' ')[1] || 'Sem horário';
+    const participantes = parseInt(participantesInfo.replace('p', '')) || 1;
+    const temPet = petInfo.includes('true');
+    
     // Criar reserva no Firebase apenas após pagamento confirmado
     const reservaRef = doc(db, 'reservas', externalId);
     const reservaData = {
@@ -54,6 +67,11 @@ router.post('/', async (req, res) => {
       cpf: customer.cpfCnpj,
       telefone: customer.phone,
       valor: paymentData.value,
+      atividade,
+      data,
+      horario,
+      participantes,
+      temPet,
       status: 'pago',
       dataPagamento: new Date(),
       criadoEm: new Date(),
