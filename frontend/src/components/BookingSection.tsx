@@ -218,7 +218,7 @@ export function BookingSection() {
         criancas,
         naoPagante,
         billingType: formaPagamento,
-        horario: horariosDisponiveis.length > 0 ? horario : "Trilha",
+        horario: horariosDisponiveis.length > 0 ? horario : "Sem horário específico",
         temPet,
       };
 
