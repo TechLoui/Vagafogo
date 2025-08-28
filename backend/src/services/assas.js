@@ -125,7 +125,7 @@ async function criarCobrancaHandler(req, res) {
       customerId = customerData.id;
     }
 
-    // ✅ Criar reserva diretamente com status aguardando
+    // ✅ Criar reserva com status pendente
     const dadosReserva = {
       nome,
       cpf,
@@ -142,7 +142,7 @@ async function criarCobrancaHandler(req, res) {
       observacao: "",
       horario: horarioFormatado,
       temPet,
-      status: 'aguardando',
+      status: 'pendente',
       criadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
     

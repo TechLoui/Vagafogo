@@ -28,10 +28,10 @@ router.post('/', async (req, res) => {
 
   try {
     // Verificar se é ID temporário ou reserva existente
-    // Atualizar reserva existente para status pago
+    // Atualizar status para aguardando (pago)
     const reservaRef = db.collection('reservas').doc(externalId);
     await reservaRef.update({
-      status: 'pago',
+      status: 'aguardando',
       dataPagamento: admin.firestore.FieldValue.serverTimestamp()
     });
     
