@@ -4,19 +4,6 @@ const fetch = require('node-fetch');
 // Usar a mesma instância do Firestore do test-api.js
 const db = admin.firestore();
 
-async function criarReserva(dados) {
-  try {
-    const docRef = await db.collection('reservas').add({
-      ...dados,
-      criadoEm: admin.firestore.FieldValue.serverTimestamp()
-    });
-    return docRef.id;
-  } catch (error) {
-    console.error('Erro ao criar reserva:', error);
-    throw error;
-  }
-}
-
 async function criarCobrancaHandler(req, res) {
   const {
     nome,
@@ -159,8 +146,8 @@ async function criarCobrancaHandler(req, res) {
       console.log("🆕 Cliente criado:", customerId);
     }
 
-    // ✅ Criar reserva no Firebase APENAS após confirmar cliente
-    const reservaId = await criarReserva({
+    // 💾 Criar dados temporários para o pagamento (não salva no Firebase ainda)
+    const dadosReserva = {
       nome,
       cpf,
       email,
@@ -175,9 +162,11 @@ async function criarCobrancaHandler(req, res) {
       naoPagante,
       observacao: "",
       horario: horarioFormatado,
-      status: "aguardando",
       temPet,
-    });
+    };
+    
+    // Usar timestamp como ID temporário
+    const reservaId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
@@ -193,7 +182,7 @@ async function criarCobrancaHandler(req, res) {
         value: valor,
         dueDate: dataHoje,
         description: `Cobrança de ${nome}`,
-        externalReference: reservaId,
+        externalReference: JSON.stringify(dadosReserva),
       }),
     });
 
@@ -201,8 +190,6 @@ async function criarCobrancaHandler(req, res) {
 
     if (!paymentResponse.ok) {
       console.error("❌ Erro ao criar cobrança:", cobrancaData);
-      // Deletar reserva se cobrança falhou
-      await db.collection('reservas').doc(reservaId).delete();
       res.status(400).json({ status: "erro", erro: cobrancaData });
       return;
     }

@@ -28,23 +28,36 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    console.log(`🔄 Atualizando reserva com ID: ${externalId}`);
-    
-    const reservaRef = db.collection('reservas').doc(externalId);
-    await reservaRef.update({
-      status: 'pago',
-      dataPagamento: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    const reservaSnap = await reservaRef.get();
-    if (!reservaSnap.exists) {
-      console.warn(`⚠️ Reserva ${externalId} não encontrada`);
-      return res.sendStatus(404);
+    // Tentar fazer parse dos dados da reserva
+    let dadosReserva;
+    try {
+      dadosReserva = JSON.parse(externalId);
+      console.log(`💾 Criando reserva após pagamento confirmado:`, dadosReserva.nome);
+    } catch (parseError) {
+      // Se não conseguir fazer parse, é um ID de reserva existente
+      console.log(`🔄 Atualizando reserva existente com ID: ${externalId}`);
+      
+      const reservaRef = db.collection('reservas').doc(externalId);
+      await reservaRef.update({
+        status: 'pago',
+        dataPagamento: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      console.log(`✅ Reserva ${externalId} atualizada para 'pago'`);
+      return res.sendStatus(200);
     }
 
-    const reserva = reservaSnap.data();
-    console.log(`✅ Reserva ${externalId} atualizada para 'pago'`);
-    console.log(`📧 Confirmação para: ${reserva.email}`);
+    // Criar nova reserva com status 'pago'
+    const novaReserva = {
+      ...dadosReserva,
+      status: 'pago',
+      dataPagamento: admin.firestore.FieldValue.serverTimestamp(),
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const docRef = await db.collection('reservas').add(novaReserva);
+    console.log(`✅ Reserva criada com ID: ${docRef.id} - Status: pago`);
+    console.log(`📧 Confirmação para: ${dadosReserva.email}`);
     
     res.sendStatus(200);
 
