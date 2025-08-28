@@ -7,7 +7,7 @@ import { api } from '../sevices/api';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
-import { ConnectionStatus } from './ConnectionStatus';
+
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -37,6 +37,7 @@ interface Pacote {
   id?: string;
   nome: string;
   tipo: string;
+  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
@@ -315,6 +316,7 @@ export default function AdminDashboard() {
     setEditPacote({
       nome: '',
       tipo: '',
+      emoji: '✨',
       precoAdulto: 0,
       precoCrianca: 0,
       precoBariatrica: 0,
@@ -402,7 +404,6 @@ export default function AdminDashboard() {
   // Render
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
-      <ConnectionStatus />
       
       {/* Header Profissional */}
       <header className="bg-white shadow-lg border-b border-gray-200">
@@ -414,7 +415,6 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Vagafogo Admin</h1>
-                <p className="text-sm text-gray-600">Painel de Administração</p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
@@ -771,6 +771,7 @@ export default function AdminDashboard() {
             <table className="min-w-full divide-y divide-gray-200 text-xs mb-4">
               <thead className="bg-gray-100">
                 <tr>
+                  <th className="px-2 py-2 text-left">Emoji</th>
                   <th className="px-2 py-2 text-left">Nome</th>
                   <th className="px-2 py-2 text-left">Tipo</th>
                   <th className="px-2 py-2 text-left">Preço Adulto</th>
@@ -785,6 +786,7 @@ export default function AdminDashboard() {
               <tbody>
                 {pacotes.map(p => (
                   <tr key={p.id}>
+                    <td className="px-2 py-1 text-2xl">{p.emoji || '✨'}</td>
                     <td className="px-2 py-1">{p.nome}</td>
                     <td className="px-2 py-1">{p.tipo}</td>
                     <td className="px-2 py-1">R$ {Number(p.precoAdulto).toLocaleString('pt-BR')}</td>
@@ -794,8 +796,8 @@ export default function AdminDashboard() {
                     <td className="px-2 py-1">{p.horarios.join(', ') || '-'}</td>
                     <td className="px-2 py-1">{p.limite}</td>
                     <td className="px-2 py-1 flex gap-1">
-                      <button className="text-blue-600" onClick={() => handleEditPacote(p)}>Editar</button>
-                      <button className="text-red-600" onClick={() => excluirPacote(p.id!)}>Excluir</button>
+                      <button className="text-blue-600 hover:text-blue-800 px-2 py-1 rounded" onClick={() => handleEditPacote(p)}>Editar</button>
+                      <button className="text-red-600 hover:text-red-800 px-2 py-1 rounded" onClick={() => excluirPacote(p.id!)}>Excluir</button>
                     </td>
                   </tr>
                 ))}
@@ -808,6 +810,18 @@ export default function AdminDashboard() {
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
               <div className="bg-white p-6 rounded shadow w-full max-w-xs max-h-[95vh] overflow-y-auto">
                 <h4 className="font-bold mb-2">{isEditingPacote ? 'Editar' : 'Novo'} Pacote</h4>
+                <label className="block mb-1 text-xs">Emoji do pacote:
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{editPacote.emoji || '✨'}</span>
+                    <input 
+                      value={editPacote.emoji || ''} 
+                      onChange={e => setEditPacote(f => ({ ...f!, emoji: e.target.value }))} 
+                      className="w-full border px-2 py-1 rounded" 
+                      placeholder="✨"
+                      maxLength={2}
+                    />
+                  </div>
+                </label>
                 <label className="block mb-1 text-xs">Nome da atividade:
                   <input value={editPacote.nome} onChange={e => setEditPacote(f => ({ ...f!, nome: e.target.value }))} className="w-full border px-2 py-1 rounded" />
                 </label>

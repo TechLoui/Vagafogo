@@ -9,6 +9,7 @@ type Pacote = {
   id?: string;
   nome: string;
   tipo: "brunch" | "trilha" | "experiencia";
+  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
@@ -56,6 +57,7 @@ export function BookingSection() {
             id: doc.id,
             nome: d.nome,
             tipo: d.tipo,
+            emoji: d.emoji,
             precoAdulto: Number(d.precoAdulto),
             precoCrianca: Number(d.precoCrianca),
             precoBariatrica: Number(d.precoBariatrica),
@@ -291,7 +293,7 @@ export function BookingSection() {
                   onClick={() => handlePackage(idx)}
                 >
                   <div className="text-3xl mb-2 text-[#8B4F23]">
-                    {pkg.tipo === "brunch" ? "🥐" : pkg.tipo === "trilha" ? "🌳" : "✨"}
+                    {pkg.emoji || (pkg.tipo === "brunch" ? "🥐" : pkg.tipo === "trilha" ? "🌳" : "✨")}
                   </div>
                   <h4 className="font-bold text-[#8B4F23]">{pkg.nome}</h4>
                   <p className="text-sm text-gray-500">
