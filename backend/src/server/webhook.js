@@ -28,38 +28,14 @@ router.post('/', async (req, res) => {
 
   try {
     // Verificar se é ID temporário ou reserva existente
-    if (externalId.startsWith('temp_')) {
-      const tempRef = db.collection('reservas_temp').doc(externalId);
-      const tempSnap = await tempRef.get();
-      
-      if (!tempSnap.exists) {
-        console.warn(`⚠️ Temp não encontrado: ${externalId}`);
-        return res.sendStatus(404);
-      }
-      
-      const dadosReserva = tempSnap.data();
-      
-      const novaReserva = {
-        ...dadosReserva,
-        status: 'pago',
-        dataPagamento: admin.firestore.FieldValue.serverTimestamp(),
-        criadoEm: admin.firestore.FieldValue.serverTimestamp()
-      };
-      
-      const docRef = await db.collection('reservas').add(novaReserva);
-      await tempRef.delete();
-      
-      console.log(`✅ Reserva criada: ${dadosReserva.nome} - ${docRef.id}`);
-      
-    } else {
-      const reservaRef = db.collection('reservas').doc(externalId);
-      await reservaRef.update({
-        status: 'pago',
-        dataPagamento: admin.firestore.FieldValue.serverTimestamp()
-      });
-      
-      console.log(`✅ Reserva atualizada: ${externalId}`);
-    }
+    // Atualizar reserva existente para status pago
+    const reservaRef = db.collection('reservas').doc(externalId);
+    await reservaRef.update({
+      status: 'pago',
+      dataPagamento: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    console.log(`✅ Reserva paga: ${externalId}`);
     
     res.sendStatus(200);
 

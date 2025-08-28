@@ -125,9 +125,7 @@ async function criarCobrancaHandler(req, res) {
       customerId = customerData.id;
     }
 
-    // 💾 Criar ID temporário e salvar dados
-    const reservaId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+    // ✅ Criar reserva diretamente com status aguardando
     const dadosReserva = {
       nome,
       cpf,
@@ -144,11 +142,12 @@ async function criarCobrancaHandler(req, res) {
       observacao: "",
       horario: horarioFormatado,
       temPet,
-      status: 'pendente'
+      status: 'aguardando',
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
     
-    // Salvar dados temporários no Firebase
-    await db.collection('reservas_temp').doc(reservaId).set(dadosReserva);
+    const docRef = await db.collection('reservas').add(dadosReserva);
+    const reservaId = docRef.id;
 
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
