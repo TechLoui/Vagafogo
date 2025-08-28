@@ -343,9 +343,17 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// Importar e adicionar a rota de cobrança
+const { criarCobrancaHandler } = require('./src/services/assas.js');
+require('dotenv/config');
+
+// Adicionar a rota que estava faltando
+app.post('/criar-cobranca', criarCobrancaHandler);
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log('Token Asaas carregado:', process.env.ASAAS_API_KEY ? 'SIM' : 'NÃO');
 });
 
 module.exports = app;

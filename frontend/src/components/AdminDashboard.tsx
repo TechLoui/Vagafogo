@@ -61,10 +61,17 @@ export default function AdminDashboard() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('🔐 Tentando login com:', { email, projeto: auth.app.options.projectId });
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('✅ Login realizado com sucesso:', userCredential.user.email);
     } catch (error: any) {
-      setLoginError('Email ou senha incorretos');
+      console.error('❌ Erro no login:', {
+        code: error.code,
+        message: error.message,
+        email: email
+      });
+      setLoginError(`Erro: ${error.code} - ${error.message}`);
     }
   };
 
@@ -145,12 +152,8 @@ export default function AdminDashboard() {
       const reservasDaData = dados.filter(r => r.data === formatted);
       console.log('📊 Reservas da data', formatted, ':', reservasDaData.length);
       
-      // Filtrar apenas reservas pagas
-      const reservasPagas = reservasDaData.filter(r => r.status === 'pago');
-      console.log('✅ Reservas pagas:', reservasPagas.length);
-      
-      // Agrupar por horário
-      const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
+      // Agrupar por horário (todas as reservas)
+      const reservasPorHorario = reservasDaData.reduce((acc, reserva) => {
         const horario = reserva.horario || 'Sem horário';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
@@ -159,8 +162,8 @@ export default function AdminDashboard() {
       
       setReservas(reservasPorHorario);
       
-      if (reservasPagas.length === 0 && reservasDaData.length > 0) {
-        setFeedback({ type: 'error', message: `Encontradas ${reservasDaData.length} reservas para esta data, mas nenhuma com status "pago".` });
+      if (reservasDaData.length === 0) {
+        setFeedback({ type: 'error', message: 'Nenhuma reserva encontrada para esta data.' });
       }
       
     } catch (error: any) {
@@ -498,7 +501,7 @@ export default function AdminDashboard() {
                 <tbody>
                   {Object.keys(reservas).length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-2 py-3 text-gray-500 text-xs">Nenhuma reserva paga encontrada.</td>
+                      <td colSpan={10} className="px-2 py-3 text-gray-500 text-xs">Nenhuma reserva encontrada para esta data.</td>
                     </tr>
                   ) : (
                     Object.keys(reservas)
