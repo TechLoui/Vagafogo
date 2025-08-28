@@ -401,38 +401,96 @@ export default function AdminDashboard() {
 
   // Render
   return (
-    <main className="min-h-screen w-full bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
       <ConnectionStatus />
-      {/* Feedback */}
+      
+      {/* Header Profissional */}
+      <header className="bg-white shadow-lg border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-6">
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl flex items-center justify-center">
+                <span className="text-white font-bold text-xl">V</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Vagafogo Admin</h1>
+                <p className="text-sm text-gray-600">Painel de Administração</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="text-sm text-gray-600">
+                Bem-vindo, <span className="font-medium">{user?.email}</span>
+              </div>
+              <button 
+                onClick={() => auth.signOut()}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors duration-200"
+              >
+                Sair
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Feedback Toast */}
       {feedback && (
-        <div className={`fixed top-4 right-4 z-[99] px-6 py-2 rounded shadow transition-all text-white ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
-          {feedback.message}
+        <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg transition-all duration-300 transform ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white`}>
+          <div className="flex items-center space-x-2">
+            <span className="text-lg">{feedback.type === 'success' ? '✓' : '⚠'}</span>
+            <span>{feedback.message}</span>
+          </div>
         </div>
       )}
 
-      {/* Teste Firebase removido - usando API */}
+      {/* Navigation Tabs */}
+      <nav className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8">
+            <button 
+              onClick={() => setAba('reservas')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                aba === 'reservas' 
+                  ? 'border-green-500 text-green-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <FaPlus className="inline mr-2" />
+              Reservas
+            </button>
+            <button 
+              onClick={() => setAba('pacotes')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                aba === 'pacotes' 
+                  ? 'border-green-500 text-green-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <FaBox className="inline mr-2" />
+              Pacotes
+            </button>
+            <button 
+              onClick={() => setAba('pesquisa')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                aba === 'pesquisa' 
+                  ? 'border-green-500 text-green-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <FaSearch className="inline mr-2" />
+              Pesquisa de Clientes
+            </button>
+          </div>
+        </div>
+      </nav>
 
-      {/* Abas */}
-      <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">
-        <button onClick={() => setAba('reservas')}
-          className={`px-3 py-1 rounded ${aba === 'reservas' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaPlus className="inline mr-1" /> Reservas
-        </button>
-        <button onClick={() => setAba('pacotes')}
-          className={`px-3 py-1 rounded ${aba === 'pacotes' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaBox className="inline mr-1" /> Pacotes
-        </button>
-        <button onClick={() => setAba('pesquisa')}
-          className={`px-3 py-1 rounded ${aba === 'pesquisa' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaSearch className="inline mr-1" /> Pesquisa de Clientes
-        </button>
-      </div>
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
         <>
           {/* Calendário */}
-          <section className="bg-white p-4 rounded shadow mb-6 w-full">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
             <div className="flex justify-between items-center mb-4">
               <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
               <h2 className="text-lg font-bold">{dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}</h2>
@@ -457,10 +515,10 @@ export default function AdminDashboard() {
                 );
               })}
             </div>
-          </section>
+          </div>
 
           {/* Reservas Tabela */}
-          <section className="bg-white p-4 rounded shadow w-full">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
               <div className="flex items-center gap-4 flex-wrap">
                 <h3 className="text-base font-bold">
@@ -477,7 +535,7 @@ export default function AdminDashboard() {
                   <option value="Brunch + trilha">Brunch + trilha</option>
                 </select>
               </div>
-              <button onClick={handleAddReserva} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-2 text-sm">
+              <button onClick={handleAddReserva} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 shadow-sm">
                 <FaPlus /> Nova Reserva
               </button>
             </div>
@@ -696,16 +754,16 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
-          </section>
+          </div>
         </>
       )}
 
       {/* ========== Pacotes ========== */}
       {aba === 'pacotes' && (
-        <section className="bg-white p-4 rounded shadow w-full">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex justify-between mb-4">
             <h2 className="font-bold">Pacotes</h2>
-            <button onClick={handleAddPacote} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
+            <button onClick={handleAddPacote} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 shadow-sm">
               <FaPlus /> Novo Pacote
             </button>
           </div>
@@ -818,12 +876,12 @@ export default function AdminDashboard() {
               </div>
             </div>
           )}
-        </section>
+        </div>
       )}
 
       {/* ========== Pesquisa de Clientes ========== */}
       {aba === 'pesquisa' && (
-        <section className="bg-white p-4 rounded shadow w-full">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h2 className="font-bold mb-4">Pesquisa de Clientes</h2>
           <div className="flex gap-2 mb-4">
             <input
@@ -834,7 +892,7 @@ export default function AdminDashboard() {
               placeholder="Digite nome, CPF ou telefone"
               onKeyDown={e => e.key === 'Enter' && pesquisarClientes()}
             />
-            <button onClick={pesquisarClientes} className="bg-blue-600 text-white px-4 py-2 rounded">Pesquisar</button>
+            <button onClick={pesquisarClientes} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow-sm">Pesquisar</button>
           </div>
           {carregandoPesquisa ? (
             <div className="text-sm text-gray-500">Buscando...</div>
@@ -864,8 +922,9 @@ export default function AdminDashboard() {
           ) : (
             <div className="text-gray-500 text-sm">Nenhum cliente encontrado.</div>
           )}
-        </section>
+        </div>
       )}
-    </main>
+      </main>
+    </div>
   );
 }
