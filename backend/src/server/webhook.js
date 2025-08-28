@@ -6,7 +6,7 @@ const db = admin.firestore();
 
 router.post('/', async (req, res) => {
   const data = req.body;
-  console.log("📩 WEBHOOK RECEBIDO:", JSON.stringify(data, null, 2));
+  console.log("📩 WEBHOOK CHAMADO - Evento:", data.event, "Status:", data.payment?.status, "ID:", data.payment?.externalReference);
 
   const evento = data.event;
   const pagamento = data.payment;
