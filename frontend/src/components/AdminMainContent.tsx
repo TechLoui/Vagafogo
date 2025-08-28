@@ -10,8 +10,7 @@ export function AdminMainContentHeader() {
         <div className="flex justify-between items-center p-4">
           {/* Título e descrição */}
           <div>
-            <h1 className="text-xl font-semibold text-gray-800">Painel Administrativo</h1>
-            <p className="text-sm text-gray-500">Gerencie as atividades e reservas da agenda</p>
+            <h1 className="text-xl font-semibold text-gray-800">Vagafogo Admin</h1>
           </div>
 
           {/* Botão Mobile */}
