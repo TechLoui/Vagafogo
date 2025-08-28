@@ -10,7 +10,7 @@ app.use(express.json());
 app.get('/api/reservas', async (req, res) => {
   try {
     console.log('🔍 Buscando apenas reservas com status = pago');
-    const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
+    const snapshot = await db.collection('reservas').where('status', 'in', ['pago']).get();
     const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     console.log(`📊 Encontradas ${reservas.length} reservas pagas`);
     console.log('📋 Status das reservas:', reservas.map(r => ({ nome: r.nome, status: r.status })));
