@@ -109,25 +109,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       return;
     }
 
-    // ✅ Criar reserva no Firebase
-    const reservaId = await criarReserva({
-      nome,
-      cpf,
-      email,
-      telefone,
-      atividade,
-      valor,
-      data,
-      participantes,
-      adultos,
-      bariatrica,
-      criancas,
-      naoPagante,
-      observacao: "",
-      horario: horarioFormatado,
-      status: "aguardando",
-      temPet,
-    });
+    // ✅ Usar timestamp como ID temporário
+    const reservaId = Date.now().toString();
 
     const dataHoje = new Date().toISOString().split("T")[0];
 

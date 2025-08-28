@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../services/firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { enviarEmailConfirmacao } from '../services/emailService';
 
 const router = Router();
@@ -29,21 +29,39 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    console.log(`🔄 Atualizando reserva com ID: ${externalId}`);
+    console.log(`🔄 Criando reserva com ID: ${externalId}`);
     
-    const reservaRef = doc(db, 'reservas', externalId);
-    await updateDoc(reservaRef, {
-      status: 'pago',
-      dataPagamento: new Date()
+    // Buscar dados do pagamento no Asaas para obter informações da reserva
+    const paymentResponse = await fetch(`https://api.asaas.com/v3/payments/${pagamento.id}`, {
+      headers: {
+        'access_token': process.env.ASAAS_API_KEY!,
+      },
     });
-
-    const reservaSnap = await getDoc(reservaRef);
-    if (!reservaSnap.exists()) {
-      console.warn(`⚠️ Reserva ${externalId} não encontrada para envio de e-mail`);
-      return res.sendStatus(404);
+    
+    if (!paymentResponse.ok) {
+      console.error('Erro ao buscar dados do pagamento');
+      return res.sendStatus(500);
     }
-
-    const reserva = reservaSnap.data();
+    
+    const paymentData = await paymentResponse.json();
+    const customer = paymentData.customer;
+    
+    // Criar reserva no Firebase apenas após pagamento confirmado
+    const reservaRef = doc(db, 'reservas', externalId);
+    const reservaData = {
+      nome: customer.name,
+      email: customer.email,
+      cpf: customer.cpfCnpj,
+      telefone: customer.phone,
+      valor: paymentData.value,
+      status: 'pago',
+      dataPagamento: new Date(),
+      criadoEm: new Date(),
+    };
+    
+    await setDoc(reservaRef, reservaData);
+    
+    const reserva = reservaData;
 
     await enviarEmailConfirmacao({
       nome: reserva.nome,
