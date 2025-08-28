@@ -13,6 +13,7 @@ app.get('/api/reservas', async (req, res) => {
     const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
     const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     console.log(`📊 Encontradas ${reservas.length} reservas pagas`);
+    console.log('📋 Status das reservas:', reservas.map(r => ({ nome: r.nome, status: r.status })));
     res.json(reservas);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
