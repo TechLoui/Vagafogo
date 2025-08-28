@@ -6,7 +6,7 @@ const db = admin.firestore();
 
 router.post('/', async (req, res) => {
   const data = req.body;
-  console.log("📩 Webhook recebido:", JSON.stringify(data, null, 2));
+  console.log("📩 Webhook:", evento, status, externalId);
 
   const evento = data.event;
   const pagamento = data.payment;
@@ -18,7 +18,6 @@ router.post('/', async (req, res) => {
   const isPixPago = evento === 'PAYMENT_RECEIVED' && metodo === 'PIX' && status === 'RECEIVED';
 
   if (!isCartaoPago && !isPixPago) {
-    console.log("⏭️ Evento ignorado:", evento, "| Status:", status, "| Método:", metodo);
     return res.sendStatus(204);
   }
 
@@ -30,21 +29,16 @@ router.post('/', async (req, res) => {
   try {
     // Verificar se é ID temporário ou reserva existente
     if (externalId.startsWith('temp_')) {
-      console.log(`💾 Buscando dados temporários: ${externalId}`);
-      
-      // Buscar dados da coleção temporária
       const tempRef = db.collection('reservas_temp').doc(externalId);
       const tempSnap = await tempRef.get();
       
       if (!tempSnap.exists) {
-        console.warn(`⚠️ Dados temporários não encontrados: ${externalId}`);
+        console.warn(`⚠️ Temp não encontrado: ${externalId}`);
         return res.sendStatus(404);
       }
       
       const dadosReserva = tempSnap.data();
-      console.log(`💾 Criando reserva após pagamento confirmado:`, dadosReserva.nome);
       
-      // Criar reserva definitiva
       const novaReserva = {
         ...dadosReserva,
         status: 'pago',
@@ -53,24 +47,18 @@ router.post('/', async (req, res) => {
       };
       
       const docRef = await db.collection('reservas').add(novaReserva);
-      
-      // Deletar dados temporários
       await tempRef.delete();
       
-      console.log(`✅ Reserva criada com ID: ${docRef.id} - Status: pago`);
-      console.log(`📧 Confirmação para: ${dadosReserva.email}`);
+      console.log(`✅ Reserva criada: ${dadosReserva.nome} - ${docRef.id}`);
       
     } else {
-      // Reserva existente (sistema antigo)
-      console.log(`🔄 Atualizando reserva existente com ID: ${externalId}`);
-      
       const reservaRef = db.collection('reservas').doc(externalId);
       await reservaRef.update({
         status: 'pago',
         dataPagamento: admin.firestore.FieldValue.serverTimestamp()
       });
       
-      console.log(`✅ Reserva ${externalId} atualizada para 'pago'`);
+      console.log(`✅ Reserva atualizada: ${externalId}`);
     }
     
     res.sendStatus(200);

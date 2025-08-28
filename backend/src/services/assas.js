@@ -23,8 +23,7 @@ async function criarCobrancaHandler(req, res) {
     temPet,
   } = req.body;
 
-  console.log("📥 Dados recebidos:", JSON.stringify(req.body, null, 2));
-  console.log("🔍 Validando campos obrigatórios...");
+  console.log("📥 Nova reserva:", nome, "-", atividade);
 
   const horarioFormatado = horario?.toString().trim();
 
@@ -42,24 +41,10 @@ async function criarCobrancaHandler(req, res) {
   if (!billingType) camposFaltando.push('billingType');
 
   if (camposFaltando.length > 0) {
-    console.log("❌ Campos faltando:", camposFaltando);
-    console.log("📝 Dados recebidos para debug:", {
-      nome: nome || 'VAZIO',
-      email: email || 'VAZIO', 
-      valor: valor || 'VAZIO',
-      cpf: cpf || 'VAZIO',
-      telefone: telefone || 'VAZIO',
-      atividade: atividade || 'VAZIO',
-      data: data || 'VAZIO',
-      horario: horario || 'VAZIO',
-      participantes: participantes || 'VAZIO',
-      billingType: billingType || 'VAZIO'
-    });
+    console.log("❌ Campos faltando:", camposFaltando.join(', '));
     res.status(400).json({
       status: "erro",
       error: `Dados incompletos. Campos faltando: ${camposFaltando.join(', ')}`,
-      camposFaltando,
-      dadosRecebidos: req.body
     });
     return;
   }
@@ -113,9 +98,7 @@ async function criarCobrancaHandler(req, res) {
 
     if (customerSearchData?.data?.length > 0) {
       customerId = customerSearchData.data[0].id;
-      console.log("🔁 Cliente encontrado:", customerId);
     } else {
-      // 👤 Criar novo cliente
       const customerCreate = await fetch("https://api.asaas.com/v3/customers", {
         method: "POST",
         headers: {
@@ -134,13 +117,12 @@ async function criarCobrancaHandler(req, res) {
       const customerData = await customerCreate.json();
 
       if (!customerCreate.ok) {
-        console.error("❌ Erro ao criar cliente no Asaas:", customerData);
+        console.error("❌ Erro cliente Asaas:", customerData.errors?.[0]?.description || 'Erro desconhecido');
         res.status(400).json({ status: "erro", erro: customerData });
         return;
       }
 
       customerId = customerData.id;
-      console.log("🆕 Cliente criado:", customerId);
     }
 
     // 💾 Criar ID temporário e salvar dados
@@ -189,12 +171,12 @@ async function criarCobrancaHandler(req, res) {
     const cobrancaData = await paymentResponse.json();
 
     if (!paymentResponse.ok) {
-      console.error("❌ Erro ao criar cobrança:", cobrancaData);
+      console.error("❌ Erro cobrança:", cobrancaData.errors?.[0]?.description || 'Erro desconhecido');
       res.status(400).json({ status: "erro", erro: cobrancaData });
       return;
     }
 
-    // ✅ Resposta de sucesso
+    console.log("✅ Cobrança criada:", cobrancaData.id);
     res.status(200).json({
       status: "ok",
       cobranca: {
