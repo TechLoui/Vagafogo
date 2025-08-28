@@ -125,29 +125,8 @@ async function criarCobrancaHandler(req, res) {
       customerId = customerData.id;
     }
 
-    // ✅ Criar reserva com status pendente
-    const dadosReserva = {
-      nome,
-      cpf,
-      email,
-      telefone,
-      atividade,
-      valor,
-      data,
-      participantes,
-      adultos,
-      bariatrica,
-      criancas,
-      naoPagante,
-      observacao: "",
-      horario: horarioFormatado,
-      temPet,
-      status: 'Aguardando',
-      criadoEm: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    const docRef = await db.collection('reservas').add(dadosReserva);
-    const reservaId = docRef.id;
+    // ✅ NÃO criar reserva no Firebase - apenas gerar ID
+    const reservaId = Date.now().toString();
 
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
@@ -162,7 +141,7 @@ async function criarCobrancaHandler(req, res) {
         customer: customerId,
         value: valor,
         dueDate: dataHoje,
-        description: `Cobrança de ${nome}`,
+        description: `${atividade} - ${data} ${horarioFormatado} - ${participantes}p - Pet:${temPet}`,
         externalReference: reservaId,
       }),
     });
@@ -176,7 +155,7 @@ async function criarCobrancaHandler(req, res) {
     }
 
     console.log("✅ Cobrança criada:", cobrancaData.id);
-    console.log("💾 Reserva criada no banco com ID:", reservaId, "- Status: pendente");
+    console.log("💾 Reserva será criada após pagamento com ID:", reservaId);
     res.status(200).json({
       status: "ok",
       cobranca: {
