@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "dist/server/index.js",
+  "main": "test-api.js",
   "scripts": {
     "build": "echo 'Build completed'",
     "dev": "node test-api.js",
