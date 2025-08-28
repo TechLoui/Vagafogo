@@ -59,23 +59,6 @@ async function criarCobrancaHandler(req, res) {
   }
 
   try {
-    // 🔍 Verificar se já existe reserva com mesmo CPF, data e horário
-    const duplicataQuery = db.collection("reservas")
-      .where("cpf", "==", cpf)
-      .where("data", "==", data)
-      .where("horario", "==", horarioFormatado);
-
-    const duplicataSnapshot = await duplicataQuery.get();
-    
-    if (!duplicataSnapshot.empty) {
-      console.log("⚠️ Tentativa de reserva duplicada:", cpf, data, horarioFormatado);
-      res.status(400).json({
-        status: "erro",
-        error: "Já existe uma reserva para este CPF na mesma data e horário.",
-      });
-      return;
-    }
-
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = db.collection("reservas")
       .where("data", "==", data)
