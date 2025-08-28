@@ -9,9 +9,7 @@ export function AdminMainContentHeader() {
       <header className="bg-white shadow-sm">
         <div className="flex justify-between items-center p-4">
           {/* Título e descrição */}
-          <div>
-            <h1 className="text-xl font-semibold text-gray-800">Vagafogo Admin</h1>
-          </div>
+          <div></div>
 
           {/* Botão Mobile */}
           <div className="md:hidden">

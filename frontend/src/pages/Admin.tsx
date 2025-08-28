@@ -33,15 +33,7 @@ export function Admin() {
           onConfirm={handleConfirm}
         />
 
-        {/* Botão para abrir o modal */}
-        <section id="inicio">
-          <button
-            className=" bg-green-600 text-white rounded-lg hover:bg-green-700"
-            onClick={() => setIsModalOpen(true)}
-          >
-            Abrir Agenda
-          </button>
-        </section>
+
       </main>
     </>
   );
