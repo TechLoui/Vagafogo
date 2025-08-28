@@ -410,9 +410,11 @@ export default function AdminDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-6">
             <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl flex items-center justify-center">
-                <span className="text-white font-bold text-xl">V</span>
-              </div>
+              <img 
+                src="/logo.jpg" 
+                alt="Vagafogo" 
+                className="w-12 h-12 rounded-xl object-cover"
+              />
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Vagafogo Admin</h1>
               </div>
