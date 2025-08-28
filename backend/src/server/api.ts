@@ -6,10 +6,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// GET /api/reservas
+// GET /api/reservas - apenas reservas pagas
 app.get('/api/reservas', async (req, res) => {
   try {
-    const snapshot = await db.collection('reservas').get();
+    const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
     const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.json(reservas);
   } catch (error: any) {
