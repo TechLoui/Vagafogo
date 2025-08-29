@@ -340,42 +340,30 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook - atualizar status para pago
-app.post('/webhook', async (req, res) => {
-  try {
-    const data = req.body;
-    console.log("📩 WEBHOOK:", new Date().toISOString());
-    
-    const evento = data.event;
-    const pagamento = data.payment;
-    const status = pagamento?.status;
-    const externalId = pagamento?.externalReference;
-
-    const isPago = (evento === 'PAYMENT_CONFIRMED' && status === 'CONFIRMED') || 
-                   (evento === 'PAYMENT_RECEIVED' && status === 'RECEIVED');
-
-    if (!isPago) {
-      console.log("⏭️ Ignorado:", evento, status);
-      return res.sendStatus(204);
-    }
-
-    if (!externalId) {
-      console.log("⚠️ Sem externalReference");
-      return res.sendStatus(400);
-    }
-
-    // Atualizar status da reserva para pago
-    await db.collection('reservas').doc(externalId).update({
+// Webhook - sempre retorna 200
+app.post('/webhook', (req, res) => {
+  console.log('📩 WEBHOOK:', new Date().toISOString());
+  
+  const data = req.body || {};
+  const evento = data.event;
+  const pagamento = data.payment || {};
+  const externalId = pagamento.externalReference;
+  
+  console.log('Dados:', { evento, status: pagamento.status, externalId });
+  
+  // SEMPRE retornar 200 primeiro
+  res.status(200).send('OK');
+  
+  // Tentar atualizar depois (sem afetar resposta)
+  if (externalId) {
+    db.collection('reservas').doc(externalId).update({
       status: 'pago',
       dataPagamento: new Date()
+    }).then(() => {
+      console.log('✅ Atualizado:', externalId);
+    }).catch(error => {
+      console.error('❌ Erro:', error.message);
     });
-    
-    console.log(`✅ STATUS ATUALIZADO PARA PAGO: ${externalId}`);
-    res.sendStatus(200);
-
-  } catch (error) {
-    console.error('❌ Erro webhook:', error.message);
-    res.sendStatus(500);
   }
 });
 
