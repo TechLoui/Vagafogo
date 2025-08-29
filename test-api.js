@@ -340,7 +340,7 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook simples em JavaScript
+// Webhook - atualizar status para pago
 app.post('/webhook', async (req, res) => {
   try {
     const data = req.body;
@@ -364,22 +364,13 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(400);
     }
 
-    // Criar reserva simples
-    const reservaData = {
-      nome: 'Cliente Pago',
-      email: 'cliente@email.com',
-      atividade: 'Atividade',
-      data: new Date().toISOString().slice(0, 10),
-      horario: '09:00',
-      participantes: 1,
-      valor: pagamento.value || 0,
+    // Atualizar status da reserva para pago
+    await db.collection('reservas').doc(externalId).update({
       status: 'pago',
-      criadoEm: new Date()
-    };
+      dataPagamento: new Date()
+    });
     
-    await db.collection('reservas').doc(externalId).set(reservaData);
-    console.log(`✅ RESERVA CRIADA: ${externalId}`);
-    
+    console.log(`✅ STATUS ATUALIZADO PARA PAGO: ${externalId}`);
     res.sendStatus(200);
 
   } catch (error) {

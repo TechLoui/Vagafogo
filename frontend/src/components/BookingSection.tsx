@@ -128,8 +128,7 @@ export function BookingSection() {
       const q = query(
         collection(db, "reservas"),
         where("data", "==", dataStr),
-        where("horario", "==", horario),
-        where("status", "==", "pago")
+        where("horario", "==", horario)
       );
       const snapshot = await getDocs(q);
       let total = 0;
@@ -183,7 +182,6 @@ export function BookingSection() {
       const dataStr = selectedDay.toISOString().slice(0, 10);
       const whereFilters = [
         where("data", "==", dataStr),
-        where("status", "==", "pago"),
       ];
       if (horariosDisponiveis.length > 0) {
         whereFilters.push(where("horario", "==", horario));

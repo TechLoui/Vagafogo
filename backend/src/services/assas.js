@@ -125,8 +125,29 @@ async function criarCobrancaHandler(req, res) {
       customerId = customerData.id;
     }
 
-    // ✅ NÃO criar reserva no Firebase - apenas gerar ID
-    const reservaId = Date.now().toString();
+    // ✅ Criar reserva no Firebase com status aguardando
+    const dadosReserva = {
+      nome,
+      cpf,
+      email,
+      telefone,
+      atividade,
+      valor,
+      data,
+      participantes,
+      adultos,
+      bariatrica,
+      criancas,
+      naoPagante,
+      observacao: "",
+      horario: horarioFormatado,
+      temPet,
+      status: 'aguardando',
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    const docRef = await db.collection('reservas').add(dadosReserva);
+    const reservaId = docRef.id;
 
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
