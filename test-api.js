@@ -371,7 +371,13 @@ app.post('/webhook', (req, res) => {
     console.log('ExternalId:', externalId);
     
     // Atualizar status se tiver externalId
-    if (externalId && (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED')) {
+    const isCartaoPago = evento === 'PAYMENT_CONFIRMED';
+    const isPixPago = evento === 'PAYMENT_RECEIVED';
+    
+    console.log('Tipo pagamento:', pagamento?.billingType);
+    console.log('Status pagamento:', pagamento?.status);
+    
+    if (externalId && (isCartaoPago || isPixPago)) {
       db.collection('reservas').doc(externalId).update({
         status: 'pago',
         dataPagamento: new Date()
