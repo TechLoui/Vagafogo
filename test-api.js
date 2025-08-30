@@ -353,15 +353,42 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook - debug completo
+// Webhook - com tratamento total de erros
 app.post('/webhook', (req, res) => {
-  console.log('=== WEBHOOK CHAMADO ===');
-  console.log('Timestamp:', new Date().toISOString());
-  console.log('Headers:', req.headers);
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-  
-  res.status(200).json({ received: true, timestamp: new Date().toISOString() });
-  console.log('=== RESPOSTA 200 ENVIADA ===');
+  try {
+    console.log('WEBHOOK RECEBIDO');
+    
+    // Responder imediatamente
+    res.status(200).send('OK');
+    
+    // Log dos dados
+    const data = req.body;
+    const evento = data?.event;
+    const pagamento = data?.payment;
+    const externalId = pagamento?.externalReference;
+    
+    console.log('Evento:', evento);
+    console.log('ExternalId:', externalId);
+    
+    // Atualizar status se tiver externalId
+    if (externalId && (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED')) {
+      db.collection('reservas').doc(externalId).update({
+        status: 'pago',
+        dataPagamento: new Date()
+      }).then(() => {
+        console.log('Status atualizado para pago:', externalId);
+      }).catch(err => {
+        console.log('Erro ao atualizar:', err.message);
+      });
+    }
+    
+  } catch (error) {
+    console.log('Erro no webhook:', error.message);
+    // Mesmo com erro, retorna 200
+    if (!res.headersSent) {
+      res.status(200).send('OK');
+    }
+  }
 });
 
 // Importar e adicionar a rota de cobrança
