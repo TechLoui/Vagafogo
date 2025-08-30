@@ -353,9 +353,15 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook - apenas retorna 200
+// Webhook - debug completo
 app.post('/webhook', (req, res) => {
-  res.status(200).send('OK');
+  console.log('=== WEBHOOK CHAMADO ===');
+  console.log('Timestamp:', new Date().toISOString());
+  console.log('Headers:', req.headers);
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  
+  res.status(200).json({ received: true, timestamp: new Date().toISOString() });
+  console.log('=== RESPOSTA 200 ENVIADA ===');
 });
 
 // Importar e adicionar a rota de cobrança
