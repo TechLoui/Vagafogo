@@ -353,37 +353,9 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook - sempre retorna 200
+// Webhook - apenas retorna 200
 app.post('/webhook', (req, res) => {
-  // SEMPRE retornar 200 IMEDIATAMENTE
   res.status(200).send('OK');
-  
-  try {
-    console.log('📩 WEBHOOK:', new Date().toISOString());
-    
-    const data = req.body || {};
-    const evento = data.event;
-    const pagamento = data.payment || {};
-    const externalId = pagamento.externalReference;
-    
-    console.log('Dados:', { evento, status: pagamento.status, externalId });
-    
-    // Tentar atualizar depois
-    if (externalId) {
-      setTimeout(() => {
-        db.collection('reservas').doc(externalId).update({
-          status: 'pago',
-          dataPagamento: new Date()
-        }).then(() => {
-          console.log('✅ Atualizado:', externalId);
-        }).catch(error => {
-          console.error('❌ Erro:', error.message);
-        });
-      }, 100);
-    }
-  } catch (error) {
-    console.error('❌ Erro webhook:', error.message);
-  }
 });
 
 // Importar e adicionar a rota de cobrança
