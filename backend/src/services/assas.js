@@ -146,8 +146,10 @@ async function criarCobrancaHandler(req, res) {
       criadoEm: admin.firestore.FieldValue.serverTimestamp()
     };
     
+    console.log('📝 Criando reserva no Firebase...');
     const docRef = await db.collection('reservas').add(dadosReserva);
     const reservaId = docRef.id;
+    console.log('✅ Reserva criada no Firebase com ID:', reservaId);
 
     // 💰 Criar pagamento com o customer correto
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
