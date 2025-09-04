@@ -315,43 +315,7 @@ app.get('/api/todas-reservas', async (req, res) => {
   }
 });
 
-// GET /api/test-webhook - Simular webhook de pagamento
-app.get('/api/test-webhook', async (req, res) => {
-  try {
-    const testData = {
-      event: 'PAYMENT_CONFIRMED',
-      payment: {
-        id: 'test_payment_123',
-        status: 'CONFIRMED',
-        billingType: 'CREDIT_CARD',
-        externalReference: 'test_' + Date.now(),
-        value: 100,
-        description: 'Trilha Ecológica - 2025-01-15 09:00 - 2p - Pet:false',
-        customer: {
-          name: 'João Teste',
-          email: 'teste@email.com',
-          cpfCnpj: '123.456.789-00',
-          phone: '(11) 99999-9999'
-        }
-      }
-    };
-    
-    // Simular o webhook
-    const webhookResponse = await fetch(`http://localhost:${PORT}/webhook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(testData)
-    });
-    
-    res.json({ 
-      success: true, 
-      message: 'Webhook de teste enviado',
-      status: webhookResponse.status
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+
 
 // Teste se servidor está funcionando
 app.get('/test', (req, res) => {
