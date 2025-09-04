@@ -353,48 +353,10 @@ app.get('/api/test-webhook', async (req, res) => {
   }
 });
 
-// Webhook - com tratamento total de erros
+// Webhook - apenas retorna 200
 app.post('/webhook', (req, res) => {
-  try {
-    console.log('WEBHOOK RECEBIDO');
-    
-    // Responder imediatamente
-    res.status(200).send('OK');
-    
-    // Log dos dados
-    const data = req.body;
-    const evento = data?.event;
-    const pagamento = data?.payment;
-    const externalId = pagamento?.externalReference;
-    
-    console.log('Evento:', evento);
-    console.log('ExternalId:', externalId);
-    
-    // Atualizar status se tiver externalId
-    const isCartaoPago = evento === 'PAYMENT_CONFIRMED';
-    const isPixPago = evento === 'PAYMENT_RECEIVED';
-    
-    console.log('Tipo pagamento:', pagamento?.billingType);
-    console.log('Status pagamento:', pagamento?.status);
-    
-    if (externalId && (isCartaoPago || isPixPago)) {
-      db.collection('reservas').doc(externalId).update({
-        status: 'pago',
-        dataPagamento: new Date()
-      }).then(() => {
-        console.log('Status atualizado para pago:', externalId);
-      }).catch(err => {
-        console.log('Erro ao atualizar:', err.message);
-      });
-    }
-    
-  } catch (error) {
-    console.log('Erro no webhook:', error.message);
-    // Mesmo com erro, retorna 200
-    if (!res.headersSent) {
-      res.status(200).send('OK');
-    }
-  }
+  console.log('WEBHOOK:', new Date().toISOString());
+  res.status(200).send('OK');
 });
 
 // Importar e adicionar a rota de cobrança
@@ -403,7 +365,7 @@ require('dotenv/config');
 
 app.post('/criar-cobranca', criarCobrancaHandler);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
   console.log('Token Asaas carregado:', process.env.ASAAS_API_KEY ? 'SIM' : 'NÃO');
