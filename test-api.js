@@ -322,51 +322,27 @@ app.get('/test', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Cache para evitar eventos duplicados
-const processedEvents = new Set();
-
-// Webhook - seguindo boas práticas do Asaas
+// Webhook limpo - apenas atualiza status
 app.post('/webhook', (req, res) => {
-  // SEMPRE responder 200 primeiro (boa prática)
   res.status(200).send('OK');
   
-  try {
-    const data = req.body;
-    const eventId = data?.id;
-    const evento = data?.event;
-    const pagamento = data?.payment;
-    const externalId = pagamento?.externalReference;
-    
-    console.log('WEBHOOK:', { eventId, evento, externalId });
-    
-    // Ignorar eventos duplicados (boa prática)
-    if (eventId && processedEvents.has(eventId)) {
-      console.log('Evento duplicado ignorado:', eventId);
-      return;
-    }
-    
-    // Processar apenas eventos de pagamento confirmado
-    if (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED') {
-      if (eventId) processedEvents.add(eventId);
-      
-      // Processamento assíncrono (boa prática)
-      setTimeout(() => {
-        if (externalId) {
-          db.collection('reservas').doc(externalId).update({
-            status: 'pago',
-            dataPagamento: new Date(),
-            webhookEventId: eventId
-          }).then(() => {
-            console.log('✅ Status atualizado:', externalId);
-          }).catch(err => {
-            console.log('❌ Erro ao atualizar:', err.message);
-          });
-        }
-      }, 100);
-    }
-    
-  } catch (error) {
-    console.log('❌ Erro webhook:', error.message);
+  const data = req.body || {};
+  const evento = data.event;
+  const externalId = data.payment?.externalReference;
+  
+  console.log('WEBHOOK NOVO:', evento, externalId);
+  
+  if (externalId && (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED')) {
+    setTimeout(() => {
+      db.collection('reservas').doc(externalId).update({
+        status: 'pago',
+        dataPagamento: new Date()
+      }).then(() => {
+        console.log('Status OK:', externalId);
+      }).catch(err => {
+        console.log('Erro update:', err.message);
+      });
+    }, 200);
   }
 });
 
