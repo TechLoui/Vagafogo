@@ -1,11 +1,11 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "test-api.js",
+  "main": "../test-api.js",
   "scripts": {
     "build": "echo 'Build completed'",
-    "dev": "node test-api.js",
-    "start": "node test-api.js"
+    "dev": "node ../test-api.js",
+    "start": "node ../test-api.js"
   },
   "dependencies": {
     "@types/express": "^5.0.3",

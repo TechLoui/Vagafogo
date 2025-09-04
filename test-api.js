@@ -343,6 +343,8 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
   console.log('Token Asaas carregado:', process.env.ASAAS_API_KEY ? 'SIM' : 'NÃO');
+  console.log('🔗 Webhook disponível em: /webhook');
+  console.log('📁 Arquivo executado: test-api.js da RAIZ');
 });
 
 module.exports = app;
