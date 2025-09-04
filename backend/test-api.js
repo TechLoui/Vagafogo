@@ -302,127 +302,35 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// GET /api/test-webhook - Simular webhook de pagamento
-app.get('/api/test-webhook', async (req, res) => {
+// GET /api/todas-reservas - Ver todas as reservas (incluindo aguardando)
+app.get('/api/todas-reservas', async (req, res) => {
   try {
-    const testData = {
-      event: 'PAYMENT_CONFIRMED',
-      payment: {
-        id: 'test_payment_123',
-        status: 'CONFIRMED',
-        billingType: 'CREDIT_CARD',
-        externalReference: 'test_' + Date.now(),
-        value: 100,
-        description: 'Trilha Ecológica - 2025-01-15 09:00 - 2p - Pet:false',
-        customer: {
-          name: 'João Teste',
-          email: 'teste@email.com',
-          cpfCnpj: '123.456.789-00',
-          phone: '(11) 99999-9999'
-        }
-      }
-    };
-    
-    // Simular o webhook
-    const webhookResponse = await fetch(`http://localhost:${PORT}/webhook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(testData)
-    });
-    
-    res.json({ 
-      success: true, 
-      message: 'Webhook de teste enviado',
-      status: webhookResponse.status
-    });
+    const snapshot = await db.collection('reservas').get();
+    const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    console.log('Total reservas no banco:', reservas.length);
+    reservas.forEach(r => console.log('Reserva:', r.id, 'Status:', r.status, 'Nome:', r.nome));
+    res.json(reservas);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Webhook simples em JavaScript
-app.post('/webhook', async (req, res) => {
-  const data = req.body;
-  console.log("📩 WEBHOOK RECEBIDO - TIMESTAMP:", new Date().toISOString());
-  console.log("📩 Webhook dados:", JSON.stringify(data, null, 2));
 
-  const evento = data.event;
-  const pagamento = data.payment;
-  const metodo = pagamento?.billingType;
-  const status = pagamento?.status;
-  const externalId = pagamento?.externalReference;
 
-  const isCartaoPago = evento === 'PAYMENT_CONFIRMED' && status === 'CONFIRMED';
-  const isPixPago = evento === 'PAYMENT_RECEIVED' && metodo === 'PIX' && status === 'RECEIVED';
+// Teste se servidor está funcionando
+app.get('/test', (req, res) => {
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
-  if (!isCartaoPago && !isPixPago) {
-    console.log("⏭️ Evento ignorado:", evento, "| Status:", status, "| Método:", metodo);
-    return res.sendStatus(204);
-  }
+// Webhook básico - apenas loga
+app.post('/webhook', (req, res) => {
+  console.log('WEBHOOK BÁSICO RECEBIDO');
+  res.status(200).send('OK');
+});
 
-  if (!externalId) {
-    console.warn("⚠️ externalReference ausente no webhook.");
-    return res.status(400).send('externalReference ausente');
-  }
-
-  try {
-    console.log(`🔄 Criando reserva com ID: ${externalId}`);
-    
-    // Buscar dados do pagamento no Asaas
-    const paymentResponse = await fetch(`https://api.asaas.com/v3/payments/${pagamento.id}`, {
-      headers: {
-        'access_token': process.env.ASAAS_API_KEY,
-      },
-    });
-    
-    if (!paymentResponse.ok) {
-      console.error('Erro ao buscar dados do pagamento');
-      return res.sendStatus(500);
-    }
-    
-    const paymentData = await paymentResponse.json();
-    const customer = paymentData.customer;
-    
-    // Extrair dados da reserva da descrição
-    const description = paymentData.description || '';
-    const parts = description.split(' - ');
-    const atividade = parts[0] || 'Atividade';
-    const dataHorario = parts[1] || '';
-    const participantesInfo = parts[2] || '1p';
-    const petInfo = parts[3] || 'Pet:false';
-    
-    const dataReserva = dataHorario.split(' ')[0] || new Date().toISOString().slice(0, 10);
-    const horario = dataHorario.split(' ')[1] || 'Sem horário';
-    const participantes = parseInt(participantesInfo.replace('p', '')) || 1;
-    const temPet = petInfo.includes('true');
-    
-    // Criar reserva no Firebase
-    const reservaData = {
-      nome: customer.name,
-      email: customer.email,
-      cpf: customer.cpfCnpj,
-      telefone: customer.phone,
-      valor: paymentData.value,
-      atividade,
-      data: dataReserva,
-      horario,
-      participantes,
-      temPet,
-      status: 'pago',
-      dataPagamento: new Date(),
-      criadoEm: new Date(),
-    };
-    
-    await db.collection('reservas').doc(externalId).set(reservaData);
-    console.log(`✅ RESERVA CRIADA NO FIREBASE: ${externalId}`);
-    console.log(`📊 Dados salvos:`, JSON.stringify(reservaData, null, 2));
-    
-    res.sendStatus(200);
-
-  } catch (error) {
-    console.error('❌ Erro ao processar webhook:', error);
-    res.status(500).send('Erro ao processar o webhook');
-  }
+// Webhook GET para teste
+app.get('/webhook', (req, res) => {
+  res.status(200).json({ message: 'Webhook endpoint ativo', timestamp: new Date().toISOString() });
 });
 
 // Importar e adicionar a rota de cobrança
@@ -431,10 +339,12 @@ require('dotenv/config');
 
 app.post('/criar-cobranca', criarCobrancaHandler);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
   console.log('Token Asaas carregado:', process.env.ASAAS_API_KEY ? 'SIM' : 'NÃO');
+  console.log('🔗 Webhook disponível em: /webhook');
+  console.log('📁 Arquivo executado: test-api.js da RAIZ');
 });
 
 module.exports = app;
