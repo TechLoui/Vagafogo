@@ -72,43 +72,25 @@ app.get('/api/reservas', async (req, res) => {
   });
   try {
     const snapshot = await db.collection('reservas').where('status', '==', 'pago').get();
-    console.log('Total reservas pagas no banco:', snapshot.size);
+    console.log('🔍 Buscando reservas pagas...');
+    console.log('📊 Total reservas pagas encontradas:', snapshot.size);
     
     if (snapshot.empty) {
+      console.log('❌ Nenhuma reserva paga encontrada');
       return res.json([]);
     }
     
     const reservas = snapshot.docs.map(doc => {
-      return { id: doc.id, ...doc.data() };
+      const data = doc.data();
+      console.log('📋 Reserva encontrada:', doc.id, data.nome, data.status);
+      return { id: doc.id, ...data };
     });
+    
+    console.log('✅ Retornando', reservas.length, 'reservas para o painel');
     res.json(reservas);
   } catch (error) {
-    console.error('Erro detalhado ao buscar reservas:');
-    console.error('- Mensagem:', error.message);
-    console.error('- Código:', error.code);
-    console.error('- Stack:', error.stack);
-    
-    // Fallback para dados de exemplo
-    res.json([
-      {
-        id: 'exemplo1',
-        nome: 'João Silva (Erro Firebase)',
-        cpf: '123.456.789-00',
-        telefone: '(62) 91234-5678',
-        adultos: 2,
-        criancas: 1,
-        naoPagante: 0,
-        bariatrica: 0,
-        data: '2025-08-27',
-        horario: '09:00',
-        atividade: 'Brunch Gastronômico',
-        valor: 150,
-        status: 'pago',
-        participantes: 4,
-        email: 'joao@email.com',
-        observacao: 'Erro de conexão'
-      }
-    ]);
+    console.error('❌ Erro ao buscar reservas:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -302,6 +284,21 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// POST /api/marcar-pago/:id - Marcar reserva como paga manualmente
+app.post('/api/marcar-pago/:id', async (req, res) => {
+  try {
+    const reservaId = req.params.id;
+    await db.collection('reservas').doc(reservaId).update({
+      status: 'pago',
+      dataPagamento: new Date(),
+      atualizadoManualmente: true
+    });
+    res.json({ success: true, message: `Reserva ${reservaId} marcada como paga` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/todas-reservas - Ver todas as reservas (incluindo aguardando)
 app.get('/api/todas-reservas', async (req, res) => {
   try {
@@ -322,10 +319,32 @@ app.get('/test', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Webhook básico - apenas loga
+// Webhook - atualizar status da reserva
 app.post('/webhook', (req, res) => {
-  console.log('WEBHOOK BÁSICO RECEBIDO');
   res.status(200).send('OK');
+  
+  try {
+    const data = req.body;
+    const evento = data?.event;
+    const externalId = data?.payment?.externalReference;
+    
+    console.log('WEBHOOK:', evento, externalId);
+    
+    if (externalId && (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED')) {
+      setTimeout(() => {
+        db.collection('reservas').doc(externalId).update({
+          status: 'pago',
+          dataPagamento: new Date()
+        }).then(() => {
+          console.log('✅ Status atualizado:', externalId);
+        }).catch(err => {
+          console.log('❌ Erro:', err.message);
+        });
+      }, 500);
+    }
+  } catch (error) {
+    console.log('❌ Erro webhook:', error.message);
+  }
 });
 
 // Webhook GET para teste
