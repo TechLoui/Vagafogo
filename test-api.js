@@ -322,28 +322,10 @@ app.get('/test', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Webhook limpo - apenas atualiza status
+// Webhook básico - apenas loga
 app.post('/webhook', (req, res) => {
+  console.log('WEBHOOK BÁSICO RECEBIDO');
   res.status(200).send('OK');
-  
-  const data = req.body || {};
-  const evento = data.event;
-  const externalId = data.payment?.externalReference;
-  
-  console.log('WEBHOOK NOVO:', evento, externalId);
-  
-  if (externalId && (evento === 'PAYMENT_CONFIRMED' || evento === 'PAYMENT_RECEIVED')) {
-    setTimeout(() => {
-      db.collection('reservas').doc(externalId).update({
-        status: 'pago',
-        dataPagamento: new Date()
-      }).then(() => {
-        console.log('Status OK:', externalId);
-      }).catch(err => {
-        console.log('Erro update:', err.message);
-      });
-    }, 200);
-  }
 });
 
 // Webhook GET para teste
