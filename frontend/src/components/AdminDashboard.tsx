@@ -572,14 +572,14 @@ export default function AdminDashboard() {
                 const isSelected = day && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear;
                 const dateObj = day ? new Date(currentYear, currentMonth, day) : null;
                 const today0 = new Date(); today0.setHours(0,0,0,0);
-                const isPast = dateObj ? (new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()) < today0) : false;
+                const isPast = !!dateObj && (new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()) < today0);
                 return (
                   <div
                     key={idx}
-                    className={`text-center p-2 rounded transition-all h-10 flex items-center justify-center text-xs font-medium ${!day ? '' : isPast ? 'bg-gray-100 text-gray-400' : (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200 cursor-pointer')}`}
+                    className={`text-center p-2 rounded transition-all h-10 flex items-center justify-center text-xs font-medium ${!day ? '' : isPast ? 'bg-gray-100 text-gray-600 hover:bg-gray-200 cursor-pointer' : (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200 cursor-pointer')}`}
                     onClick={() => {
                       if (!day) return;
-                      if (isPast) return; // impede selecionar dias passados
+                      // Admin pode selecionar dias passados para visualizar reservas
                       setSelectedDate(new Date(currentYear, currentMonth, day));
                     }}
                   >
