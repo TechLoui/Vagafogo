@@ -367,6 +367,7 @@ export function BookingSection() {
             {/* CALENDÁRIO */}
             <div className="mb-4">
               <style>{`
+                /* Container universal */
                 .rdp-mobile {
                   width: 100%;
                   max-width: 100%;
@@ -374,42 +375,22 @@ export function BookingSection() {
                   text-align: center;
                   overflow-x: hidden;
                 }
-                .rdp-mobile .rdp-table {
-                  width: 100%;
-                  margin: 0 auto;
-                }
-                .rdp-mobile .rdp-table {
-                  width: 100%;
-                }
-                .rdp-mobile .rdp { width: 100%; }
-                .rdp-mobile .rdp-months { width: 100%; display: flex; justify-content: center; margin: 0 auto; }
-                .rdp-mobile .rdp-month { width: 100%; }
+                /* Garante que o calendário ocupe 100% do contêiner */
+                .rdp-mobile .rdp,
+                .rdp-mobile .rdp-months,
+                .rdp-mobile .rdp-month,
+                .rdp-mobile .rdp-table { width: 100%; margin: 0 auto; }
                 .rdp-mobile .rdp-caption { display: flex; justify-content: center; }
                 .rdp-mobile .rdp-head_cell, .rdp-mobile .rdp-cell { padding: 0; }
+                /* Tamanhos adaptáveis por viewport: funcionam bem em 280px+ até desktops */
                 .rdp-mobile .rdp-day {
-                  width: 48px;
-                  height: 48px;
-                  font-size: 14px;
+                  width: clamp(28px, 12.5vw, 48px);
+                  height: clamp(28px, 12.5vw, 48px);
+                  font-size: clamp(10px, 2.8vw, 14px);
                 }
-                @media (max-width: 640px) {
-                  .rdp-mobile {
-                    max-width: 300px;
-                  }
-                  .rdp-mobile .rdp-day {
-                    width: 32px;
-                    height: 32px;
-                    font-size: 11px;
-                  }
-                }
-                @media (max-width: 450px) {
-                  .rdp-mobile {
-                    max-width: 280px;
-                  }
-                  .rdp-mobile .rdp-day {
-                    width: 30px;
-                    height: 30px;
-                    font-size: 10px;
-                  }
+                /* Em telas bem pequenas, reduz um pouco o espaçamento geral */
+                @media (max-width: 360px) {
+                  .rdp-mobile .rdp-day { width: clamp(26px, 12vw, 44px); height: clamp(26px, 12vw, 44px); }
                 }
               `}</style>
               <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
