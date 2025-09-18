@@ -179,6 +179,15 @@ export function BookingSection() {
     setLoading(true);
 
     try {
+      // Bloqueio extra no cliente para datas passadas
+      const today0 = new Date();
+      today0.setHours(0, 0, 0, 0);
+      const selected0 = new Date(selectedDay.getFullYear(), selectedDay.getMonth(), selectedDay.getDate());
+      if (selected0 < today0) {
+        alert("Não é permitido reservar em datas passadas.");
+        setLoading(false);
+        return;
+      }
       const dataStr = selectedDay.toISOString().slice(0, 10);
       const whereFilters = [
         where("data", "==", dataStr),
@@ -405,7 +414,12 @@ export function BookingSection() {
                     today: "bg-[#e7dfd7] text-[#8B4F23] font-bold",
                     disabled: "bg-gray-100 text-gray-400 cursor-not-allowed"
                   }}
-                  disabled={(day) => !allowedDays(day) || isDayBlocked(day)}
+                  disabled={(day) => {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const d = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+                    return d < today || !allowedDays(day) || isDayBlocked(day);
+                  }}
                   footer={!selectedDay && <span className="text-xs text-red-400">Selecione uma data válida.</span>}
                   className="rdp-mobile"
                 />
