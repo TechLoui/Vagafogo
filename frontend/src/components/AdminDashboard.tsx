@@ -4,6 +4,8 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { api } from '../sevices/api';
+import { db } from '../../firebase';
+import { doc, getDoc, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
@@ -140,6 +142,11 @@ export default function AdminDashboard() {
   const [resultadosPesquisa, setResultadosPesquisa] = useState<Reserva[]>([]);
   const [carregandoPesquisa, setCarregandoPesquisa] = useState(false);
 
+  // Fechamentos do dia (bloqueios)
+  const [diaFechado, setDiaFechado] = useState<boolean>(false);
+  const [horariosFechados, setHorariosFechados] = useState<string[]>([]);
+  const [horarioParaFechar, setHorarioParaFechar] = useState<string>('');
+
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
@@ -188,6 +195,55 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchReservas(selectedDate);
   }, [selectedDate]);
+
+  // Carregar bloqueios (fechamentos) do dia selecionado
+  useEffect(() => {
+    (async () => {
+      try {
+        const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+        const ref = doc(db, 'bloqueios', dataStr);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const d: any = snap.data();
+          setDiaFechado(!!d?.fecharDia);
+          setHorariosFechados(Array.isArray(d?.horariosFechados) ? d.horariosFechados : []);
+        } else {
+          setDiaFechado(false);
+          setHorariosFechados([]);
+        }
+      } catch {
+        setDiaFechado(false);
+        setHorariosFechados([]);
+      }
+    })();
+  }, [selectedDate]);
+
+  async function fecharDiaSelecionado() {
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    try {
+      await setDoc(doc(db, 'bloqueios', dataStr), { fecharDia: true }, { merge: true });
+      setDiaFechado(true);
+      setFeedback({ type: 'success', message: 'Dia fechado com sucesso!' });
+    } catch {
+      setFeedback({ type: 'error', message: 'Erro ao fechar dia.' });
+    }
+  }
+
+  async function fecharHorarioSelecionado() {
+    if (!horarioParaFechar) {
+      setFeedback({ type: 'error', message: 'Selecione um horário para fechar.' });
+      return;
+    }
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    try {
+      await setDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: [] }, { merge: true });
+      await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayUnion(horarioParaFechar) });
+      setHorariosFechados(h => Array.from(new Set([...(h || []), horarioParaFechar])));
+      setFeedback({ type: 'success', message: 'Horário fechado com sucesso!' });
+    } catch {
+      setFeedback({ type: 'error', message: 'Erro ao fechar horário.' });
+    }
+  }
 
   useEffect(() => {
     if (feedback) {
@@ -514,16 +570,50 @@ export default function AdminDashboard() {
             <div className="grid grid-cols-7 gap-1">
               {days.map((day, idx) => {
                 const isSelected = day && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear;
+                const dateObj = day ? new Date(currentYear, currentMonth, day) : null;
+                const today0 = new Date(); today0.setHours(0,0,0,0);
+                const isPast = dateObj ? (new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()) < today0) : false;
                 return (
                   <div
                     key={idx}
-                    className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${day ? (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200') : ''}`}
-                    onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
+                    className={`text-center p-2 rounded transition-all h-10 flex items-center justify-center text-xs font-medium ${!day ? '' : isPast ? 'bg-gray-100 text-gray-400' : (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200 cursor-pointer')}`}
+                    onClick={() => {
+                      if (!day) return;
+                      if (isPast) return; // impede selecionar dias passados
+                      setSelectedDate(new Date(currentYear, currentMonth, day));
+                    }}
                   >
                     {day || ''}
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Fechamentos do dia */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <div className="text-sm font-semibold">Dia {dayjs(selectedDate).format('DD/MM/YYYY')}</div>
+                <div className="text-xs text-gray-600">Status: {diaFechado ? 'Fechado' : 'Aberto'}</div>
+              </div>
+              <button onClick={fecharDiaSelecionado} className="px-3 py-2 bg-red-600 text-white rounded text-xs hover:bg-red-700">
+                Fechar dia (todos pacotes)
+              </button>
+              <div className="flex items-center gap-2">
+                <select className="border px-2 py-2 rounded text-xs" value={horarioParaFechar} onChange={e => setHorarioParaFechar(e.target.value)}>
+                  <option value="">Selecionar horário</option>
+                  {horariosDisponiveis.map(h => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                <button onClick={fecharHorarioSelecionado} className="px-3 py-2 bg-orange-600 text-white rounded text-xs hover:bg-orange-700">
+                  Fechar horário do dia
+                </button>
+              </div>
+              {horariosFechados.length > 0 && (
+                <div className="text-xs text-gray-700">Horários fechados: {horariosFechados.join(', ')}</div>
+              )}
             </div>
           </div>
 

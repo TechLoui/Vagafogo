@@ -407,7 +407,7 @@ export function BookingSection() {
                 }
               `}</style>
               <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
-              <div className="w-full flex justify-center md:justify-center sm:justify-start sm:-ml-8">
+              <div className="w-full flex justify-center">
                 <DayPicker
                   mode="single"
                   selected={selectedDay}
