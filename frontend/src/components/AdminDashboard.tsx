@@ -121,6 +121,14 @@ export default function AdminDashboard() {
   const [filtroAtividade, setFiltroAtividade] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
+  // Formata data YYYY-MM-DD -> DD/MM/YYYY
+  const formatDataBR = (s?: string) => {
+    if (!s) return '';
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+    try { return dayjs(s).isValid() ? dayjs(s).format('DD/MM/YYYY') : s; } catch { return s; }
+  };
+
   // Pacotes
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [modalPacote, setModalPacote] = useState(false);
@@ -929,7 +937,7 @@ export default function AdminDashboard() {
                     <td className="px-2 py-1">{r.nome}</td>
                     <td className="px-2 py-1">{r.cpf}</td>
                     <td className="px-2 py-1">{r.telefone}</td>
-                    <td className="px-2 py-1">{r.data}</td>
+                    <td className="px-2 py-1">{formatDataBR(r.data)}</td>
                     <td className="px-2 py-1">{r.atividade}</td>
                   </tr>
                 ))}
