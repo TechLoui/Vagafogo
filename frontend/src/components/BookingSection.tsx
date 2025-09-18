@@ -369,9 +369,10 @@ export function BookingSection() {
               <style>{`
                 .rdp-mobile {
                   width: 100%;
-                  max-width: 320px;
+                  max-width: 100%;
                   margin: 0 auto;
                   text-align: center;
+                  overflow-x: hidden;
                 }
                 .rdp-mobile .rdp-table {
                   width: 100%;
@@ -380,6 +381,11 @@ export function BookingSection() {
                 .rdp-mobile .rdp-table {
                   width: 100%;
                 }
+                .rdp-mobile .rdp { width: 100%; }
+                .rdp-mobile .rdp-months { width: 100%; display: flex; justify-content: center; margin: 0 auto; }
+                .rdp-mobile .rdp-month { width: 100%; }
+                .rdp-mobile .rdp-caption { display: flex; justify-content: center; }
+                .rdp-mobile .rdp-head_cell, .rdp-mobile .rdp-cell { padding: 0; }
                 .rdp-mobile .rdp-day {
                   width: 48px;
                   height: 48px;
@@ -387,27 +393,27 @@ export function BookingSection() {
                 }
                 @media (max-width: 640px) {
                   .rdp-mobile {
-                    max-width: 260px;
+                    max-width: 300px;
                   }
                   .rdp-mobile .rdp-day {
-                    width: 28px;
-                    height: 28px;
-                    font-size: 9px;
+                    width: 32px;
+                    height: 32px;
+                    font-size: 11px;
                   }
                 }
                 @media (max-width: 450px) {
                   .rdp-mobile {
-                    max-width: 240px;
+                    max-width: 280px;
                   }
                   .rdp-mobile .rdp-day {
-                    width: 26px;
-                    height: 26px;
-                    font-size: 8px;
+                    width: 30px;
+                    height: 30px;
+                    font-size: 10px;
                   }
                 }
               `}</style>
               <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
-              <div className="w-full flex justify-center">
+              <div className="w-full flex justify-center px-2 md:px-0 overflow-x-hidden">
                 <DayPicker
                   mode="single"
                   selected={selectedDay}
