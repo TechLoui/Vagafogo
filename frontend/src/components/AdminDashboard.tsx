@@ -146,6 +146,7 @@ export default function AdminDashboard() {
   const [diaFechado, setDiaFechado] = useState<boolean>(false);
   const [horariosFechados, setHorariosFechados] = useState<string[]>([]);
   const [horarioParaFechar, setHorarioParaFechar] = useState<string>('');
+  const [pacoteFechamentoId, setPacoteFechamentoId] = useState<string>('');
 
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
@@ -206,7 +207,10 @@ export default function AdminDashboard() {
         if (snap.exists()) {
           const d: any = snap.data();
           setDiaFechado(!!d?.fecharDia);
-          setHorariosFechados(Array.isArray(d?.horariosFechados) ? d.horariosFechados : []);
+          const globais: string[] = Array.isArray(d?.horariosFechados) ? d.horariosFechados : [];
+          const fechadosPorPacote = d?.pacotesFechados || {};
+          const doPacote: string[] = pacoteFechamentoId ? (fechadosPorPacote[pacoteFechamentoId] || []) : [];
+          setHorariosFechados([...new Set([...(globais || []), ...(doPacote || [])])]);
         } else {
           setDiaFechado(false);
           setHorariosFechados([]);
@@ -216,7 +220,7 @@ export default function AdminDashboard() {
         setHorariosFechados([]);
       }
     })();
-  }, [selectedDate]);
+  }, [selectedDate, pacoteFechamentoId]);
 
   async function fecharDiaSelecionado() {
     const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
@@ -600,19 +604,29 @@ export default function AdminDashboard() {
               <button onClick={fecharDiaSelecionado} className="px-3 py-2 bg-red-600 text-white rounded text-xs hover:bg-red-700">
                 Fechar dia (todos pacotes)
               </button>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  className="border px-2 py-2 rounded text-xs"
+                  value={pacoteFechamentoId}
+                  onChange={e => setPacoteFechamentoId(e.target.value)}
+                >
+                  <option value="">Selecionar pacote</option>
+                  {pacotes.map(p => (
+                    <option key={p.id} value={p.id!}>{p.nome}</option>
+                  ))}
+                </select>
                 <select className="border px-2 py-2 rounded text-xs" value={horarioParaFechar} onChange={e => setHorarioParaFechar(e.target.value)}>
-                  <option value="">Selecionar hor√°rio</option>
-                  {horariosDisponiveis.map(h => (
+                  <option value="">Selecionar hor·rio</option>
+                  {(pacotes.find(p => p.id === pacoteFechamentoId)?.horarios || []).map(h => (
                     <option key={h} value={h}>{h}</option>
                   ))}
                 </select>
                 <button onClick={fecharHorarioSelecionado} className="px-3 py-2 bg-orange-600 text-white rounded text-xs hover:bg-orange-700">
-                  Fechar hor√°rio do dia
+                  Fechar hor·rio do dia
                 </button>
               </div>
               {horariosFechados.length > 0 && (
-                <div className="text-xs text-gray-700">Hor√°rios fechados: {horariosFechados.join(', ')}</div>
+                <div className="text-xs text-gray-700">Hor·rios fechados: {horariosFechados.join(", ")}</div>
               )}
             </div>
           </div>
@@ -1042,3 +1056,4 @@ export default function AdminDashboard() {
     </div>
   );
 }
+
