@@ -394,7 +394,29 @@ export function BookingSection() {
                 }
               `}</style>
               <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
-              <div className="w-full flex justify-center px-2 md:px-0 overflow-x-hidden">
+              {/* Mobile: input nativo para evitar corte */}
+              <div className="sm:hidden mb-3">
+                <input
+                  type="date"
+                  className="w-full px-4 py-3 border rounded-lg text-sm"
+                  min={(() => { const t = new Date(); t.setHours(0,0,0,0); return t.toISOString().slice(0,10); })()}
+                  value={selectedDay ? selectedDay.toISOString().slice(0,10) : ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) { setSelectedDay(undefined); setHorario(''); setVagasRestantes(null); return; }
+                    const [yy, mm, dd] = v.split('-').map(Number);
+                    const d = new Date(yy, (mm || 1)-1, dd || 1);
+                    // Restrições: dia permitido pelo pacote e não bloqueado
+                    if (!allowedDays(d)) { alert('Dia indisponível para este pacote.'); return; }
+                    if (isDayBlocked(d)) { alert('Este dia está fechado para reservas.'); return; }
+                    setSelectedDay(d);
+                    setHorario('');
+                    setVagasRestantes(null);
+                  }}
+                />
+              </div>
+              {/* Desktop/tablet: DayPicker completo */}
+              <div className="hidden sm:flex w-full justify-center px-2 md:px-0 overflow-x-auto sm:overflow-x-hidden">
                 <DayPicker
                   mode="single"
                   selected={selectedDay}
