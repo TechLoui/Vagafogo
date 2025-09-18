@@ -46,6 +46,13 @@ export function BookingSection() {
   const [qrCodeImage, setQrCodeImage] = useState<string | null>(null);
   const [expirationDate, setExpirationDate] = useState<string | null>(null);
 
+  // Início do dia atual (00:00) para travar seleção de datas anteriores
+  const todayStart = (() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  })();
+
   // BUSCA PACOTES FIRESTORE
   useEffect(() => {
     async function fetchPacotes() {
@@ -405,7 +412,7 @@ export function BookingSection() {
                   mode="single"
                   selected={selectedDay}
                   onSelect={handleDate}
-                  fromDate={new Date()}
+                  fromDate={todayStart}
                   locale={ptBR}
                   modifiers={{ allowed: allowedDays }}
                   modifiersClassNames={{
@@ -415,10 +422,8 @@ export function BookingSection() {
                     disabled: "bg-gray-100 text-gray-400 cursor-not-allowed"
                   }}
                   disabled={(day) => {
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
                     const d = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-                    return d < today || !allowedDays(day) || isDayBlocked(day);
+                    return d < todayStart || !allowedDays(day) || isDayBlocked(day);
                   }}
                   footer={!selectedDay && <span className="text-xs text-red-400">Selecione uma data válida.</span>}
                   className="rdp-mobile"
