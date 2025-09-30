@@ -171,7 +171,7 @@ export default function AdminDashboard() {
       
       // Agrupar por horÃ¡rio (todas as reservas)
       const reservasPorHorario = reservasDaData.reduce((acc, reserva) => {
-        const horario = reserva.horario || 'Sem horÃ¡rio';
+        const horario = reserva.horario || 'Sem horário';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
         return acc;
@@ -256,7 +256,7 @@ export default function AdminDashboard() {
 
   async function fecharHorarioSelecionado() {
     if (!horarioParaFechar) {
-      setFeedback({ type: 'error', message: 'Selecione um horÃ¡rio para fechar.' });
+      setFeedback({ type: 'error', message: 'Selecione um horário para fechar.' });
       return;
     }
     const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
@@ -265,9 +265,9 @@ export default function AdminDashboard() {
       await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayUnion(horarioParaFechar) });
       setHorariosFechados(h => Array.from(new Set([...(h || []), horarioParaFechar])));
       setHorarioParaFechar('');
-      setFeedback({ type: 'success', message: 'HorÃ¡rio fechado com sucesso!' });
+      setFeedback({ type: 'success', message: 'Horário fechado com sucesso!' });
     } catch {
-      setFeedback({ type: 'error', message: 'Erro ao fechar horÃ¡rio.' });
+      setFeedback({ type: 'error', message: 'Erro ao fechar horário.' });
     }
   }
 
@@ -296,7 +296,7 @@ export default function AdminDashboard() {
       try {
         await api.deleteReserva(id);
         fetchReservas(selectedDate);
-        setFeedback({ type: 'success', message: 'Reserva excluÃ­da com sucesso!' });
+        setFeedback({ type: 'success', message: 'Reserva excluída com sucesso!' });
       } catch (error) {
         setFeedback({ type: 'error', message: 'Erro ao excluir reserva.' });
       }
@@ -420,7 +420,7 @@ export default function AdminDashboard() {
 
   const handleSavePacote = async () => {
     if (!editPacote?.nome) {
-      setFeedback({ type: 'error', message: 'Nome obrigatÃ³rio!' });
+      setFeedback({ type: 'error', message: 'Nome obrigatório!' });
       return;
     }
     try {
@@ -444,7 +444,7 @@ export default function AdminDashboard() {
       try {
         await api.deletePacote(id);
         fetchPacotes();
-        setFeedback({ type: 'success', message: 'Pacote excluÃ­do com sucesso!' });
+        setFeedback({ type: 'success', message: 'Pacote excluído com sucesso!' });
       } catch (error) {
         setFeedback({ type: 'error', message: 'Erro ao excluir pacote.' });
       }
@@ -581,7 +581,7 @@ export default function AdminDashboard() {
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
         <>
-          {/* CalendÃ¡rio */}
+          {/* Calendário */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
             <div className="flex justify-between items-center mb-4">
               <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
@@ -710,8 +710,8 @@ export default function AdminDashboard() {
                   className="border px-2 py-1 rounded text-xs"
                 >
                   <option value="">Todas Atividades</option>
-                  <option value="Trilha EcolÃ³gica">Trilha EcolÃ³gica</option>
-                  <option value="Brunch GastronÃ´mico">Brunch GastronÃ´mico</option>
+                  <option value="Trilha Ecológica">Trilha Ecológica</option>
+                  <option value="Brunch Gastronômico">Brunch Gastronômico</option>
                   <option value="Brunch + trilha">Brunch + trilha</option>
                 </select>
               </div>
@@ -744,8 +744,8 @@ export default function AdminDashboard() {
                   ) : (
                     Object.keys(reservas)
                       .sort((a, b) => {
-                        if (a === 'NÃ£o especificado') return 1;
-                        if (b === 'NÃ£o especificado') return -1;
+                        if (a === 'Não especificado') return 1;
+                        if (b === 'Não especificado') return -1;
                         return a.localeCompare(b);
                       })
                       .map(horario => {
@@ -922,8 +922,8 @@ export default function AdminDashboard() {
                       className="w-full border px-2 py-1 rounded mt-1 text-xs"
                     >
                       <option value="">Todas Atividades</option>
-                      <option value="Trilha EcolÃ³gica">Trilha EcolÃ³gica</option>
-                      <option value="Brunch GastronÃ´mico">Brunch GastronÃ´mico</option>
+                      <option value="Trilha Ecológica">Trilha Ecológica</option>
+                      <option value="Brunch Gastronômico">Brunch Gastronômico</option>
                       <option value="Brunch + trilha">Brunch + trilha</option>
                     </select>
                   </label>
