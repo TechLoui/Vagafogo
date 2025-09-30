@@ -48,8 +48,8 @@ interface Pacote {
   limite: number;
 }
 
-const diasDaSemana = ['Domingo', 'Segunda', 'TerÃ§a', 'Quarta', 'Quinta', 'Sexta', 'SÃ¡bado'];
-const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'SÃ¡b'];
+const diasDaSemana = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const horariosDisponiveis = [
   '08:00', '09:00', '10:00', '11:00', '12:00',
   '13:00', '14:00', '15:00', '16:00', '18:00'
@@ -726,14 +726,14 @@ export default function AdminDashboard() {
                   <tr>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Reservista</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Adultos</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">CrianÃ§a</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">NÃ£o Pagante</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">BariÃ¡trica</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">Criança</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">Não Pagante</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">Bariátrica</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Participantes</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Pet</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Atividade</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Valor</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">AÃ§Ãµes</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -857,7 +857,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">CrianÃ§as:
+                    <label className="block text-xs">Crianças:
                       <input
                         type="number"
                         value={editReserva.criancas ?? 0}
@@ -866,7 +866,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">NÃ£o Pagante:
+                    <label className="block text-xs">Não Pagante:
                       <input
                         type="number"
                         value={editReserva.naoPagante ?? 0}
@@ -875,7 +875,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">BariÃ¡trica:
+                    <label className="block text-xs">Bariátrica:
                       <input
                         type="number"
                         value={editReserva.bariatrica ?? 0}
@@ -885,7 +885,7 @@ export default function AdminDashboard() {
                       />
                     </label>
                   </div>
-                  <label className="block text-xs mb-2">HorÃ¡rio:
+                  <label className="block text-xs mb-2">Horário:
                     <input
                       type="time"
                       value={editReserva.horario}
@@ -911,7 +911,7 @@ export default function AdminDashboard() {
                           checked={editReserva.temPet === false}
                           onChange={() => setEditReserva({ ...editReserva, temPet: false })}
                         />
-                        NÃ£o
+                        Não
                       </label>
                     </div>
                   </label>
@@ -954,11 +954,11 @@ export default function AdminDashboard() {
                   <th className="px-2 py-2 text-left">Emoji</th>
                   <th className="px-2 py-2 text-left">Nome</th>
                   <th className="px-2 py-2 text-left">Tipo</th>
-                  <th className="px-2 py-2 text-left">PreÃ§o Adulto</th>
-                  <th className="px-2 py-2 text-left">PreÃ§o CrianÃ§a</th>
-                  <th className="px-2 py-2 text-left">PreÃ§o BariÃ¡trica</th>
+                  <th className="px-2 py-2 text-left">Preço Adulto</th>
+                  <th className="px-2 py-2 text-left">Preço Criança</th>
+                  <th className="px-2 py-2 text-left">Preço Bariátrica</th>
                   <th className="px-2 py-2 text-left">Dias</th>
-                  <th className="px-2 py-2 text-left">HorÃ¡rios</th>
+                  <th className="px-2 py-2 text-left">Horários</th>
                   <th className="px-2 py-2 text-left">Limite</th>
                   <th className="px-2 py-2 text-left"></th>
                 </tr>
@@ -1008,21 +1008,21 @@ export default function AdminDashboard() {
                 <label className="block mb-1 text-xs">Tipo de atividade:
                   <input value={editPacote.tipo} onChange={e => setEditPacote(f => ({ ...f!, tipo: e.target.value }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">PreÃ§o Adulto:
+                <label className="block mb-1 text-xs">Preço Adulto:
                   <input type="number" value={editPacote.precoAdulto} onChange={e => setEditPacote(f => ({ ...f!, precoAdulto: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">PreÃ§o CrianÃ§a:
+                <label className="block mb-1 text-xs">Preço Criança:
                   <input type="number" value={editPacote.precoCrianca} onChange={e => setEditPacote(f => ({ ...f!, precoCrianca: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">PreÃ§o BariÃ¡trica:
+                <label className="block mb-1 text-xs">Preço Bariátrica:
                   <input type="number" value={editPacote.precoBariatrica} onChange={e => setEditPacote(f => ({ ...f!, precoBariatrica: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">Limite disponÃ­vel:
+                <label className="block mb-1 text-xs">Limite disponível:
                   <input type="number" value={editPacote.limite} onChange={e => setEditPacote(f => ({ ...f!, limite: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
 
                 {/* Dias da semana */}
-                <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponÃ­veis:</label>
+                <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponíveis:</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {diasDaSemana.map((dia, i) => (
                     <label key={dia} className="flex items-center text-xs">
@@ -1043,7 +1043,7 @@ export default function AdminDashboard() {
                 </div>
 
                 {/* HorÃ¡rios disponÃ­veis */}
-                <label className="block mb-1 mt-2 text-xs font-semibold">HorÃ¡rios:</label>
+                <label className="block mb-1 mt-2 text-xs font-semibold">Horários:</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {horariosDisponiveis.map(horario => (
                     <label key={horario} className="flex items-center text-xs">
