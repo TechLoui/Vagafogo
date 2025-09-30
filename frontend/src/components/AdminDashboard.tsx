@@ -620,10 +620,10 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
             <h3 className="text-lg font-semibold mb-4">Controle de Horários - {dayjs(selectedDate).format('DD/MM/YYYY')}</h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-6">
               {/* Status do Dia */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 bg-gray-50 rounded-lg gap-3">
                   <div>
                     <div className="text-sm font-medium">Status do Dia</div>
                     <div className={`text-xs ${diaFechado ? 'text-red-600' : 'text-green-600'}`}>
@@ -633,14 +633,14 @@ export default function AdminDashboard() {
                   {diaFechado ? (
                     <button 
                       onClick={reabrirDia} 
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
+                      className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
                     >
                       Reabrir Dia
                     </button>
                   ) : (
                     <button 
                       onClick={fecharDiaSelecionado} 
-                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors"
+                      className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors"
                     >
                       Fechar Dia Completo
                     </button>
@@ -651,9 +651,9 @@ export default function AdminDashboard() {
               {/* Fechamento de Horários Específicos */}
               <div className="space-y-3">
                 <div className="text-sm font-medium">Fechar Horário Específico</div>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <select
-                    className="border border-gray-300 px-3 py-2 rounded-lg text-sm flex-1"
+                    className="border border-gray-300 px-3 py-2 rounded-lg text-sm flex-1 w-full"
                     value={horarioParaFechar}
                     onChange={e => setHorarioParaFechar(e.target.value)}
                   >
@@ -666,7 +666,7 @@ export default function AdminDashboard() {
                   </select>
                   <button 
                     onClick={fecharHorarioSelecionado} 
-                    className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 transition-colors"
+                    className="w-full sm:w-auto px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 transition-colors disabled:opacity-50"
                     disabled={!horarioParaFechar || horariosFechados.includes(horarioParaFechar)}
                   >
                     Fechar Horário
