@@ -770,7 +770,7 @@ export default function AdminDashboard() {
                                 <td className="px-2 py-2">{r.naoPagante ?? 0}</td>
                                 <td className="px-2 py-2">{r.bariatrica ?? 0}</td>
                                 <td className="px-2 py-2">{calcularParticipantes(r)}</td>
-                                <td className="px-2 py-2">{r.temPet ? 'ðŸ• Sim' : 'NÃ£o'}</td>
+                                <td className="px-2 py-2">{r.temPet ? 'Sim' : 'Não'}</td>
                                 <td className="px-2 py-2">{r.atividade}</td>
                                 <td className="px-2 py-2">
                                   {r.valor !== undefined
