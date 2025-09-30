@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import React from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { api } from '../sevices/api';
 import { db } from '../../firebase';
-import { doc, getDoc, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
@@ -48,8 +48,8 @@ interface Pacote {
   limite: number;
 }
 
-const diasDaSemana = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const diasDaSemana = ['Domingo', 'Segunda', 'TerÃ§a', 'Quarta', 'Quinta', 'Sexta', 'SÃ¡bado'];
+const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'SÃ¡b'];
 const horariosDisponiveis = [
   '08:00', '09:00', '10:00', '11:00', '12:00',
   '13:00', '14:00', '15:00', '16:00', '18:00'
@@ -64,12 +64,12 @@ export default function AdminDashboard() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('🔐 Tentando login com:', { email, projeto: auth.app.options.projectId });
+    console.log('ðŸ” Tentando login com:', { email, projeto: auth.app.options.projectId });
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      console.log('✅ Login realizado com sucesso:', userCredential.user.email);
+      console.log('âœ… Login realizado com sucesso:', userCredential.user.email);
     } catch (error: any) {
-      console.error('❌ Erro no login:', {
+      console.error('âŒ Erro no login:', {
         code: error.code,
         message: error.message,
         email: email
@@ -146,20 +146,20 @@ export default function AdminDashboard() {
   const [diaFechado, setDiaFechado] = useState<boolean>(false);
   const [horariosFechados, setHorariosFechados] = useState<string[]>([]);
   const [horarioParaFechar, setHorarioParaFechar] = useState<string>('');
-  const [pacoteFechamentoId, setPacoteFechamentoId] = useState<string>('');
+
 
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
-    console.log('🔍 Buscando reservas para:', formatted);
+    console.log('ðŸ” Buscando reservas para:', formatted);
     
     try {
-      console.log('📡 Chamando API...');
+      console.log('ðŸ“¡ Chamando API...');
       const dados: Reserva[] = await api.getReservas();
-      console.log('📊 Total de reservas carregadas:', dados.length);
+      console.log('ðŸ“Š Total de reservas carregadas:', dados.length);
       
       if (dados.length === 0) {
-        console.log('⚠️ Nenhuma reserva encontrada');
+        console.log('âš ï¸ Nenhuma reserva encontrada');
         setReservas({});
         setFeedback({ type: 'error', message: 'Nenhuma reserva encontrada no banco de dados.' });
         return;
@@ -167,11 +167,11 @@ export default function AdminDashboard() {
       
       // Filtrar por data
       const reservasDaData = dados.filter(r => r.data === formatted);
-      console.log('📊 Reservas da data', formatted, ':', reservasDaData.length);
+      console.log('ðŸ“Š Reservas da data', formatted, ':', reservasDaData.length);
       
-      // Agrupar por horário (todas as reservas)
+      // Agrupar por horÃ¡rio (todas as reservas)
       const reservasPorHorario = reservasDaData.reduce((acc, reserva) => {
-        const horario = reserva.horario || 'Sem horário';
+        const horario = reserva.horario || 'Sem horÃ¡rio';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
         return acc;
@@ -184,7 +184,7 @@ export default function AdminDashboard() {
       }
       
     } catch (error: any) {
-      console.error('❌ Erro ao buscar reservas:', error);
+      console.error('âŒ Erro ao buscar reservas:', error);
       setReservas({});
       setFeedback({ 
         type: 'error', 
@@ -208,8 +208,7 @@ export default function AdminDashboard() {
           const d: any = snap.data();
           setDiaFechado(!!d?.fecharDia);
           const globais: string[] = Array.isArray(d?.horariosFechados) ? d.horariosFechados : [];
-          const fechadosPorPacote = d?.pacotesFechados || {};
-          const doPacote: string[] = pacoteFechamentoId ? (fechadosPorPacote[pacoteFechamentoId] || []) : [];
+          const doPacote: string[] = [];
           setHorariosFechados([...new Set([...(globais || []), ...(doPacote || [])])]);
         } else {
           setDiaFechado(false);
@@ -220,7 +219,7 @@ export default function AdminDashboard() {
         setHorariosFechados([]);
       }
     })();
-  }, [selectedDate, pacoteFechamentoId]);
+  }, [selectedDate]);
 
   async function fecharDiaSelecionado() {
     const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
@@ -233,9 +232,31 @@ export default function AdminDashboard() {
     }
   }
 
+  async function reabrirHorario(horario: string) {
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    try {
+      await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayRemove(horario) });
+      setHorariosFechados(h => h.filter(h => h !== horario));
+      setFeedback({ type: 'success', message: 'Horário reaberto com sucesso!' });
+    } catch {
+      setFeedback({ type: 'error', message: 'Erro ao reabrir horário.' });
+    }
+  }
+
+  async function reabrirDia() {
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    try {
+      await updateDoc(doc(db, 'bloqueios', dataStr), { fecharDia: false });
+      setDiaFechado(false);
+      setFeedback({ type: 'success', message: 'Dia reaberto com sucesso!' });
+    } catch {
+      setFeedback({ type: 'error', message: 'Erro ao reabrir dia.' });
+    }
+  }
+
   async function fecharHorarioSelecionado() {
     if (!horarioParaFechar) {
-      setFeedback({ type: 'error', message: 'Selecione um horário para fechar.' });
+      setFeedback({ type: 'error', message: 'Selecione um horÃ¡rio para fechar.' });
       return;
     }
     const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
@@ -243,9 +264,10 @@ export default function AdminDashboard() {
       await setDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: [] }, { merge: true });
       await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayUnion(horarioParaFechar) });
       setHorariosFechados(h => Array.from(new Set([...(h || []), horarioParaFechar])));
-      setFeedback({ type: 'success', message: 'Horário fechado com sucesso!' });
+      setHorarioParaFechar('');
+      setFeedback({ type: 'success', message: 'HorÃ¡rio fechado com sucesso!' });
     } catch {
-      setFeedback({ type: 'error', message: 'Erro ao fechar horário.' });
+      setFeedback({ type: 'error', message: 'Erro ao fechar horÃ¡rio.' });
     }
   }
 
@@ -274,7 +296,7 @@ export default function AdminDashboard() {
       try {
         await api.deleteReserva(id);
         fetchReservas(selectedDate);
-        setFeedback({ type: 'success', message: 'Reserva excluída com sucesso!' });
+        setFeedback({ type: 'success', message: 'Reserva excluÃ­da com sucesso!' });
       } catch (error) {
         setFeedback({ type: 'error', message: 'Erro ao excluir reserva.' });
       }
@@ -346,22 +368,22 @@ export default function AdminDashboard() {
   // Pacotes Logic
   const fetchPacotes = async () => {
     try {
-      console.log('📦 Buscando pacotes...');
+      console.log('ðŸ“¦ Buscando pacotes...');
       const pacotesData: Pacote[] = await api.getPacotes();
-      console.log('📦 Pacotes encontrados:', pacotesData.length);
+      console.log('ðŸ“¦ Pacotes encontrados:', pacotesData.length);
       
       if (pacotesData.length === 0) {
-        console.log('⚠️ Nenhum pacote encontrado');
+        console.log('âš ï¸ Nenhum pacote encontrado');
         setPacotes([]);
         setFeedback({ type: 'error', message: 'Nenhum pacote encontrado no banco de dados.' });
         return;
       }
       
       setPacotes(pacotesData);
-      console.log('✅ Pacotes carregados com sucesso:', pacotesData.length);
+      console.log('âœ… Pacotes carregados com sucesso:', pacotesData.length);
       
     } catch (error: any) {
-      console.error('❌ Erro ao buscar pacotes:', error);
+      console.error('âŒ Erro ao buscar pacotes:', error);
       setPacotes([]);
       setFeedback({ 
         type: 'error', 
@@ -384,7 +406,7 @@ export default function AdminDashboard() {
     setEditPacote({
       nome: '',
       tipo: '',
-      emoji: '✨',
+      emoji: 'âœ¨',
       precoAdulto: 0,
       precoCrianca: 0,
       precoBariatrica: 0,
@@ -398,7 +420,7 @@ export default function AdminDashboard() {
 
   const handleSavePacote = async () => {
     if (!editPacote?.nome) {
-      setFeedback({ type: 'error', message: 'Nome obrigatório!' });
+      setFeedback({ type: 'error', message: 'Nome obrigatÃ³rio!' });
       return;
     }
     try {
@@ -422,7 +444,7 @@ export default function AdminDashboard() {
       try {
         await api.deletePacote(id);
         fetchPacotes();
-        setFeedback({ type: 'success', message: 'Pacote excluído com sucesso!' });
+        setFeedback({ type: 'success', message: 'Pacote excluÃ­do com sucesso!' });
       } catch (error) {
         setFeedback({ type: 'error', message: 'Erro ao excluir pacote.' });
       }
@@ -438,9 +460,9 @@ export default function AdminDashboard() {
     
     setCarregandoPesquisa(true);
     try {
-      console.log('🔍 Pesquisando clientes com termo:', termoPesquisa);
+      console.log('ðŸ” Pesquisando clientes com termo:', termoPesquisa);
       const dados: Reserva[] = await api.getReservas();
-      console.log('📊 Total de reservas para pesquisa:', dados.length);
+      console.log('ðŸ“Š Total de reservas para pesquisa:', dados.length);
       
       const matches = dados.filter((r: Reserva) => {
         const termo = termoPesquisa.toLowerCase();
@@ -451,7 +473,7 @@ export default function AdminDashboard() {
         );
       });
       
-      console.log('🔍 Resultados encontrados:', matches.length);
+      console.log('ðŸ” Resultados encontrados:', matches.length);
       setResultadosPesquisa(matches);
       
       if (matches.length === 0) {
@@ -459,7 +481,7 @@ export default function AdminDashboard() {
       }
       
     } catch (error: any) {
-      console.error('❌ Erro na pesquisa:', error);
+      console.error('âŒ Erro na pesquisa:', error);
       setResultadosPesquisa([]);
       setFeedback({ 
         type: 'error', 
@@ -506,7 +528,7 @@ export default function AdminDashboard() {
       {feedback && (
         <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg transition-all duration-300 transform ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white`}>
           <div className="flex items-center space-x-2">
-            <span className="text-lg">{feedback.type === 'success' ? '✓' : '⚠'}</span>
+            <span className="text-lg">{feedback.type === 'success' ? 'âœ“' : 'âš '}</span>
             <span>{feedback.message}</span>
           </div>
         </div>
@@ -559,7 +581,7 @@ export default function AdminDashboard() {
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
         <>
-          {/* Calendário */}
+          {/* CalendÃ¡rio */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
             <div className="flex justify-between items-center mb-4">
               <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
@@ -596,39 +618,83 @@ export default function AdminDashboard() {
 
           {/* Fechamentos do dia */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <div className="text-sm font-semibold">Dia {dayjs(selectedDate).format('DD/MM/YYYY')}</div>
-                <div className="text-xs text-gray-600">Status: {diaFechado ? 'Fechado' : 'Aberto'}</div>
+            <h3 className="text-lg font-semibold mb-4">Controle de Horários - {dayjs(selectedDate).format('DD/MM/YYYY')}</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Status do Dia */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div>
+                    <div className="text-sm font-medium">Status do Dia</div>
+                    <div className={`text-xs ${diaFechado ? 'text-red-600' : 'text-green-600'}`}>
+                      {diaFechado ? '🔒 Fechado' : '🟢 Aberto'}
+                    </div>
+                  </div>
+                  {diaFechado ? (
+                    <button 
+                      onClick={reabrirDia} 
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
+                    >
+                      Reabrir Dia
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={fecharDiaSelecionado} 
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors"
+                    >
+                      Fechar Dia Completo
+                    </button>
+                  )}
+                </div>
               </div>
-              <button onClick={fecharDiaSelecionado} className="px-3 py-2 bg-red-600 text-white rounded text-xs hover:bg-red-700">
-                Fechar dia (todos pacotes)
-              </button>
-              <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  className="border px-2 py-2 rounded text-xs"
-                  value={pacoteFechamentoId}
-                  onChange={e => setPacoteFechamentoId(e.target.value)}
-                >
-                  <option value="">Selecionar pacote</option>
-                  {pacotes.map(p => (
-                    <option key={p.id} value={p.id!}>{p.nome}</option>
-                  ))}
-                </select>
-                <select className="border px-2 py-2 rounded text-xs" value={horarioParaFechar} onChange={e => setHorarioParaFechar(e.target.value)}>
-                  <option value="">Selecionar hor�rio</option>
-                  {(pacotes.find(p => p.id === pacoteFechamentoId)?.horarios || []).map(h => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-                <button onClick={fecharHorarioSelecionado} className="px-3 py-2 bg-orange-600 text-white rounded text-xs hover:bg-orange-700">
-                  Fechar hor�rio do dia
-                </button>
+
+              {/* Fechamento de Horários Específicos */}
+              <div className="space-y-3">
+                <div className="text-sm font-medium">Fechar Horário Específico</div>
+                <div className="flex gap-2">
+                  <select
+                    className="border border-gray-300 px-3 py-2 rounded-lg text-sm flex-1"
+                    value={horarioParaFechar}
+                    onChange={e => setHorarioParaFechar(e.target.value)}
+                  >
+                    <option value="">Selecionar horário</option>
+                    {horariosDisponiveis.map(h => (
+                      <option key={h} value={h} disabled={horariosFechados.includes(h)}>
+                        {h} {horariosFechados.includes(h) ? '(Fechado)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button 
+                    onClick={fecharHorarioSelecionado} 
+                    className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 transition-colors"
+                    disabled={!horarioParaFechar || horariosFechados.includes(horarioParaFechar)}
+                  >
+                    Fechar Horário
+                  </button>
+                </div>
               </div>
-              {horariosFechados.length > 0 && (
-                <div className="text-xs text-gray-700">Hor�rios fechados: {horariosFechados.join(", ")}</div>
-              )}
             </div>
+
+            {/* Lista de Horários Fechados */}
+            {horariosFechados.length > 0 && (
+              <div className="mt-4 p-3 bg-red-50 rounded-lg">
+                <div className="text-sm font-medium text-red-800 mb-2">Horários Fechados:</div>
+                <div className="flex flex-wrap gap-2">
+                  {horariosFechados.map(horario => (
+                    <span key={horario} className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
+                      🔒 {horario}
+                      <button
+                        onClick={() => reabrirHorario(horario)}
+                        className="ml-1 text-red-600 hover:text-red-800"
+                        title="Reabrir horário"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Reservas Tabela */}
@@ -644,8 +710,8 @@ export default function AdminDashboard() {
                   className="border px-2 py-1 rounded text-xs"
                 >
                   <option value="">Todas Atividades</option>
-                  <option value="Trilha Ecológica">Trilha Ecológica</option>
-                  <option value="Brunch Gastronômico">Brunch Gastronômico</option>
+                  <option value="Trilha EcolÃ³gica">Trilha EcolÃ³gica</option>
+                  <option value="Brunch GastronÃ´mico">Brunch GastronÃ´mico</option>
                   <option value="Brunch + trilha">Brunch + trilha</option>
                 </select>
               </div>
@@ -660,14 +726,14 @@ export default function AdminDashboard() {
                   <tr>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Reservista</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Adultos</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Criança</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Não Pagante</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Bariátrica</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">CrianÃ§a</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">NÃ£o Pagante</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">BariÃ¡trica</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Participantes</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Pet</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Atividade</th>
                     <th className="px-2 py-2 font-medium text-left text-gray-600">Valor</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Ações</th>
+                    <th className="px-2 py-2 font-medium text-left text-gray-600">AÃ§Ãµes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -678,8 +744,8 @@ export default function AdminDashboard() {
                   ) : (
                     Object.keys(reservas)
                       .sort((a, b) => {
-                        if (a === 'Não especificado') return 1;
-                        if (b === 'Não especificado') return -1;
+                        if (a === 'NÃ£o especificado') return 1;
+                        if (b === 'NÃ£o especificado') return -1;
                         return a.localeCompare(b);
                       })
                       .map(horario => {
@@ -704,7 +770,7 @@ export default function AdminDashboard() {
                                 <td className="px-2 py-2">{r.naoPagante ?? 0}</td>
                                 <td className="px-2 py-2">{r.bariatrica ?? 0}</td>
                                 <td className="px-2 py-2">{calcularParticipantes(r)}</td>
-                                <td className="px-2 py-2">{r.temPet ? '🐕 Sim' : 'Não'}</td>
+                                <td className="px-2 py-2">{r.temPet ? 'ðŸ• Sim' : 'NÃ£o'}</td>
                                 <td className="px-2 py-2">{r.atividade}</td>
                                 <td className="px-2 py-2">
                                   {r.valor !== undefined
@@ -791,7 +857,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">Crianças:
+                    <label className="block text-xs">CrianÃ§as:
                       <input
                         type="number"
                         value={editReserva.criancas ?? 0}
@@ -800,7 +866,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">Não Pagante:
+                    <label className="block text-xs">NÃ£o Pagante:
                       <input
                         type="number"
                         value={editReserva.naoPagante ?? 0}
@@ -809,7 +875,7 @@ export default function AdminDashboard() {
                         className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
                     </label>
-                    <label className="block text-xs">Bariátrica:
+                    <label className="block text-xs">BariÃ¡trica:
                       <input
                         type="number"
                         value={editReserva.bariatrica ?? 0}
@@ -819,7 +885,7 @@ export default function AdminDashboard() {
                       />
                     </label>
                   </div>
-                  <label className="block text-xs mb-2">Horário:
+                  <label className="block text-xs mb-2">HorÃ¡rio:
                     <input
                       type="time"
                       value={editReserva.horario}
@@ -845,7 +911,7 @@ export default function AdminDashboard() {
                           checked={editReserva.temPet === false}
                           onChange={() => setEditReserva({ ...editReserva, temPet: false })}
                         />
-                        Não
+                        NÃ£o
                       </label>
                     </div>
                   </label>
@@ -856,8 +922,8 @@ export default function AdminDashboard() {
                       className="w-full border px-2 py-1 rounded mt-1 text-xs"
                     >
                       <option value="">Todas Atividades</option>
-                      <option value="Trilha Ecológica">Trilha Ecológica</option>
-                      <option value="Brunch Gastronômico">Brunch Gastronômico</option>
+                      <option value="Trilha EcolÃ³gica">Trilha EcolÃ³gica</option>
+                      <option value="Brunch GastronÃ´mico">Brunch GastronÃ´mico</option>
                       <option value="Brunch + trilha">Brunch + trilha</option>
                     </select>
                   </label>
@@ -888,11 +954,11 @@ export default function AdminDashboard() {
                   <th className="px-2 py-2 text-left">Emoji</th>
                   <th className="px-2 py-2 text-left">Nome</th>
                   <th className="px-2 py-2 text-left">Tipo</th>
-                  <th className="px-2 py-2 text-left">Preço Adulto</th>
-                  <th className="px-2 py-2 text-left">Preço Criança</th>
-                  <th className="px-2 py-2 text-left">Preço Bariátrica</th>
+                  <th className="px-2 py-2 text-left">PreÃ§o Adulto</th>
+                  <th className="px-2 py-2 text-left">PreÃ§o CrianÃ§a</th>
+                  <th className="px-2 py-2 text-left">PreÃ§o BariÃ¡trica</th>
                   <th className="px-2 py-2 text-left">Dias</th>
-                  <th className="px-2 py-2 text-left">Horários</th>
+                  <th className="px-2 py-2 text-left">HorÃ¡rios</th>
                   <th className="px-2 py-2 text-left">Limite</th>
                   <th className="px-2 py-2 text-left"></th>
                 </tr>
@@ -900,7 +966,7 @@ export default function AdminDashboard() {
               <tbody>
                 {pacotes.map(p => (
                   <tr key={p.id}>
-                    <td className="px-2 py-1 text-2xl">{p.emoji || '✨'}</td>
+                    <td className="px-2 py-1 text-2xl">{p.emoji || 'âœ¨'}</td>
                     <td className="px-2 py-1">{p.nome}</td>
                     <td className="px-2 py-1">{p.tipo}</td>
                     <td className="px-2 py-1">R$ {Number(p.precoAdulto).toLocaleString('pt-BR')}</td>
@@ -926,12 +992,12 @@ export default function AdminDashboard() {
                 <h4 className="font-bold mb-2">{isEditingPacote ? 'Editar' : 'Novo'} Pacote</h4>
                 <label className="block mb-1 text-xs">Emoji do pacote:
                   <div className="flex items-center gap-2">
-                    <span className="text-2xl">{editPacote.emoji || '✨'}</span>
+                    <span className="text-2xl">{editPacote.emoji || 'âœ¨'}</span>
                     <input 
                       value={editPacote.emoji || ''} 
                       onChange={e => setEditPacote(f => ({ ...f!, emoji: e.target.value }))} 
                       className="w-full border px-2 py-1 rounded" 
-                      placeholder="✨"
+                      placeholder="âœ¨"
                       maxLength={2}
                     />
                   </div>
@@ -942,21 +1008,21 @@ export default function AdminDashboard() {
                 <label className="block mb-1 text-xs">Tipo de atividade:
                   <input value={editPacote.tipo} onChange={e => setEditPacote(f => ({ ...f!, tipo: e.target.value }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">Preço Adulto:
+                <label className="block mb-1 text-xs">PreÃ§o Adulto:
                   <input type="number" value={editPacote.precoAdulto} onChange={e => setEditPacote(f => ({ ...f!, precoAdulto: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">Preço Criança:
+                <label className="block mb-1 text-xs">PreÃ§o CrianÃ§a:
                   <input type="number" value={editPacote.precoCrianca} onChange={e => setEditPacote(f => ({ ...f!, precoCrianca: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">Preço Bariátrica:
+                <label className="block mb-1 text-xs">PreÃ§o BariÃ¡trica:
                   <input type="number" value={editPacote.precoBariatrica} onChange={e => setEditPacote(f => ({ ...f!, precoBariatrica: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
-                <label className="block mb-1 text-xs">Limite disponível:
+                <label className="block mb-1 text-xs">Limite disponÃ­vel:
                   <input type="number" value={editPacote.limite} onChange={e => setEditPacote(f => ({ ...f!, limite: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
 
                 {/* Dias da semana */}
-                <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponíveis:</label>
+                <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponÃ­veis:</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {diasDaSemana.map((dia, i) => (
                     <label key={dia} className="flex items-center text-xs">
@@ -976,8 +1042,8 @@ export default function AdminDashboard() {
                   ))}
                 </div>
 
-                {/* Horários disponíveis */}
-                <label className="block mb-1 mt-2 text-xs font-semibold">Horários:</label>
+                {/* HorÃ¡rios disponÃ­veis */}
+                <label className="block mb-1 mt-2 text-xs font-semibold">HorÃ¡rios:</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {horariosDisponiveis.map(horario => (
                     <label key={horario} className="flex items-center text-xs">
