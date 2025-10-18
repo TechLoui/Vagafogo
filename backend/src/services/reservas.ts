@@ -1,6 +1,7 @@
 import { db } from "./firebase";
 import { doc, setDoc, Timestamp } from "firebase/firestore";
 import { v4 as uuidv4 } from "uuid";
+import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
 export type CriarReservaPayload = {
   nome: string;
@@ -19,6 +20,7 @@ export type CriarReservaPayload = {
   status?: string;
   observacao?: string;
   temPet?: boolean;
+  perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
 };
 
 export async function criarReserva(payload: CriarReservaPayload): Promise<string> {
@@ -38,7 +40,8 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     horario, // Captura o horário do payload
     status = "aguardando",
     observacao = "",
-    temPet
+    temPet,
+    perguntasPersonalizadas,
   } = payload;
 
   // 🔹 Gera um ID único (reservaId)
@@ -63,6 +66,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     status,
     observacao,
     temPet,
+    perguntasPersonalizadas: perguntasPersonalizadas ?? [],
     criadoEm: Timestamp.now(),
   });
 

@@ -1,9 +1,42 @@
-import { useEffect, useState, useRef } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import { db } from '../../firebase';
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { ptBR } from "date-fns/locale";
+
+type PerguntaCondicional = {
+  condicao: "sim" | "nao";
+  pergunta: string;
+  tipo: "sim_nao" | "texto";
+  obrigatoria: boolean;
+};
+
+type PerguntaPersonalizada = {
+  id: string;
+  pergunta: string;
+  tipo: "sim_nao" | "texto";
+  obrigatoria: boolean;
+  perguntaCondicional?: PerguntaCondicional;
+};
+
+type PerguntaCondicionalRespostaPayload = {
+  pergunta: string;
+  tipo: "sim_nao" | "texto";
+  obrigatoria: boolean;
+  resposta: string;
+};
+
+type PerguntaPersonalizadaRespostaPayload = {
+  pacoteId: string;
+  pacoteNome: string;
+  perguntaId: string;
+  pergunta: string;
+  tipo: "sim_nao" | "texto";
+  obrigatoria: boolean;
+  resposta: string;
+  perguntaCondicional?: PerguntaCondicionalRespostaPayload;
+};
 
 type Pacote = {
   id?: string;
@@ -21,6 +54,7 @@ type Pacote = {
   modoHorario?: 'lista' | 'intervalo';
   horarioInicio?: string;
   horarioFim?: string;
+  perguntasPersonalizadas?: PerguntaPersonalizada[];
 };
 
 type Combo = {
@@ -52,6 +86,8 @@ export function BookingSection() {
   const [loading, setLoading] = useState<boolean>(false);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [formaPagamento, setFormaPagamento] = useState<"CREDIT_CARD" | "PIX">("CREDIT_CARD");
+  const [respostasPersonalizadas, setRespostasPersonalizadas] = useState<Record<string, { resposta?: string; condicional?: string }>>({});
+  const [disponibilidadeHorarios, setDisponibilidadeHorarios] = useState<Record<string, boolean>>({});
 
 
   // PIX
@@ -105,8 +141,9 @@ export function BookingSection() {
           aceitaPet: d.aceitaPet !== false,
           modoHorario: d.modoHorario || 'lista',
           horarioInicio: d.horarioInicio || '',
-          horarioFim: d.horarioFim || '',
-        }));
+        horarioFim: d.horarioFim || '',
+          perguntasPersonalizadas: Array.isArray(d.perguntasPersonalizadas) ? d.perguntasPersonalizadas : [],
+      }));
         
         setPacotes(arr);
         setCombos(combosData);
@@ -126,6 +163,96 @@ export function BookingSection() {
     }
     fetchData();
   }, []);
+
+  const selectedPacotes = useMemo(
+    () => pacotes.filter((p) => p.id && selectedPackages.includes(p.id)),
+    [pacotes, selectedPackages]
+  );
+
+  const comboAtivo = useMemo(() => {
+    if (selectedPackages.length === 0) return undefined;
+    return combos.find(
+      (c) =>
+        c.ativo &&
+        c.pacoteIds.length === selectedPackages.length &&
+        c.pacoteIds.every((id) => selectedPackages.includes(id))
+    );
+  }, [combos, selectedPackages]);
+
+  useEffect(() => {
+    if (!selectedDay) {
+      setDisponibilidadeHorarios({});
+      return;
+    }
+    let ativo = true;
+    const carregarDisponibilidade = async () => {
+      try {
+        const dataStr = selectedDay.toISOString().slice(0, 10);
+        const ref = doc(db, "disponibilidade", dataStr);
+        const snap = await getDoc(ref);
+        if (!ativo) return;
+        const dados = snap.exists() ? snap.data() : null;
+        if (dados && typeof dados.horarios === "object") {
+          setDisponibilidadeHorarios(dados.horarios as Record<string, boolean>);
+        } else {
+          setDisponibilidadeHorarios({});
+        }
+      } catch (error) {
+        console.error("Erro ao carregar disponibilidade:", error);
+        if (ativo) {
+          setDisponibilidadeHorarios({});
+        }
+      }
+    };
+    carregarDisponibilidade();
+    return () => {
+      ativo = false;
+    };
+  }, [selectedDay]);
+
+  useEffect(() => {
+    if (selectedPacotes.length === 0) {
+      setRespostasPersonalizadas({});
+      return;
+    }
+    setRespostasPersonalizadas((prev) => {
+      const permitidos = new Set<string>();
+      selectedPacotes.forEach((pacote) => {
+        if (!pacote.id) return;
+        (pacote.perguntasPersonalizadas ?? []).forEach((pergunta) => {
+          permitidos.add(`${pacote.id}-${pergunta.id}`);
+        });
+      });
+      const filtrados: Record<string, { resposta?: string; condicional?: string }> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        if (permitidos.has(key)) {
+          filtrados[key] = value;
+        }
+      });
+      return filtrados;
+    });
+  }, [selectedPacotes]);
+
+  const horariosDisponiveis = useMemo(() => {
+    if (selectedPacotes.length === 0) return [];
+    const horariosUnicos = [...new Set(selectedPacotes.flatMap((p) => p.horarios || []))];
+    if (!selectedDay) return horariosUnicos;
+    const dataStr = selectedDay.toISOString().slice(0, 10);
+    return horariosUnicos.filter((horarioLista) =>
+      selectedPacotes.every((pacote) => {
+        if (!pacote.id) return true;
+        const chave = `${dataStr}-${pacote.id}-${horarioLista}`;
+        return disponibilidadeHorarios[chave] !== false;
+      })
+    );
+  }, [selectedDay, selectedPacotes, disponibilidadeHorarios]);
+
+  useEffect(() => {
+    if (!horario) return;
+    if (!horariosDisponiveis.includes(horario)) {
+      setHorario("");
+    }
+  }, [horariosDisponiveis, horario]);
 
   if (loadingPacotes) {
     return (
@@ -160,13 +287,6 @@ export function BookingSection() {
       </section>
     );
   }
-
-  const selectedPacotes = pacotes.filter(p => selectedPackages.includes(p.id!));
-  const comboAtivo = combos.find(c => 
-    c.ativo && 
-    c.pacoteIds.length === selectedPackages.length && 
-    c.pacoteIds.every(id => selectedPackages.includes(id))
-  );
 
   const calcularTotal = () => {
     let total = 0;
@@ -220,10 +340,6 @@ export function BookingSection() {
     return null;
   };
 
-  const horariosDisponiveis = selectedPacotes.length > 0 
-    ? [...new Set(selectedPacotes.flatMap(p => p.horarios || []))]
-    : [];
-
   const temPacoteFaixa = selectedPacotes.some(p => 
     p.modoHorario === 'intervalo' || (p.horarios && p.horarios.length === 0)
   );
@@ -238,14 +354,177 @@ export function BookingSection() {
 
   };
 
+  const atualizarRespostaBase = (
+    chave: string,
+    valor: string,
+    condicaoEsperada?: string,
+    trim?: boolean
+  ) => {
+    setRespostasPersonalizadas((prev) => {
+      const proximo = { ...prev };
+      const resultado = trim ? valor.trim() : valor;
+
+      if (!resultado) {
+        if (proximo[chave]) {
+          delete proximo[chave];
+        }
+        return proximo;
+      }
+
+      const atual = proximo[chave] ?? {};
+      const atualizado: { resposta?: string; condicional?: string } = { ...atual, resposta: resultado };
+
+      if (condicaoEsperada && resultado !== condicaoEsperada && atualizado.condicional !== undefined) {
+        delete atualizado.condicional;
+      }
+
+      proximo[chave] = atualizado;
+      return proximo;
+    });
+  };
+
+  const atualizarRespostaCondicional = (chave: string, valor: string, trim?: boolean) => {
+    setRespostasPersonalizadas((prev) => {
+      const proximo = { ...prev };
+      const resultado = trim ? valor.trim() : valor;
+
+      if (!resultado) {
+        if (proximo[chave]) {
+          const atualizado = { ...proximo[chave] };
+          delete atualizado.condicional;
+          proximo[chave] = atualizado;
+        }
+        return proximo;
+      }
+
+      const atual = proximo[chave] ?? {};
+      proximo[chave] = { ...atual, condicional: resultado };
+      return proximo;
+    });
+  };
+
+  const montarRespostasPersonalizadas = (): {
+    respostas: PerguntaPersonalizadaRespostaPayload[];
+    erro?: string;
+  } => {
+    const respostas: PerguntaPersonalizadaRespostaPayload[] = [];
+    for (const pacote of selectedPacotes) {
+      if (!pacote.id) continue;
+      const perguntas = pacote.perguntasPersonalizadas ?? [];
+      for (const pergunta of perguntas) {
+        const chave = `${pacote.id}-${pergunta.id}`;
+        const registro = respostasPersonalizadas[chave];
+        let valorBase = registro?.resposta ?? "";
+        if (pergunta.tipo === "texto") {
+          valorBase = valorBase.toString().trim();
+        } else if (pergunta.tipo === "sim_nao") {
+          valorBase = valorBase.toString();
+        }
+
+        if (pergunta.obrigatoria) {
+          if (pergunta.tipo === "sim_nao") {
+            if (valorBase !== "sim" && valorBase !== "nao") {
+              return {
+                respostas: [],
+                erro: `Responda a pergunta "${pergunta.pergunta}" do pacote ${pacote.nome}.`,
+              };
+            }
+          } else if (!valorBase) {
+            return {
+              respostas: [],
+              erro: `Responda a pergunta "${pergunta.pergunta}" do pacote ${pacote.nome}.`,
+            };
+          }
+        }
+
+        const possuiRespostaBase =
+          pergunta.tipo === "sim_nao"
+            ? valorBase === "sim" || valorBase === "nao"
+            : Boolean(valorBase);
+
+        if (!possuiRespostaBase) {
+          // Pergunta opcional sem resposta
+          continue;
+        }
+
+        const respostaFormatada: PerguntaPersonalizadaRespostaPayload = {
+          pacoteId: pacote.id,
+          pacoteNome: pacote.nome,
+          perguntaId: pergunta.id,
+          pergunta: pergunta.pergunta,
+          tipo: pergunta.tipo,
+          obrigatoria: pergunta.obrigatoria,
+          resposta: pergunta.tipo === "texto" ? valorBase : valorBase,
+        };
+
+        if (pergunta.perguntaCondicional) {
+          const cond = pergunta.perguntaCondicional;
+          const condicaoAtiva = valorBase === cond.condicao;
+          if (condicaoAtiva) {
+            let valorCondicional = registro?.condicional ?? "";
+            if (cond.tipo === "texto") {
+              valorCondicional = valorCondicional.toString().trim();
+            } else if (cond.tipo === "sim_nao") {
+              valorCondicional = valorCondicional.toString();
+            }
+
+            if (cond.obrigatoria) {
+              if (cond.tipo === "sim_nao") {
+                if (valorCondicional !== "sim" && valorCondicional !== "nao") {
+                  return {
+                    respostas: [],
+                    erro: `Responda a pergunta complementar "${cond.pergunta}" do pacote ${pacote.nome}.`,
+                  };
+                }
+              } else if (!valorCondicional) {
+                return {
+                  respostas: [],
+                  erro: `Responda a pergunta complementar "${cond.pergunta}" do pacote ${pacote.nome}.`,
+                };
+              }
+            }
+
+            const possuiRespostaCondicional =
+              cond.tipo === "sim_nao"
+                ? valorCondicional === "sim" || valorCondicional === "nao"
+                : Boolean(valorCondicional);
+
+            if (possuiRespostaCondicional) {
+              respostaFormatada.perguntaCondicional = {
+                pergunta: cond.pergunta,
+                tipo: cond.tipo,
+                obrigatoria: cond.obrigatoria,
+                resposta: valorCondicional,
+              };
+            }
+          }
+        }
+
+        respostas.push(respostaFormatada);
+      }
+    }
+
+    return { respostas };
+  };
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (selectedPackages.length === 0) return alert("Selecione pelo menos um pacote!");
     if (!selectedDay) return alert("Selecione uma data válida!");
     if (horariosDisponiveis.length > 0 && !horario) return alert("Selecione o horário!");
+    if (horariosDisponiveis.length === 0 && !temPacoteFaixa && selectedPacotes.some(p => (p.horarios?.length ?? 0) > 0)) {
+      alert("Não há horários disponíveis para os pacotes selecionados nesta data.");
+      return;
+    }
     if (!nome || !email || !cpf) return alert("Preencha todos os campos obrigatórios!");
     if (temPet === null) return alert("Informe se vai levar um pet!");
+
+    const { respostas, erro } = montarRespostasPersonalizadas();
+    if (erro) {
+      alert(erro);
+      return;
+    }
 
     setLoading(true);
 
@@ -253,7 +532,7 @@ export function BookingSection() {
       const dataStr = selectedDay.toISOString().slice(0, 10);
       const totalParticipantes = adultos + criancas + bariatrica + naoPagante;
       const total = calcularTotal();
-      
+
       const atividades = selectedPacotes.map(p => p.nome).join(" + ");
       const comboInfo = comboAtivo ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% desconto)` : "";
 
@@ -277,8 +556,11 @@ export function BookingSection() {
         comboId: comboAtivo?.id || null,
       };
 
+      if (respostas.length > 0) {
+        payload.perguntasPersonalizadas = respostas;
+      }
+
       console.log('📤 Enviando payload:', payload);
-      
       const rawResponse = await fetch("https://vagafogo-production.up.railway.app/criar-cobranca", {
         method: "POST",
         headers: {
@@ -287,9 +569,9 @@ export function BookingSection() {
         },
         body: JSON.stringify(payload),
       });
-      
+
       console.log('📥 Status da resposta:', rawResponse.status);
-      
+
       const resposta = await rawResponse.json().catch(() => ({}));
       console.log('📥 Resposta completa:', resposta);
 
@@ -305,15 +587,15 @@ export function BookingSection() {
         setPixKey(resposta.cobranca.pixKey);
         setQrCodeImage(resposta.cobranca.qrCodeImage);
         setExpirationDate(resposta.cobranca.expirationDate);
-        
+
         // Scroll automático para o card de pagamento
         setTimeout(() => {
-          paymentCardRef.current?.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
+          paymentCardRef.current?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
           });
         }, 100);
-        
+
         // Mostrar mensagem sobre carteirinha bariátrica
         if (bariatrica > 0) {
           alert("⚠️ IMPORTANTE: Como você selecionou opção bariátrica, será necessário enviar a foto da carteirinha via WhatsApp após realizar a reserva para validação.");
@@ -323,6 +605,7 @@ export function BookingSection() {
       }
 
     } catch (error) {
+      console.error("Erro ao processar reserva:", error);
       alert("Erro ao processar reserva. Tente novamente.");
     } finally {
       setLoading(false);
@@ -458,21 +741,7 @@ export function BookingSection() {
                   Selecione a Data *
                 </label>
                 
-                {/* Mostrar datas bloqueadas */}
-                {selectedPacotes.some(p => p.datasBloqueadas && p.datasBloqueadas.length > 0) && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-sm font-medium text-red-700 mb-2">⚠️ Datas bloqueadas:</p>
-                    {selectedPacotes.map(p => 
-                      p.datasBloqueadas && p.datasBloqueadas.length > 0 ? (
-                        <div key={p.id} className="text-sm text-red-600">
-                          <strong>{p.nome}:</strong> {p.datasBloqueadas.map(data => 
-                            new Date(data + 'T00:00:00').toLocaleDateString('pt-BR')
-                          ).join(', ')}
-                        </div>
-                      ) : null
-                    )}
-                  </div>
-                )}
+
                 
                 <div className="flex justify-center">
                   <DayPicker
@@ -540,7 +809,13 @@ export function BookingSection() {
                       ))
                     }
                   </div>
-                ) : null}
+                ) : (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700">
+                      Nenhum horário disponível para os pacotes selecionados nesta data. Escolha outra data ou ajuste os pacotes.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -636,14 +911,155 @@ export function BookingSection() {
                 </label>
               </div>
               
-              {temPet === true && getPetMessage() && (
-                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-700">
-                    ⚠️ {getPetMessage()}
-                  </p>
-                </div>
-              )}
-            </div>
+            {temPet === true && getPetMessage() && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-700">
+                  ⚠️ {getPetMessage()}
+                </p>
+              </div>
+            )}
+          </div>
+
+            {/* Perguntas Personalizadas */}
+            {selectedPacotes.some(p => (p.perguntasPersonalizadas?.length ?? 0) > 0) && (
+              <div className="mb-6 space-y-5">
+                {selectedPacotes.map((pacote) => {
+                  if (!pacote.id || (pacote.perguntasPersonalizadas?.length ?? 0) === 0) return null;
+                  return (
+                    <div
+                      key={`perguntas-${pacote.id}`}
+                      className="rounded-lg border border-gray-200 bg-gray-50/60 p-4"
+                    >
+                      <h4 className="text-sm font-semibold text-gray-800 mb-3">
+                        Informações adicionais — {pacote.nome}
+                      </h4>
+                      <div className="space-y-4">
+                        {pacote.perguntasPersonalizadas!.map((pergunta) => {
+                          const chave = `${pacote.id}-${pergunta.id}`;
+                          const registro = respostasPersonalizadas[chave] ?? {};
+                          const respostaBase = registro.resposta ?? "";
+                          const cond = pergunta.perguntaCondicional;
+                          const mostrarCondicional = cond && respostaBase === cond.condicao;
+                          return (
+                            <div key={pergunta.id} className="space-y-3 rounded-md bg-white p-3 shadow-sm">
+                              <div>
+                                <p className="text-sm font-medium text-gray-700">
+                                  {pergunta.pergunta}
+                                  {pergunta.obrigatoria && <span className="text-red-500"> *</span>}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {pergunta.tipo === 'sim_nao'
+                                    ? 'Selecione Sim ou Não conforme necessário.'
+                                    : 'Informe a resposta no campo abaixo.'}
+                                </p>
+                              </div>
+                              {pergunta.tipo === 'sim_nao' ? (
+                                <div className="flex flex-wrap items-center gap-4">
+                                  <label className="inline-flex items-center text-sm text-gray-700">
+                                    <input
+                                      type="radio"
+                                      name={`${chave}-base`}
+                                      className="mr-2"
+                                      checked={respostaBase === 'sim'}
+                                      onChange={() => atualizarRespostaBase(chave, 'sim', cond?.condicao)}
+                                    />
+                                    Sim
+                                  </label>
+                                  <label className="inline-flex items-center text-sm text-gray-700">
+                                    <input
+                                      type="radio"
+                                      name={`${chave}-base`}
+                                      className="mr-2"
+                                      checked={respostaBase === 'nao'}
+                                      onChange={() => atualizarRespostaBase(chave, 'nao', cond?.condicao)}
+                                    />
+                                    Não
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => atualizarRespostaBase(chave, '', cond?.condicao)}
+                                    className="text-xs text-gray-500 underline"
+                                  >
+                                    Limpar
+                                  </button>
+                                </div>
+                              ) : (
+                                <textarea
+                                  value={typeof respostaBase === 'string' ? respostaBase : ''}
+                                  onChange={(e) => atualizarRespostaBase(chave, e.target.value, cond?.condicao, true)}
+                                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                                  rows={3}
+                                  placeholder="Digite sua resposta"
+                                />
+                              )}
+
+                              {cond && (
+                                <div
+                                  className={`rounded-md border px-3 py-2 ${
+                                    mostrarCondicional ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-100'
+                                  }`}
+                                >
+                                  <p className="text-sm font-medium text-gray-700">
+                                    {cond.pergunta}
+                                    {cond.obrigatoria && <span className="text-red-500"> *</span>}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    Condicional exibida quando a resposta anterior for “{cond.condicao === 'sim' ? 'Sim' : 'Não'}”.
+                                  </p>
+                                  {cond.tipo === 'sim_nao' ? (
+                                    <div className="mt-2 flex flex-wrap items-center gap-4">
+                                      <label className="inline-flex items-center text-sm text-gray-700">
+                                        <input
+                                          type="radio"
+                                          name={`${chave}-condicional`}
+                                          className="mr-2"
+                                          checked={registro.condicional === 'sim'}
+                                          disabled={!mostrarCondicional}
+                                          onChange={() => atualizarRespostaCondicional(chave, 'sim')}
+                                        />
+                                        Sim
+                                      </label>
+                                      <label className="inline-flex items-center text-sm text-gray-700">
+                                        <input
+                                          type="radio"
+                                          name={`${chave}-condicional`}
+                                          className="mr-2"
+                                          checked={registro.condicional === 'nao'}
+                                          disabled={!mostrarCondicional}
+                                          onChange={() => atualizarRespostaCondicional(chave, 'nao')}
+                                        />
+                                        Não
+                                      </label>
+                                      <button
+                                        type="button"
+                                        onClick={() => atualizarRespostaCondicional(chave, '')}
+                                        className="text-xs text-gray-500 underline"
+                                        disabled={!mostrarCondicional}
+                                      >
+                                        Limpar
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <textarea
+                                      value={typeof registro.condicional === 'string' ? registro.condicional : ''}
+                                      onChange={(e) => atualizarRespostaCondicional(chave, e.target.value, true)}
+                                      className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-100"
+                                      rows={2}
+                                      placeholder="Digite a resposta complementar"
+                                      disabled={!mostrarCondicional}
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Forma de Pagamento */}
             <div className="mb-6">

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { criarReserva } from "./reservas";
 import { getDocs, collection, query, where } from "firebase/firestore";
 import { db } from "./firebase";
+import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
 export type CriarCobrancaPayload = {
   nome: string;
@@ -19,6 +20,7 @@ export type CriarCobrancaPayload = {
   naoPagante: number;
   billingType: "PIX" | "CREDIT_CARD";
   temPet?: boolean;
+  perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
 };
 
 export type CriarCobrancaResponse = {
@@ -47,8 +49,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     criancas,
     naoPagante,
     billingType,
-    temPet,
-  } = req.body as CriarCobrancaPayload;
+  temPet,
+  perguntasPersonalizadas,
+} = req.body as CriarCobrancaPayload;
 
   console.log("📥 Dados recebidos:", req.body);
 
@@ -127,6 +130,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       horario: horarioFormatado,
       status: "aguardando",
       temPet,
+      perguntasPersonalizadas,
     });
 
     const dataHoje = new Date().toISOString().split("T")[0];

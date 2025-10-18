@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import React from 'react';
-import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc } from 'firebase/firestore';
+import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
@@ -9,6 +9,23 @@ import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaS
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
 dayjs.locale('pt-br');
+
+
+interface PerguntaPersonalizadaResposta {
+  pacoteId: string;
+  pacoteNome: string;
+  perguntaId: string;
+  pergunta: string;
+  tipo: 'sim_nao' | 'texto';
+  obrigatoria: boolean;
+  resposta: string;
+  perguntaCondicional?: {
+    pergunta: string;
+    tipo: 'sim_nao' | 'texto';
+    obrigatoria: boolean;
+    resposta: string;
+  };
+}
 
 interface Reserva {
   id?: string;
@@ -25,6 +42,7 @@ interface Reserva {
   valor?: number;
   status?: string;
   temPet?: boolean;
+  perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
 }
 
 interface PerguntaPersonalizada {
@@ -94,6 +112,8 @@ export default function AdminDashboard() {
   const [novaPergunta, setNovaPergunta] = useState<{ pergunta: string; tipo: 'sim_nao' | 'texto'; obrigatoria: boolean }>({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
   const [modalDisponibilidade, setModalDisponibilidade] = useState(false);
   const [disponibilidadeData, setDisponibilidadeData] = useState<Record<string, boolean>>({});
+  const [carregandoDisponibilidade, setCarregandoDisponibilidade] = useState(false);
+  const [salvandoDisponibilidade, setSalvandoDisponibilidade] = useState(false);
 
   const faixaHorarioDescricao = editPacote?.modoHorario === 'intervalo'
     && (editPacote.horarioInicio ?? '')
@@ -156,6 +176,7 @@ export default function AdminDashboard() {
       }, {} as Record<string, Reserva[]>);
       setReservas(reservasPorHorario);
     } catch (error) {
+      console.error('Erro ao buscar reservas:', error);
       setReservas({});
     }
   };
@@ -189,7 +210,9 @@ export default function AdminDashboard() {
       try {
         await deleteDoc(doc(db, "reservas", id));
         fetchReservas(selectedDate);
-      } catch (error) { }
+      } catch (error) {
+        console.error('Erro ao excluir reserva:', error);
+      }
     }
   };
 
@@ -308,6 +331,7 @@ export default function AdminDashboard() {
       setEditReserva(null);
       fetchReservas(selectedDate);
     } catch (error) {
+      console.error('Erro ao salvar reserva:', error);
       setFeedback({ type: 'error', message: 'Erro ao salvar reserva.' });
     }
   };
@@ -506,6 +530,65 @@ export default function AdminDashboard() {
       };
     });
   };
+  const carregarDisponibilidade = useCallback(async () => {
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    setCarregandoDisponibilidade(true);
+    try {
+      const ref = doc(db, 'disponibilidade', dataStr);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const dados = snap.data();
+        if (dados && typeof dados.horarios === 'object') {
+          const normalizado = Object.entries(dados.horarios as Record<string, boolean>).reduce(
+            (acc, [key, value]) => {
+              if (value === false) {
+                acc[key] = false;
+              }
+              return acc;
+            },
+            {} as Record<string, boolean>
+          );
+          setDisponibilidadeData(normalizado);
+        } else {
+          setDisponibilidadeData({});
+        }
+      } else {
+        setDisponibilidadeData({});
+      }
+    } catch (error) {
+      console.error('Erro ao carregar disponibilidade:', error);
+      setDisponibilidadeData({});
+    } finally {
+      setCarregandoDisponibilidade(false);
+    }
+  }, [selectedDate]);
+
+  const salvarDisponibilidade = async () => {
+    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+    setSalvandoDisponibilidade(true);
+    try {
+      const ref = doc(db, 'disponibilidade', dataStr);
+      if (Object.keys(disponibilidadeData).length > 0) {
+        await setDoc(ref, { data: dataStr, horarios: disponibilidadeData });
+      } else {
+        await deleteDoc(ref);
+      }
+      setFeedback({ type: 'success', message: 'Disponibilidade atualizada!' });
+      setModalDisponibilidade(false);
+    } catch (error) {
+      console.error('Erro ao salvar disponibilidade:', error);
+      setFeedback({ type: 'error', message: 'Erro ao salvar disponibilidade.' });
+    } finally {
+      setSalvandoDisponibilidade(false);
+    }
+  };
+
+  useEffect(() => {
+    if (modalDisponibilidade) {
+      carregarDisponibilidade();
+    }
+  }, [modalDisponibilidade, carregarDisponibilidade]);
+
 
 
 
@@ -526,6 +609,7 @@ export default function AdminDashboard() {
         );
       setResultadosPesquisa(matches);
     } catch (e) {
+      console.error('Erro na pesquisa de clientes:', e);
       setResultadosPesquisa([]);
     }
     setCarregandoPesquisa(false);
@@ -1676,8 +1760,17 @@ export default function AdminDashboard() {
                   </button>
                 </div>
                 <div className="px-4 sm:px-6 py-5 max-h-[80vh] overflow-y-auto">
-                  <div className="space-y-6">
-                    {pacotes.map((pacote) => {
+                  {carregandoDisponibilidade ? (
+                    <div className="py-6 text-center text-sm text-slate-500">
+                      Carregando disponibilidade...
+                    </div>
+                  ) : pacotes.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-slate-500">
+                      Nenhum pacote cadastrado para configurar disponibilidade.
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {pacotes.map((pacote) => {
                       const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
                       const pacoteKey = `${dataStr}-${pacote.id}`;
                       
@@ -1705,10 +1798,15 @@ export default function AdminDashboard() {
                                     key={horario}
                                     type="button"
                                     onClick={() => {
-                                      setDisponibilidadeData(prev => ({
-                                        ...prev,
-                                        [horarioKey]: !isDisponivel
-                                      }));
+                                      setDisponibilidadeData(prev => {
+                                        const proximo = { ...prev };
+                                        if (isDisponivel) {
+                                          proximo[horarioKey] = false;
+                                        } else {
+                                          delete proximo[horarioKey];
+                                        }
+                                        return proximo;
+                                      });
                                     }}
                                     className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
                                       isDisponivel
@@ -1729,7 +1827,8 @@ export default function AdminDashboard() {
                         </div>
                       );
                     })}
-                  </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
                   <button
@@ -1739,14 +1838,15 @@ export default function AdminDashboard() {
                     Fechar
                   </button>
                   <button
-                    onClick={() => {
-                      // Aqui você salvaria as alterações no banco
-                      setFeedback({ type: 'success', message: 'Disponibilidade atualizada!' });
-                      setModalDisponibilidade(false);
-                    }}
-                    className="w-full sm:w-auto rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                    onClick={salvarDisponibilidade}
+                    disabled={salvandoDisponibilidade || carregandoDisponibilidade}
+                    className={`w-full sm:w-auto rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${
+                      salvandoDisponibilidade || carregandoDisponibilidade
+                        ? 'bg-blue-300 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
                   >
-                    Salvar alterações
+                    {salvandoDisponibilidade ? 'Salvando...' : 'Salvar alterações'}
                   </button>
                 </div>
               </div>
