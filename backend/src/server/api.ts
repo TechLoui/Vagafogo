@@ -1,76 +1,92 @@
-import express from 'express';
-import cors from 'cors';
-import { db } from '../services/firebase';
+import express from "express";
+import cors from "cors";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  query,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import { db } from "../services/firebase";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// GET /api/reservas - apenas reservas pagas
-app.get('/api/reservas', async (req, res) => {
+const reservasRef = collection(db, "reservas");
+const pacotesRef = collection(db, "pacotes");
+
+app.get("/api/reservas", async (_req, res) => {
   try {
-    const snapshot = await db.collection('reservas').where('status', 'in', ['pago']).get();
-    const reservas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const reservasQuery = query(reservasRef, where("status", "in", ["pago"]));
+    const snapshot = await getDocs(reservasQuery);
+    const reservas = snapshot.docs.map((registro) => ({
+      id: registro.id,
+      ...registro.data(),
+    }));
     res.json(reservas);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao listar reservas" });
   }
 });
 
-// GET /api/pacotes
-app.get('/api/pacotes', async (req, res) => {
+app.get("/api/pacotes", async (_req, res) => {
   try {
-    const snapshot = await db.collection('pacotes').get();
-    const pacotes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const snapshot = await getDocs(pacotesRef);
+    const pacotes = snapshot.docs.map((registro) => ({
+      id: registro.id,
+      ...registro.data(),
+    }));
     res.json(pacotes);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao listar pacotes" });
   }
 });
 
-// POST /api/reservas
-app.post('/api/reservas', async (req, res) => {
+app.post("/api/reservas", async (req, res) => {
   try {
-    const docRef = await db.collection('reservas').add(req.body);
-    res.json({ id: docRef.id, ...req.body });
+    const novo = await addDoc(reservasRef, req.body);
+    res.json({ id: novo.id, ...req.body });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao criar reserva" });
   }
 });
 
-// POST /api/pacotes
-app.post('/api/pacotes', async (req, res) => {
+app.post("/api/pacotes", async (req, res) => {
   try {
-    const docRef = await db.collection('pacotes').add(req.body);
-    res.json({ id: docRef.id, ...req.body });
+    const novo = await addDoc(pacotesRef, req.body);
+    res.json({ id: novo.id, ...req.body });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao criar pacote" });
   }
 });
 
-// PUT /api/reservas/:id
-app.put('/api/reservas/:id', async (req, res) => {
+app.put("/api/reservas/:id", async (req, res) => {
   try {
-    await db.collection('reservas').doc(req.params.id).update(req.body);
+    const ref = doc(reservasRef, req.params.id);
+    await updateDoc(ref, req.body);
     res.json({ id: req.params.id, ...req.body });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao atualizar reserva" });
   }
 });
 
-// DELETE /api/reservas/:id
-app.delete('/api/reservas/:id', async (req, res) => {
+app.delete("/api/reservas/:id", async (req, res) => {
   try {
-    await db.collection('reservas').doc(req.params.id).delete();
+    const ref = doc(reservasRef, req.params.id);
+    await deleteDoc(ref);
     res.json({ success: true });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message ?? "Erro ao remover reserva" });
   }
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log(`API rodando na porta ${PORT}`);
 });
 
 export default app;
