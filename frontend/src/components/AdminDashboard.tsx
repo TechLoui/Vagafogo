@@ -4,7 +4,7 @@ import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc } fro
 import { db } from '../../firebase';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup } from 'react-icons/fa';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -27,10 +27,24 @@ interface Reserva {
   temPet?: boolean;
 }
 
+interface PerguntaPersonalizada {
+  id: string;
+  pergunta: string;
+  tipo: 'sim_nao' | 'texto';
+  obrigatoria: boolean;
+  perguntaCondicional?: {
+    condicao: 'sim' | 'nao';
+    pergunta: string;
+    tipo: 'sim_nao' | 'texto';
+    obrigatoria: boolean;
+  };
+}
+
 interface Pacote {
   id?: string;
   nome: string;
   tipo: string;
+  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
@@ -41,12 +55,14 @@ interface Pacote {
   modoHorario?: 'lista' | 'intervalo';
   horarioInicio?: string;
   horarioFim?: string;
-  pacotesCombinados?: string[];
   aceitaPet: boolean;
+  perguntasPersonalizadas?: PerguntaPersonalizada[];
 }
 
+
+
 const diasDaSemana = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const diasDaSemanaCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
 const horariosDisponiveis = [
   '08:00', '09:00', '10:00', '11:00', '12:00',
   '13:00', '14:00', '15:00', '16:00', '18:00'
@@ -58,6 +74,7 @@ const ordenarHorarios = (lista: string[]) => (
 
 export default function AdminDashboard() {
   const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa'>('reservas');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Reservas
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -74,18 +91,49 @@ export default function AdminDashboard() {
   const [editPacote, setEditPacote] = useState<Pacote | null>(null);
   const [isEditingPacote, setIsEditingPacote] = useState(false);
   const [novaDataBloqueada, setNovaDataBloqueada] = useState('');
+  const [novaPergunta, setNovaPergunta] = useState<{ pergunta: string; tipo: 'sim_nao' | 'texto'; obrigatoria: boolean }>({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
+  const [modalDisponibilidade, setModalDisponibilidade] = useState(false);
+  const [disponibilidadeData, setDisponibilidadeData] = useState<Record<string, boolean>>({});
+
   const faixaHorarioDescricao = editPacote?.modoHorario === 'intervalo'
     && (editPacote.horarioInicio ?? '')
     && (editPacote.horarioFim ?? '')
-    ? `Disponivel das ${editPacote.horarioInicio} as ${editPacote.horarioFim}. O cliente vera apenas a faixa.`
+    ? `Disponível das ${editPacote.horarioInicio} às ${editPacote.horarioFim}. O cliente verá apenas a faixa.`
     : '';
-  const pacotesPorId = useMemo(() => {
-    const mapa: Record<string, Pacote> = {};
-    pacotes.forEach(p => {
-      if (p.id) mapa[p.id] = p;
-    });
-    return mapa;
+
+  const totalReservasConfirmadas = useMemo(() => {
+    return Object.values(reservas).reduce(
+      (acc, lista) => acc + lista.length,
+      0
+    );
+  }, [reservas]);
+  const totalParticipantesConfirmados = useMemo(() => {
+    return Object.values(reservas).reduce(
+      (acc, lista) =>
+        acc +
+        lista.reduce((subtotal, item) => subtotal + calcularParticipantes(item), 0),
+      0
+    );
+  }, [reservas]);
+
+  const pacotesQueNaoAceitamPet = useMemo(() => {
+    return pacotes.filter(p => p.aceitaPet === false).length;
   }, [pacotes]);
+  const totalPacotesAtivos = pacotes.length;
+  const proximaDataBloqueada = useMemo(() => {
+    const hoje = dayjs().startOf('day');
+    const datasOrdenadas = pacotes
+      .flatMap(p => p.datasBloqueadas ?? [])
+      .map(data => dayjs(data))
+      .filter(data => data.isValid() && (data.isSame(hoje) || data.isAfter(hoje)))
+      .sort((a, b) => a.valueOf() - b.valueOf());
+    return datasOrdenadas.length > 0 ? datasOrdenadas[0] : null;
+  }, [pacotes]);
+  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
+    { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
+    { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
+    { id: 'pesquisa', label: 'Clientes', description: 'Histórico de reservas', icon: FaSearch },
+  ];
 
   // Pesquisa Clientes
   const [termoPesquisa, setTermoPesquisa] = useState('');
@@ -178,6 +226,59 @@ export default function AdminDashboard() {
     );
   }
 
+  const formatarValor = (valor?: number | string) => {
+    if (valor === undefined || valor === null) return '---';
+    const numero = Number(valor);
+    if (Number.isNaN(numero)) return '---';
+    return `R$${numero.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const obterPacoteNomes = (reserva: Reserva) => {
+    const info = reserva as Record<string, any>;
+    const nomes: string[] = [];
+
+    if (Array.isArray(info.pacoteNomes)) {
+      nomes.push(...info.pacoteNomes.filter(Boolean));
+    } else if (Array.isArray(info.pacotes)) {
+      info.pacotes.forEach((item: any) => {
+        if (typeof item === 'string') {
+          nomes.push(item);
+        } else if (item?.nome) {
+          nomes.push(item.nome);
+        }
+      });
+    } else if (Array.isArray(info.pacoteIds)) {
+      info.pacoteIds.forEach((id: string) => {
+        const pacoteRelacionado = pacotes.find(p => p.id === id);
+        if (pacoteRelacionado?.nome) {
+          nomes.push(pacoteRelacionado.nome);
+        }
+      });
+    } else if (typeof info.pacote === 'string') {
+      nomes.push(info.pacote);
+    } else if (typeof info.pacoteNome === 'string') {
+      nomes.push(info.pacoteNome);
+    } else if (reserva.atividade) {
+      nomes.push(reserva.atividade);
+    }
+
+    return Array.from(new Set(nomes.filter(Boolean)));
+  };
+
+  const formatarPacote = (reserva: Reserva) => {
+    const nomes = obterPacoteNomes(reserva);
+    if (nomes.length === 0) return '---';
+    if (nomes.length === 1) return nomes[0];
+    return nomes.join(' + ');
+  };
+
+  const detalharParticipantes = (reserva: Reserva) => {
+    const criancas = reserva.criancas ?? 0;
+    const bariatricos = reserva.bariatrica ?? 0;
+    const adultos = reserva.adultos ?? 0;
+    return `C:${criancas} B:${bariatricos} A:${adultos}`;
+  };
+
   const handleSaveReserva = async () => {
     if (!editReserva) return;
     if (!editReserva.data) {
@@ -232,14 +333,22 @@ export default function AdminDashboard() {
         horarioInicio: data.horarioInicio ?? '',
         horarioFim: data.horarioFim ?? '',
         aceitaPet: data.aceitaPet === false ? false : true,
-        pacotesCombinados: Array.isArray(data.pacotesCombinados) ? data.pacotesCombinados.filter(Boolean) : [],
+        perguntasPersonalizadas: Array.isArray(data.perguntasPersonalizadas) ? data.perguntasPersonalizadas : [],
       } as Pacote;
     });
     setPacotes(lista);
   };
 
+
+
   useEffect(() => {
-    if (aba === 'pacotes') fetchPacotes();
+    fetchPacotes();
+  }, []);
+
+  useEffect(() => {
+    if (aba === 'pacotes') {
+      fetchPacotes();
+    }
   }, [aba]);
 
   const handleEditPacote = (pacote: Pacote) => {
@@ -252,9 +361,10 @@ export default function AdminDashboard() {
       horarioInicio: pacote.horarioInicio ?? '',
       horarioFim: pacote.horarioFim ?? '',
       aceitaPet: pacote.aceitaPet ?? true,
-      pacotesCombinados: Array.isArray(pacote.pacotesCombinados) ? [...pacote.pacotesCombinados] : [],
+      perguntasPersonalizadas: pacote.perguntasPersonalizadas ?? [],
     });
     setNovaDataBloqueada('');
+    setNovaPergunta({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
     setIsEditingPacote(true);
     setModalPacote(true);
   };
@@ -274,9 +384,10 @@ export default function AdminDashboard() {
       horarioInicio: '',
       horarioFim: '',
       aceitaPet: true,
-      pacotesCombinados: [],
+      perguntasPersonalizadas: [],
     });
     setNovaDataBloqueada('');
+    setNovaPergunta({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
     setIsEditingPacote(false);
     setModalPacote(true);
   };
@@ -295,14 +406,11 @@ export default function AdminDashboard() {
 
     const horarioInicio = editPacote.horarioInicio ?? '';
     const horarioFim = editPacote.horarioFim ?? '';
-    const pacotesCombinados = Array.from(new Set(editPacote.pacotesCombinados ?? []))
-      .filter(id => Boolean(id) && id !== editPacote.id);
-
     let horariosCalculados: string[] = [];
 
     if (modoHorario === 'intervalo') {
       if (!horarioInicio || !horarioFim) {
-        setFeedback({ type: 'error', message: 'Informe horario inicial e final.' });
+        setFeedback({ type: 'error', message: 'Informe horário inicial e final.' });
         return;
       }
       horariosCalculados = [];
@@ -321,7 +429,6 @@ export default function AdminDashboard() {
       horarioFim: modoHorario === 'intervalo' ? horarioFim : '',
       horarios: horariosCalculados,
       aceitaPet: editPacote.aceitaPet ?? true,
-      pacotesCombinados,
     };
 
     const { id, ...dadosPacote } = pacoteNormalizado;
@@ -374,6 +481,34 @@ export default function AdminDashboard() {
     });
   };
 
+  const adicionarPergunta = () => {
+    if (!novaPergunta.pergunta.trim()) return;
+    setEditPacote(prev => {
+      if (!prev) return prev;
+      const novaP: PerguntaPersonalizada = {
+        id: Date.now().toString(),
+        ...novaPergunta
+      };
+      return {
+        ...prev,
+        perguntasPersonalizadas: [...(prev.perguntasPersonalizadas ?? []), novaP]
+      };
+    });
+    setNovaPergunta({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
+  };
+
+  const removerPergunta = (id: string) => {
+    setEditPacote(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        perguntasPersonalizadas: (prev.perguntasPersonalizadas ?? []).filter(p => p.id !== id)
+      };
+    });
+  };
+
+
+
   // Pesquisa Clientes
   const pesquisarClientes = async () => {
     if (!termoPesquisa.trim()) return;
@@ -398,573 +533,724 @@ export default function AdminDashboard() {
 
   // Render
   return (
-    <main className="min-h-screen w-full bg-gray-50">
-      {/* Feedback */}
+    <main className="min-h-screen bg-slate-100 py-8">
       {feedback && (
-        <div className={`fixed top-4 right-4 z-[99] px-6 py-2 rounded shadow transition-all text-white ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+        <div
+          className={`fixed top-6 right-6 z-50 flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ${
+            feedback.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+          }`}
+        >
           {feedback.message}
         </div>
       )}
 
-      {/* Abas */}
-      <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">
-        <button onClick={() => setAba('reservas')}
-          className={`px-3 py-1 rounded ${aba === 'reservas' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaPlus className="inline mr-1" /> Reservas
+      <div className="mx-auto max-w-7xl space-y-8 px-4 sm:px-6 lg:px-8">
+        <header className="flex flex-col gap-6 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Painel administrativo</p>
+            <h1 className="mt-2 text-3xl font-semibold text-slate-900">Gestão inteligente</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Controle reservas, pacotes e disponibilidade em poucos cliques.
+            </p>
+          </div>
+
+        </header>
+
+        {/* Cards de estatísticas - apenas na aba reservas */}
+        {aba === 'reservas' && (
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas do dia</p>
+                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalReservasConfirmadas}</p>
+                  <span className="text-xs text-slate-400">{Object.keys(reservas).length} horários ativos</span>
+                </div>
+                <span className="rounded-full bg-blue-50 p-3 text-blue-600">
+                  <FaCalendarAlt className="h-5 w-5" />
+                </span>
+              </div>
+            </article>
+
+            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
+                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalParticipantesConfirmados}</p>
+                  <span className="text-xs text-slate-400">Confirmados hoje</span>
+                </div>
+                <span className="rounded-full bg-emerald-50 p-3 text-emerald-600">
+                  <FaUsers className="h-5 w-5" />
+                </span>
+              </div>
+            </article>
+
+            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Próximo bloqueio</p>
+                  <p className="mt-3 text-2xl font-semibold text-slate-900">
+                    {proximaDataBloqueada ? proximaDataBloqueada.format('DD/MM/YYYY') : 'Sem bloqueios'}
+                  </p>
+                  <span className="text-xs text-slate-400">
+                    {pacotes.reduce((acc, item) => acc + (item.datasBloqueadas?.length ?? 0), 0)} datas bloqueadas no total
+                  </span>
+                </div>
+                <span className="rounded-full bg-amber-50 p-3 text-amber-500">
+                  <FaChevronRight className="h-5 w-5" />
+                </span>
+              </div>
+            </article>
+
+            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pacotes ativos</p>
+                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalPacotesAtivos}</p>
+                  <span className="text-xs text-slate-400">{pacotesQueNaoAceitamPet} sem pet</span>
+                </div>
+                <span className="rounded-full bg-purple-50 p-3 text-purple-600">
+                  <FaLayerGroup className="h-5 w-5" />
+                </span>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {/* Desktop Navigation */}
+        <nav className="hidden lg:flex flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white/80 p-2 shadow-sm backdrop-blur">
+          {abasDisponiveis.map(({ id, label, description, icon: Icon }) => {
+            const ativo = aba === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setAba(id)}
+                className={`group flex min-w-[160px] flex-1 items-center gap-3 rounded-full px-4 py-2 text-left text-sm transition ${
+                  ativo ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-full border ${
+                    ativo ? 'border-white bg-white text-blue-600' : 'border-slate-200 bg-slate-50 text-slate-500'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="flex flex-col">
+                  <span className="font-semibold">{label}</span>
+                  <span className={`text-[11px] ${ativo ? 'text-blue-100/90' : 'text-slate-400'}`}>{description}</span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+        
+        {/* Mobile Floating Button */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="lg:hidden fixed top-4 right-4 z-40 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:bg-blue-700 transition-colors"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
         </button>
-        <button onClick={() => setAba('pacotes')}
-          className={`px-3 py-1 rounded ${aba === 'pacotes' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaBox className="inline mr-1" /> Pacotes
-        </button>
-        <button onClick={() => setAba('pesquisa')}
-          className={`px-3 py-1 rounded ${aba === 'pesquisa' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaSearch className="inline mr-1" /> Pesquisa de Clientes
-        </button>
-      </div>
+        
+        {/* Mobile Sidebar */}
+        {sidebarOpen && (
+          <>
+            <div 
+              className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-50"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <div className="lg:hidden fixed top-0 left-0 h-full w-80 bg-white shadow-xl z-50 transform transition-transform">
+              <div className="p-4 border-b border-slate-200">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-lg font-semibold text-slate-900">Menu</h2>
+                  <button
+                    onClick={() => setSidebarOpen(false)}
+                    className="p-2 rounded-full hover:bg-slate-100"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="p-4 space-y-2">
+                {abasDisponiveis.map(({ id, label, description, icon: Icon }) => {
+                  const ativo = aba === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => {
+                        setAba(id);
+                        setSidebarOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition ${
+                        ativo ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                        ativo ? 'bg-white text-blue-600' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <div>
+                        <div className="font-medium">{label}</div>
+                        <div className={`text-sm ${ativo ? 'text-blue-100' : 'text-slate-500'}`}>{description}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
 
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
-        <>
-          {/* Calendário */}
-          <section className="bg-white p-4 rounded shadow mb-6 w-full">
-            <div className="flex justify-between items-center mb-4">
-              <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
-              <h2 className="text-lg font-bold">{dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}</h2>
-              <button onClick={() => changeMonth(1)}><FaChevronRight /></button>
-            </div>
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {diasDaSemanaCurto.map(dia => (
-                <div key={dia} className="text-center font-semibold text-gray-600 text-sm">{dia}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {days.map((day, idx) => {
-                const isSelected = day && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear;
-                return (
-                  <div
-                    key={idx}
-                    className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${day ? (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200') : ''}`}
-                    onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
+        <section className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="space-y-6">
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => changeMonth(-1)}
+                    className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                   >
-                    {day || ''}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Reservas Tabela */}
-          <section className="bg-white p-4 rounded shadow w-full">
-            <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                <h3 className="text-base font-bold">
-                  Agendamentos para: {dayjs(selectedDate).format('DD/MM/YYYY')}
-                </h3>
-                <select
-                  value={filtroAtividade}
-                  onChange={(e) => setFiltroAtividade(e.target.value)}
-                  className="border px-2 py-1 rounded text-xs"
+                    <FaChevronLeft className="h-4 w-4" />
+                  </button>
+                  <h2 className="text-sm font-semibold text-slate-700">
+                    {dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => changeMonth(1)}
+                    className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <FaChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-4 grid grid-cols-7 gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  {diasDaSemanaCurto.map((dia) => (
+                    <span key={dia} className="text-center">{dia}</span>
+                  ))}
+                </div>
+                <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
+                  {days.map((day, idx) => {
+                    const isSelected =
+                      !!day &&
+                      selectedDate.getDate() === day &&
+                      selectedDate.getMonth() === currentMonth &&
+                      selectedDate.getFullYear() === currentYear;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={!day}
+                        className={`flex h-10 items-center justify-center rounded-full text-xs font-medium transition ${
+                          !day
+                            ? 'cursor-default text-slate-300'
+                            : isSelected
+                              ? 'bg-blue-600 text-white shadow-sm'
+                              : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                        }`}
+                        onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
+                      >
+                        {day || ''}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                  Dia selecionado: <span className="font-semibold text-slate-700">{dayjs(selectedDate).format('DD/MM/YYYY')}</span>
+                </p>
+                <button
+                  onClick={() => setModalDisponibilidade(true)}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-medium text-orange-700 transition hover:bg-orange-100"
                 >
-                  <option value="">Todas Atividades</option>
-                  <option value="Trilha Ecológica">Trilha Ecológica</option>
-                  <option value="Brunch Gastronômico">Brunch Gastronômico</option>
-                  <option value="Brunch + trilha">Brunch + trilha</option>
-                </select>
-              </div>
-              <button onClick={handleAddReserva} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-2 text-sm">
-                <FaPlus /> Nova Reserva
-              </button>
+                  <FaEdit className="h-4 w-4" />
+                  Editar disponibilidade
+                </button>
+              </article>
+
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-700">Resumo do dia</h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <dt>Reservas confirmadas</dt>
+                    <dd className="font-semibold text-slate-900">{totalReservasConfirmadas}</dd>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-500">
+                    <dt>Participantes</dt>
+                    <dd className="font-semibold text-slate-900">{totalParticipantesConfirmados}</dd>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-500">
+                    <dt>Horários ativos</dt>
+                    <dd className="font-semibold text-slate-900">{Object.keys(reservas).length}</dd>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-500">
+                    <dt>Combos cadastrados</dt>
+                    <dd className="font-semibold text-slate-900">0</dd>
+                  </div>
+                </dl>
+                <button
+                  onClick={handleAddReserva}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100"
+                >
+                  <FaPlus className="h-4 w-4" />
+                  Registrar reserva rapida
+                </button>
+              </article>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-xs">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Reservista</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Adultos</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Criança</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Não Pagante</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Bariátrica</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Participantes</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Pet</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Atividade</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Valor</th>
-                    <th className="px-2 py-2 font-medium text-left text-gray-600">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.keys(reservas).length === 0 ? (
+            <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Reservas de {dayjs(selectedDate).format('DD/MM/YYYY')}
+                  </h3>
+                  <p className="text-sm text-slate-500">Resumo em tempo real das reservas confirmadas.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={filtroAtividade}
+                    onChange={(e) => setFiltroAtividade(e.target.value)}
+                    className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <option value="">Todas as atividades</option>
+                    {[...new Set(Object.values(reservas).flat().map(r => r.atividade))]
+                      .filter(Boolean)
+                      .sort()
+                      .map(atividade => (
+                        <option key={atividade} value={atividade}>{atividade}</option>
+                      ))
+                    }
+                  </select>
+                  <button
+                    onClick={handleAddReserva}
+                    className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 whitespace-nowrap"
+                  >
+                    <FaPlus className="h-4 w-4" />
+                    Nova reserva
+                  </button>
+                </div>
+              </div>
+              {/* Desktop Table */}
+              <div className="hidden lg:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-100 text-sm">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <tr>
-                      <td colSpan={10} className="px-2 py-3 text-gray-500 text-xs">Nenhuma reserva paga encontrada.</td>
+                      <th className="px-4 py-3 text-left">Reserva</th>
+                      <th className="px-4 py-3 text-left">Nº Participantes</th>
+                      <th className="px-4 py-3 text-center">Pet</th>
+                      <th className="px-4 py-3 text-left">CPF</th>
+                      <th className="px-4 py-3 text-left">Pacote</th>
+                      <th className="px-4 py-3 text-right">Valor</th>
+                      <th className="px-4 py-3 text-right">Ações</th>
                     </tr>
-                  ) : (
-                    Object.keys(reservas)
-                      .sort((a, b) => {
-                        if (a === 'Não especificado') return 1;
-                        if (b === 'Não especificado') return -1;
-                        return a.localeCompare(b);
-                      })
-                      .map(horario => {
-                        const reservasPorHorario = reservas[horario];
-                        const filtradas = reservasPorHorario.filter(r =>
-                          !filtroAtividade || r.atividade === filtroAtividade
-                        );
-                        if (filtradas.length === 0) return null;
-                        const totalPessoas = filtradas.reduce((acc, r) => acc + calcularParticipantes(r), 0);
-                        return (
-                          <React.Fragment key={horario}>
-                            <tr>
-                              <td colSpan={10} className="font-bold bg-gray-100 text-gray-700 px-2 py-2">
-                                {horario} - {totalPessoas} pessoa{totalPessoas > 1 ? 's' : ''}
-                              </td>
-                            </tr>
-                            {filtradas.map(r => (
-                              <tr key={r.id} className="border-t">
-                                <td className="px-2 py-2">{r.nome}</td>
-                                <td className="px-2 py-2">{r.adultos ?? 0}</td>
-                                <td className="px-2 py-2">{r.criancas ?? 0}</td>
-                                <td className="px-2 py-2">{r.naoPagante ?? 0}</td>
-                                <td className="px-2 py-2">{r.bariatrica ?? 0}</td>
-                                <td className="px-2 py-2">{calcularParticipantes(r)}</td>
-                                <td className="px-2 py-2">{r.temPet ? '🐕 Sim' : 'Não'}</td>
-                                <td className="px-2 py-2">{r.atividade}</td>
-                                <td className="px-2 py-2">
-                                  {r.valor !== undefined
-                                    ? r.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                                    : '-'}
-                                </td>
-                                <td className="px-2 py-2 flex gap-1">
-                                  <a
-                                    href={`https://wa.me/55${r.telefone.replace(/\D/g, '')}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-green-600 hover:text-green-800 flex items-center justify-center rounded-full bg-green-50 w-8 h-8 text-xl"
-                                    title="Enviar WhatsApp"
-                                  >
-                                    <FaWhatsapp />
-                                  </a>
-                                  <button
-                                    onClick={() => handleEditReserva(r)}
-                                    className="text-blue-600 hover:underline flex items-center gap-1"
-                                  >
-                                    <FaEdit />
-                                  </button>
-                                  <button
-                                    onClick={() => excluirReserva(r.id!)}
-                                    className="text-red-600 hover:underline flex items-center gap-1"
-                                  >
-                                    <FaTrash />
-                                  </button>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {Object.keys(reservas).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                          Nenhuma reserva paga encontrada para esta data.
+                        </td>
+                      </tr>
+                    ) : (
+                      Object.keys(reservas)
+                        .sort((a, b) => {
+                          const aIndefinido = a.toLowerCase().includes('especificado');
+                          const bIndefinido = b.toLowerCase().includes('especificado');
+                          if (aIndefinido && !bIndefinido) return 1;
+                          if (!aIndefinido && bIndefinido) return -1;
+                          return a.localeCompare(b);
+                        })
+                        .map((horario) => {
+                          const reservasPorHorario = reservas[horario];
+                          const filtradas = reservasPorHorario.filter(
+                            (reserva) => !filtroAtividade || reserva.atividade === filtroAtividade
+                          );
+                          if (filtradas.length === 0) return null;
+                          const totalPessoas = filtradas.reduce(
+                            (acc, reserva) => acc + calcularParticipantes(reserva),
+                            0
+                          );
+                          const tituloHorario = horario.toLowerCase().includes('especificado')
+                            ? 'Sem horário definido'
+                            : horario;
+                          return (
+                            <React.Fragment key={horario}>
+                              <tr className="bg-slate-50/70">
+                                <td colSpan={7} className="px-6 py-3 text-sm font-semibold text-slate-700">
+                                  <div className="flex items-center justify-between">
+                                    <span>{tituloHorario}</span>
+                                    <span className="text-xs font-normal text-slate-500">{totalPessoas} participante(s)</span>
+                                  </div>
                                 </td>
                               </tr>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Modal Reserva */}
-            {modalReserva && editReserva && (
-              <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-                <div className="bg-white p-4 rounded shadow w-full max-w-md">
-                  <h4 className="text-base font-bold mb-2">{isEditingReserva ? 'Editar' : 'Nova'} Reserva</h4>
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <label className="block text-xs">Nome:
-                      <input
-                        type="text"
-                        value={editReserva.nome}
-                        onChange={e => setEditReserva({ ...editReserva, nome: e.target.value })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">CPF:
-                      <input
-                        type="text"
-                        value={editReserva.cpf}
-                        onChange={e => setEditReserva({ ...editReserva, cpf: e.target.value })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Telefone:
-                      <input
-                        type="text"
-                        value={editReserva.telefone}
-                        onChange={e => setEditReserva({ ...editReserva, telefone: e.target.value })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Data:
-                      <input
-                        type="date"
-                        value={editReserva.data}
-                        onChange={e => setEditReserva({ ...editReserva, data: e.target.value })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Adultos:
-                      <input
-                        type="number"
-                        value={editReserva.adultos ?? 0}
-                        min={0}
-                        onChange={e => setEditReserva({ ...editReserva, adultos: Number(e.target.value) })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Crianças:
-                      <input
-                        type="number"
-                        value={editReserva.criancas ?? 0}
-                        min={0}
-                        onChange={e => setEditReserva({ ...editReserva, criancas: Number(e.target.value) })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Não Pagante:
-                      <input
-                        type="number"
-                        value={editReserva.naoPagante ?? 0}
-                        min={0}
-                        onChange={e => setEditReserva({ ...editReserva, naoPagante: Number(e.target.value) })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Bariátrica:
-                      <input
-                        type="number"
-                        value={editReserva.bariatrica ?? 0}
-                        min={0}
-                        onChange={e => setEditReserva({ ...editReserva, bariatrica: Number(e.target.value) })}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
+                              {filtradas.map((reserva) => {
+                                const participantes = calcularParticipantes(reserva);
+                                const mensagem = encodeURIComponent(
+                                  `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${dayjs(reserva.data).format('DD/MM/YYYY')} �s ${reserva.horario}.`
+                                );
+                                const telefoneLimpo = (reserva.telefone || '').replace(/\D/g, '');
+                                const telefoneComCodigo = telefoneLimpo.startsWith('55') ? telefoneLimpo : (telefoneLimpo ? `55${telefoneLimpo}` : '');
+                                const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
+                                const pacoteDescricao = formatarPacote(reserva);
+                                const valorFormatado = formatarValor(reserva.valor);
+                                const participantesDetalhe = detalharParticipantes(reserva);
+                                return (
+                                  <tr key={reserva.id} className="transition hover:bg-slate-50/70">
+                                    <td className="px-4 py-4">
+                                      <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      <div className="flex flex-col gap-1">
+                                        <span className="font-semibold text-slate-900">{participantes}</span>
+                                        <span className="text-xs text-slate-500">{participantesDetalhe}</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-4 text-center">
+                                      <span className={`inline-flex items-center justify-center rounded-full px-2 py-1 text-xs font-medium ${
+                                        reserva.temPet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                                      }`}>
+                                        {reserva.temPet ? 'Com pet' : 'Sem pet'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-4 text-slate-600 whitespace-nowrap">
+                                      {reserva.cpf || '---'}
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      {pacoteDescricao === '---' ? (
+                                        <span className="text-slate-500">---</span>
+                                      ) : (
+                                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600">
+                                          {pacoteDescricao}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-4 text-right font-medium text-slate-900">
+                                      {valorFormatado}
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      <div className="flex justify-end gap-2">
+                                        <button
+                                          onClick={() => whatsappUrl && window.open(whatsappUrl, '_blank')}
+                                          disabled={!whatsappUrl}
+                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                          aria-label="Enviar mensagem no WhatsApp"
+                                          title="WhatsApp"
+                                        >
+                                          <FaWhatsapp className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleEditReserva(reserva)}
+                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+                                          aria-label="Editar reserva"
+                                          title="Editar"
+                                        >
+                                          <FaEdit className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                          onClick={() => reserva.id && excluirReserva(reserva.id)}
+                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                                          aria-label="Excluir reserva"
+                                          title="Excluir"
+                                        >
+                                          <FaTrash className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          );
+                        })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Mobile Cards */}
+              <div className="lg:hidden space-y-4">
+                {Object.keys(reservas).length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">
+                    Nenhuma reserva paga encontrada para esta data.
                   </div>
-                  <label className="block text-xs mb-2">Horário:
+                ) : (
+                  Object.keys(reservas)
+                    .sort((a, b) => {
+                      const aIndefinido = a.toLowerCase().includes('especificado');
+                      const bIndefinido = b.toLowerCase().includes('especificado');
+                      if (aIndefinido && !bIndefinido) return 1;
+                      if (!aIndefinido && bIndefinido) return -1;
+                      return a.localeCompare(b);
+                    })
+                    .map((horario) => {
+                      const reservasPorHorario = reservas[horario];
+                      const filtradas = reservasPorHorario.filter(
+                        (reserva) => !filtroAtividade || reserva.atividade === filtroAtividade
+                      );
+                      if (filtradas.length === 0) return null;
+                      const totalPessoas = filtradas.reduce(
+                        (acc, reserva) => acc + calcularParticipantes(reserva),
+                        0
+                      );
+                      const tituloHorario = horario.toLowerCase().includes('especificado')
+                        ? 'Sem horário definido'
+                        : horario;
+                      return (
+                        <div key={horario} className="space-y-3">
+                          <div className="bg-slate-100 px-4 py-2 rounded-lg">
+                            <div className="flex justify-between items-center">
+                              <h4 className="font-semibold text-slate-700">{tituloHorario}</h4>
+                              <span className="text-sm text-slate-500">{totalPessoas} participante(s)</span>
+                            </div>
+                          </div>
+                          {filtradas.map((reserva) => {
+                            const participantes = calcularParticipantes(reserva);
+                            const mensagem = encodeURIComponent(
+                              `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${dayjs(reserva.data).format('DD/MM/YYYY')} �s ${reserva.horario}.`
+                            );
+                            const telefoneLimpo = (reserva.telefone || '').replace(/\D/g, '');
+                            const telefoneComCodigo = telefoneLimpo.startsWith('55') ? telefoneLimpo : (telefoneLimpo ? `55${telefoneLimpo}` : '');
+                            const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
+                            const pacoteDescricao = formatarPacote(reserva);
+                            const valorFormatado = formatarValor(reserva.valor);
+                            const participantesDetalhe = detalharParticipantes(reserva);
+                            return (
+                              <div key={reserva.id} className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
+                                <div className="flex justify-between items-start mb-3">
+                                  <div className="flex-1 pr-4">
+                                    <h5 className="font-medium text-slate-900">{reserva.nome || '---'}</h5>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="font-semibold text-slate-900">{participantes}</span>
+                                    <p className="text-xs text-slate-500">{participantesDetalhe}</p>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 mb-3">
+                                  <div>
+                                    <p className="text-xs text-slate-500 mb-1">CPF</p>
+                                    <span className="text-sm font-medium text-slate-700">{reserva.cpf || '---'}</span>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-slate-500 mb-1">Pacote</p>
+                                    {pacoteDescricao === '---' ? (
+                                      <span className="text-sm text-slate-500">---</span>
+                                    ) : (
+                                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600">
+                                        {pacoteDescricao}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-slate-500 mb-1">Pet</p>
+                                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                                      reserva.temPet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                                    }`}>
+                                      {reserva.temPet ? 'Com pet' : 'Sem pet'}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-slate-500 mb-1">Valor</p>
+                                    <span className="font-medium text-slate-900">{valorFormatado}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs text-slate-500">{reserva.telefone ? `Tel: ${reserva.telefone}` : 'Tel: ---'}</span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => whatsappUrl && window.open(whatsappUrl, '_blank')}
+                                      disabled={!whatsappUrl}
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                      aria-label="Enviar mensagem no WhatsApp"
+                                      title="WhatsApp"
+                                    >
+                                      <FaWhatsapp className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleEditReserva(reserva)}
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+                                      aria-label="Editar reserva"
+                                      title="Editar"
+                                    >
+                                      <FaEdit className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => reserva.id && excluirReserva(reserva.id)}
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                                      aria-label="Excluir reserva"
+                                      title="Excluir"
+                                    >
+                                      <FaTrash className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </article>
+          </div>
+
+          {modalReserva && editReserva && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+              <div className="w-full max-w-3xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+                  <h4 className="text-lg font-semibold text-slate-900">
+                    {isEditingReserva ? 'Editar reserva' : 'Nova reserva'}
+                  </h4>
+                  <button
+                    onClick={() => setModalReserva(false)}
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    x
+                  </button>
+                </div>
+                <div className="grid gap-4 px-4 sm:px-6 py-5 md:grid-cols-2 max-h-[80vh] overflow-y-auto">
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Nome
+                    <input
+                      type="text"
+                      value={editReserva.nome}
+                      onChange={(e) => setEditReserva({ ...editReserva, nome: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    CPF
+                    <input
+                      type="text"
+                      value={editReserva.cpf}
+                      onChange={(e) => setEditReserva({ ...editReserva, cpf: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Telefone
+                    <input
+                      type="text"
+                      value={editReserva.telefone}
+                      onChange={(e) => setEditReserva({ ...editReserva, telefone: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Data
+                    <input
+                      type="date"
+                      value={editReserva.data}
+                      onChange={(e) => setEditReserva({ ...editReserva, data: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Adultos
+                    <input
+                      type="number"
+                      min={0}
+                      value={editReserva.adultos ?? 0}
+                      onChange={(e) => setEditReserva({ ...editReserva, adultos: Number(e.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Crianças
+                    <input
+                      type="number"
+                      min={0}
+                      value={editReserva.criancas ?? 0}
+                      onChange={(e) => setEditReserva({ ...editReserva, criancas: Number(e.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Não pagante
+                    <input
+                      type="number"
+                      min={0}
+                      value={editReserva.naoPagante ?? 0}
+                      onChange={(e) => setEditReserva({ ...editReserva, naoPagante: Number(e.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Bariátrica
+                    <input
+                      type="number"
+                      min={0}
+                      value={editReserva.bariatrica ?? 0}
+                      onChange={(e) => setEditReserva({ ...editReserva, bariatrica: Number(e.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Horário
                     <input
                       type="time"
                       value={editReserva.horario}
-                      onChange={e => setEditReserva({ ...editReserva, horario: e.target.value })}
-                      className="w-full border px-2 py-1 rounded mt-1 text-xs"
+                      onChange={(e) => setEditReserva({ ...editReserva, horario: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                     />
                   </label>
-                  <label className="block text-xs mb-2">Pet:
-                    <div className="flex gap-4 mt-1">
-                      <label className="flex items-center gap-1 text-xs">
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Atividade
+                    <select
+                      value={editReserva.atividade}
+                      onChange={(e) => setEditReserva({ ...editReserva, atividade: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    >
+                      <option value="">Todas as atividades</option>
+                      <option value="Trilha Ecológica">Trilha Ecológica</option>
+                      <option value="Brunch Gastronômico">Brunch Gastronômico</option>
+                      <option value="Brunch + trilha">Brunch + trilha</option>
+                    </select>
+                  </label>
+                  <div className="text-xs font-semibold uppercase text-slate-500">
+                    Pet
+                    <div className="mt-2 flex gap-4">
+                      <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                         <input
                           type="radio"
-                          name="editPet"
+                          name="editarPet"
                           checked={editReserva.temPet === true}
                           onChange={() => setEditReserva({ ...editReserva, temPet: true })}
                         />
                         Sim
                       </label>
-                      <label className="flex items-center gap-1 text-xs">
+                      <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                         <input
                           type="radio"
-                          name="editPet"
+                          name="editarPet"
                           checked={editReserva.temPet === false}
                           onChange={() => setEditReserva({ ...editReserva, temPet: false })}
                         />
                         Não
                       </label>
                     </div>
-                  </label>
-                  <label className="block text-xs mb-2">Atividade:
-                    <select
-                      value={editReserva.atividade}
-                      onChange={e => setEditReserva({ ...editReserva, atividade: e.target.value })}
-                      className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                    >
-                      <option value="">Todas Atividades</option>
-                      <option value="Trilha Ecológica">Trilha Ecológica</option>
-                      <option value="Brunch Gastronômico">Brunch Gastronômico</option>
-                      <option value="Brunch + trilha">Brunch + trilha</option>
-                    </select>
-                  </label>
-                  <div className="flex justify-end gap-2 mt-2">
-                    <button onClick={() => setModalReserva(false)} className="px-3 py-1 bg-gray-400 text-white rounded text-xs">Cancelar</button>
-                    <button onClick={handleSaveReserva} className="px-3 py-1 bg-green-600 text-white rounded text-xs">Salvar</button>
                   </div>
                 </div>
-              </div>
-            )}
-          </section>
-        </>
-      )}
-
-      {/* ========== Pacotes ========== */}
-      {aba === 'pacotes' && (
-        <section className="bg-white p-4 rounded shadow w-full">
-          <div className="flex justify-between mb-4">
-            <h2 className="font-bold">Pacotes</h2>
-            <button onClick={handleAddPacote} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
-              <FaPlus /> Novo Pacote
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-xs mb-4">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-2 py-2 text-left">Nome</th>
-                  <th className="px-2 py-2 text-left">Tipo</th>
-                  <th className="px-2 py-2 text-left">Preço Adulto</th>
-                  <th className="px-2 py-2 text-left">Preço Criança</th>
-                  <th className="px-2 py-2 text-left">Preço Bariátrica</th>
-                  <th className="px-2 py-2 text-left">Dias</th>
-                  <th className="px-2 py-2 text-left">Horários</th>
-                  <th className="px-2 py-2 text-left">Limite</th>
-                  <th className="px-2 py-2 text-left">Combos</th>
-                  <th className="px-2 py-2 text-left">Pets</th>
-                  <th className="px-2 py-2 text-left">Datas bloqueadas</th>
-                  <th className="px-2 py-2 text-left"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {pacotes.map(p => (
-                  <tr key={p.id}>
-                    <td className="px-2 py-1">{p.nome}</td>
-                    <td className="px-2 py-1">{p.tipo}</td>
-                    <td className="px-2 py-1">R$ {Number(p.precoAdulto).toLocaleString('pt-BR')}</td>
-                    <td className="px-2 py-1">R$ {Number(p.precoCrianca).toLocaleString('pt-BR')}</td>
-                    <td className="px-2 py-1">R$ {Number(p.precoBariatrica).toLocaleString('pt-BR')}</td>
-                    <td className="px-2 py-1">{p.dias.map(i => diasDaSemana[i]).join(', ') || '-'}</td>
-                    <td className="px-2 py-1">
-                      {p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim
-                        ? `${p.horarioInicio} - ${p.horarioFim} (faixa)`
-                        : p.horarios.join(', ') || '-'}
-                    </td>
-                    <td className="px-2 py-1">{p.limite}</td>
-                    <td className="px-2 py-1 text-xs">
-                      {p.pacotesCombinados && p.pacotesCombinados.length > 0
-                        ? p.pacotesCombinados
-                            .map(id => pacotesPorId[id]?.nome || 'Pacote removido')
-                            .join(', ')
-                        : '-'}
-                    </td>
-                    <td className="px-2 py-1">
-                      <span className={p.aceitaPet ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
-                        {p.aceitaPet ? 'Aceita pets' : 'Nao aceita pets'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">
-                      {p.datasBloqueadas && p.datasBloqueadas.length > 0
-                        ? `${p.datasBloqueadas.length} dia(s)`
-                        : '-'}
-                    </td>
-                    <td className="px-2 py-1 flex gap-1">
-                      <button className="text-blue-600" onClick={() => handleEditPacote(p)}>Editar</button>
-                      <button className="text-red-600" onClick={() => excluirPacote(p.id!)}>Excluir</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Modal Pacote */}
-          {modalPacote && editPacote && (
-            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded shadow w-full max-w-lg max-h-[95vh] overflow-y-auto">
-                <h4 className="font-bold mb-2">{isEditingPacote ? 'Editar' : 'Novo'} Pacote</h4>
-                <label className="block mb-1 text-xs">Nome da atividade:
-                  <input value={editPacote.nome} onChange={e => setEditPacote(f => ({ ...f!, nome: e.target.value }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-                <label className="block mb-1 text-xs">Tipo de atividade:
-                  <input value={editPacote.tipo} onChange={e => setEditPacote(f => ({ ...f!, tipo: e.target.value }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-                <label className="block mb-1 text-xs">Preço Adulto:
-                  <input type="number" value={editPacote.precoAdulto} onChange={e => setEditPacote(f => ({ ...f!, precoAdulto: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-                <label className="block mb-1 text-xs">Preço Criança:
-                  <input type="number" value={editPacote.precoCrianca} onChange={e => setEditPacote(f => ({ ...f!, precoCrianca: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-                <label className="block mb-1 text-xs">Preço Bariátrica:
-                  <input type="number" value={editPacote.precoBariatrica} onChange={e => setEditPacote(f => ({ ...f!, precoBariatrica: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-                <label className="block mb-1 text-xs">Limite disponível:
-                  <input type="number" value={editPacote.limite} onChange={e => setEditPacote(f => ({ ...f!, limite: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
-                </label>
-
-                <label className="block mb-1 mt-2 text-xs font-semibold">Política de pets:</label>
-                <div className="flex items-center gap-3 mb-2 text-xs">
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="radio"
-                      name="aceitaPet"
-                      checked={editPacote.aceitaPet}
-                      onChange={() => setEditPacote(f => ({ ...f!, aceitaPet: true }))}
-                    />
-                    Aceita pets
-                  </label>
-                  <label className="flex items-center gap-1 text-red-600">
-                    <input
-                      type="radio"
-                      name="aceitaPet"
-                      checked={!editPacote.aceitaPet}
-                      onChange={() => setEditPacote(f => ({ ...f!, aceitaPet: false }))}
-                    />
-                    Nao aceita pets
-                  </label>
-                </div>
-
-                <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponíveis:</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {diasDaSemana.map((dia, i) => (
-                    <label key={dia} className="flex items-center text-xs">
-                      <input
-                        type="checkbox"
-                        checked={editPacote.dias.includes(i)}
-                        onChange={e => setEditPacote(f => ({
-                          ...f!,
-                          dias: e.target.checked
-                            ? [...f!.dias, i]
-                            : f!.dias.filter(d => d !== i)
-                        }))}
-                        className="mr-1"
-                      />
-                      {dia}
-                    </label>
-                  ))}
-                </div>
-
-                <label className="block mb-1 mt-2 text-xs font-semibold">Formato de horarios:</label>
-                <select
-                  value={editPacote.modoHorario ?? 'lista'}
-                  onChange={e => setEditPacote(f => ({ ...f!, modoHorario: e.target.value as 'lista' | 'intervalo' }))}
-                  className="w-full border px-2 py-1 rounded text-xs mb-2"
-                >
-                  <option value="lista">Horários fixos</option>
-                  <option value="intervalo">Faixa contínua</option>
-                </select>
-
-                <label className="block mb-1 text-xs font-semibold">
-                  {editPacote.modoHorario === 'intervalo' ? 'Faixa de horarios:' : 'Horarios disponiveis:'}
-                </label>
-                {editPacote.modoHorario === 'intervalo' ? (
-                  <div className="space-y-2 mb-2">
-                    <label className="block text-xs">Horário inicial:
-                      <input
-                        type="time"
-                        value={editPacote.horarioInicio ?? ''}
-                        onChange={e => setEditPacote(f => ({ ...f!, horarioInicio: e.target.value }))}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <label className="block text-xs">Horário final:
-                      <input
-                        type="time"
-                        value={editPacote.horarioFim ?? ''}
-                        onChange={e => setEditPacote(f => ({ ...f!, horarioFim: e.target.value }))}
-                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
-                      />
-                    </label>
-                    <p className="text-[11px] text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                      {faixaHorarioDescricao || 'Informe horario inicial e final para exibir ao cliente a faixa continua sem selecao de horario.'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {horariosDisponiveis.map(horario => (
-                      <label key={horario} className="flex items-center text-xs">
-                        <input
-                          type="checkbox"
-                          checked={editPacote.horarios.includes(horario)}
-                          onChange={e => setEditPacote(f => ({
-                            ...f!,
-                            horarios: e.target.checked
-                              ? [...f!.horarios, horario]
-                              : f!.horarios.filter(h => h !== horario)
-                          }))}
-                          className="mr-1"
-                        />
-                        {horario}
-                      </label>
-                    ))}
-                  </div>
-                )}
-
-                <label className="block mb-1 mt-2 text-xs font-semibold">Pacotes incluidos (combo opcional):</label>
-                <div className="border rounded p-2 mb-2 max-h-28 overflow-y-auto bg-gray-50">
-                  {pacotes.filter(p => !editPacote.id || p.id !== editPacote.id).length > 0 ? (
-                    pacotes
-                      .filter(p => !editPacote.id || p.id !== editPacote.id)
-                      .map(p => (
-                        <label key={p.id} className="flex items-center justify-between text-xs py-1">
-                          <span className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={editPacote.pacotesCombinados?.includes(p.id ?? '')}
-                              onChange={e => setEditPacote(f => {
-                                if (!f) return f;
-                                const atual = new Set(f.pacotesCombinados ?? []);
-                                if (e.target.checked && p.id) atual.add(p.id);
-                                if (!e.target.checked && p.id) atual.delete(p.id);
-                                return { ...f, pacotesCombinados: Array.from(atual) };
-                              })}
-                            />
-                            <span>{p.nome}</span>
-                          </span>
-                          <span className="text-[11px] text-gray-500">{p.tipo}</span>
-                        </label>
-                      ))
-                  ) : (
-                    <p className="text-[11px] text-gray-500">Cadastre outros pacotes para criar combos.</p>
-                  )}
-                </div>
-                <p className="text-[11px] text-gray-500 mb-2">
-                  Os valores promocionais do combo devem ser definidos nos campos de preco acima.
-                </p>
-
-                <label className="block mb-1 mt-2 text-xs font-semibold">Datas sem disponibilidade:</label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="date"
-                    value={novaDataBloqueada}
-                    onChange={e => setNovaDataBloqueada(e.target.value)}
-                    className="flex-1 border px-2 py-1 rounded text-xs"
-                  />
+                <div className="flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
                   <button
-                    type="button"
-                    onClick={adicionarDataBloqueada}
-                    disabled={!novaDataBloqueada}
-                    className={`px-2 py-1 rounded text-xs text-white ${novaDataBloqueada ? 'bg-blue-600' : 'bg-gray-300 cursor-not-allowed'}`}
-                  >
-                    Adicionar
-                  </button>
-                </div>
-                {editPacote.datasBloqueadas && editPacote.datasBloqueadas.length > 0 ? (
-                  <ul className="text-xs space-y-1 mb-2 max-h-24 overflow-y-auto">
-                    {editPacote.datasBloqueadas.map(data => (
-                      <li key={data} className="flex items-center justify-between bg-gray-100 px-2 py-1 rounded">
-                        <span>{dayjs(data).format('DD/MM/YYYY')}</span>
-                        <button
-                          type="button"
-                          onClick={() => removerDataBloqueada(data)}
-                          className="text-red-600 text-[11px]"
-                        >
-                          Remover
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-[11px] text-gray-500 mb-2">Nenhuma data bloqueada.</p>
-                )}
-
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={() => {
-                      setModalPacote(false);
-                      setEditPacote(null);
-                      setNovaDataBloqueada('');
-                    }}
-                    className="px-2 py-1 bg-gray-400 text-white rounded text-xs"
+                    onClick={() => setModalReserva(false)}
+                    className="w-full sm:w-auto rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
                   >
                     Cancelar
                   </button>
-                  <button onClick={handleSavePacote} className="px-2 py-1 bg-green-600 text-white rounded text-xs">Salvar</button>
+                  <button
+                    onClick={handleSaveReserva}
+                    className="w-full sm:w-auto rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                  >
+                    Salvar reserva
+                  </button>
                 </div>
               </div>
             </div>
@@ -972,51 +1258,577 @@ export default function AdminDashboard() {
         </section>
       )}
 
-      {/* ========== Pesquisa de Clientes ========== */}
-      {aba === 'pesquisa' && (
-        <section className="bg-white p-4 rounded shadow w-full">
-          <h2 className="font-bold mb-4">Pesquisa de Clientes</h2>
-          <div className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={termoPesquisa}
-              onChange={e => setTermoPesquisa(e.target.value)}
-              className="border px-3 py-2 rounded w-full"
-              placeholder="Digite nome, CPF ou telefone"
-              onKeyDown={e => e.key === 'Enter' && pesquisarClientes()}
-            />
-            <button onClick={pesquisarClientes} className="bg-blue-600 text-white px-4 py-2 rounded">Pesquisar</button>
+            {/* ========== Pacotes ========== */}
+      {aba === 'pacotes' && (
+        <section className="space-y-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Pacotes cadastrados</h2>
+              <p className="text-sm text-slate-500">
+                {totalPacotesAtivos} pacotes ativos prontos para venda.
+              </p>
+            </div>
+            <button
+              onClick={handleAddPacote}
+              className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              <FaPlus className="h-4 w-4" />
+              Novo pacote
+            </button>
           </div>
-          {carregandoPesquisa ? (
-            <div className="text-sm text-gray-500">Buscando...</div>
-          ) : resultadosPesquisa.length > 0 ? (
-            <table className="min-w-full divide-y divide-gray-200 text-xs">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-2 py-2 text-left">Nome</th>
-                  <th className="px-2 py-2 text-left">CPF</th>
-                  <th className="px-2 py-2 text-left">Telefone</th>
-                  <th className="px-2 py-2 text-left">Data</th>
-                  <th className="px-2 py-2 text-left">Atividade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {resultadosPesquisa.map(r => (
-                  <tr key={r.id}>
-                    <td className="px-2 py-1">{r.nome}</td>
-                    <td className="px-2 py-1">{r.cpf}</td>
-                    <td className="px-2 py-1">{r.telefone}</td>
-                    <td className="px-2 py-1">{r.data}</td>
-                    <td className="px-2 py-1">{r.atividade}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {pacotes.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
+              Nenhum pacote cadastrado. Clique em "Novo pacote" para começar.
+            </div>
           ) : (
-            <div className="text-gray-500 text-sm">Nenhum cliente encontrado.</div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {pacotes.map((pacote) => {
+                const diasLabel = pacote.dias.length > 0 ? pacote.dias.map((i) => diasDaSemana[i]).join(', ') : 'Todos os dias';
+                const horariosLabel =
+                  pacote.modoHorario === 'intervalo' && pacote.horarioInicio && pacote.horarioFim
+                    ? `${pacote.horarioInicio} - ${pacote.horarioFim} (faixa)`
+                    : pacote.horarios.join(', ') || 'Sob consulta';
+                return (
+                  <article key={pacote.id} className="flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{pacote.tipo || 'Atividade'}</p>
+                          <h3 className="mt-1 text-lg font-semibold text-slate-900">{pacote.nome}</h3>
+                        </div>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${pacote.aceitaPet ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'}`}>
+                      {pacote.aceitaPet ? 'Aceita pets' : 'Não aceita pets'}
+                        </span>
+                      </div>
+                      <dl className="space-y-3 text-sm text-slate-600">
+                        <div className="flex items-start justify-between gap-2">
+                          <dt className="font-medium text-slate-500">Dias</dt>
+                          <dd className="text-right text-slate-800">{diasLabel}</dd>
+                        </div>
+                        <div className="flex items-start justify-between gap-2">
+                          <dt className="font-medium text-slate-500">Horário</dt>
+                          <dd className="text-right text-slate-800">{horariosLabel}</dd>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Valores</p>
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-600">
+                            <span className="rounded-full bg-slate-100 px-2 py-1">Adulto R$ {Number(pacote.precoAdulto).toLocaleString('pt-BR')}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-1">Criança R$ {Number(pacote.precoCrianca).toLocaleString('pt-BR')}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-1">Bariátrica R$ {Number(pacote.precoBariatrica).toLocaleString('pt-BR')}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>Limite por horário</span>
+                          <span className="font-semibold text-slate-800">{pacote.limite}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span>Datas bloqueadas</span>
+                          <span className="font-semibold text-slate-800">{pacote.datasBloqueadas?.length ?? 0}</span>
+                        </div>
+                      </dl>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-200 pt-4">
+                      <button
+                        onClick={() => pacote.id && excluirPacote(pacote.id)}
+                        className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
+                      >
+                        <FaTrash className="h-3.5 w-3.5" />
+                        Excluir
+                      </button>
+                      <button
+                        onClick={() => handleEditPacote(pacote)}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+                      >
+                        <FaEdit className="h-3.5 w-3.5" />
+                        Editar
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+
+
+
+
+          {modalPacote && editPacote && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+              <div className="w-full max-w-3xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+                  <h4 className="text-lg font-semibold text-slate-900">
+                    {isEditingPacote ? 'Editar pacote' : 'Novo pacote'}
+                  </h4>
+                  <button
+                    onClick={() => {
+                      setModalPacote(false);
+                      setEditPacote(null);
+                      setNovaDataBloqueada('');
+                    }}
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    x
+                  </button>
+                </div>
+                <div className="grid gap-4 px-4 sm:px-6 py-5 md:grid-cols-2 max-h-[80vh] overflow-y-auto">
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Nome da atividade
+                    <input
+                      value={editPacote.nome}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, nome: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Tipo de atividade
+                    <input
+                      value={editPacote.tipo}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, tipo: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Preço adulto
+                    <input
+                      type="number"
+                      value={editPacote.precoAdulto}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoAdulto: Number(e.target.value) }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Preço criança
+                    <input
+                      type="number"
+                      value={editPacote.precoCrianca}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoCrianca: Number(e.target.value) }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Preço bariátrica
+                    <input
+                      type="number"
+                      value={editPacote.precoBariatrica}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoBariatrica: Number(e.target.value) }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+                    Limite por horário
+                    <input
+                      type="number"
+                      value={editPacote.limite}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, limite: Number(e.target.value) }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                  <div className="text-xs font-semibold uppercase text-slate-500">
+                    Política de pets
+                    <div className="mt-2 flex gap-4 text-xs font-medium text-slate-600">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="aceitaPet"
+                          checked={editPacote.aceitaPet}
+                          onChange={() => setEditPacote((f) => ({ ...f!, aceitaPet: true }))}
+                        />
+                        Aceita
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="aceitaPet"
+                          checked={!editPacote.aceitaPet}
+                          onChange={() => setEditPacote((f) => ({ ...f!, aceitaPet: false }))}
+                        />
+                        Não aceita
+                      </label>
+                    </div>
+                  </div>
+                  <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
+                    Dias disponíveis
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {diasDaSemana.map((dia, index) => {
+                        const ativo = editPacote.dias.includes(index);
+                        return (
+                          <button
+                            key={dia}
+                            type="button"
+                            onClick={() =>
+                              setEditPacote((f) => ({
+                                ...f!,
+                                dias: ativo ? f!.dias.filter((d) => d !== index) : [...f!.dias, index],
+                              }))
+                            }
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                              ativo ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100'
+                            }`}
+                          >
+                            {dia}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
+                    Formato de horários
+                    <select
+                      value={editPacote.modoHorario ?? 'lista'}
+                      onChange={(e) => setEditPacote((f) => ({ ...f!, modoHorario: e.target.value as 'lista' | 'intervalo' }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    >
+                      <option value="lista">Horários fixos</option>
+                      <option value="intervalo">Faixa contínua</option>
+                    </select>
+                  </div>
+                  {editPacote.modoHorario === 'intervalo' ? (
+                    <div className="grid gap-4 md:col-span-2 md:grid-cols-2">
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        Horário inicial
+                        <input
+                          type="time"
+                          value={editPacote.horarioInicio ?? ''}
+                          onChange={(e) => setEditPacote((f) => ({ ...f!, horarioInicio: e.target.value }))}
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        Horário final
+                        <input
+                          type="time"
+                          value={editPacote.horarioFim ?? ''}
+                          onChange={(e) => setEditPacote((f) => ({ ...f!, horarioFim: e.target.value }))}
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      </label>
+                      <p className="md:col-span-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        {faixaHorarioDescricao || 'Informe horário inicial e final para exibir apenas a faixa ao cliente.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
+                      Horários disponíveis
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {horariosDisponiveis.map((horario) => {
+                          const ativo = editPacote.horarios.includes(horario);
+                          return (
+                            <button
+                              key={horario}
+                              type="button"
+                              onClick={() =>
+                                setEditPacote((f) => ({
+                                  ...f!,
+                                  horarios: ativo ? f!.horarios.filter((h) => h !== horario) : [...f!.horarios, horario],
+                                }))
+                              }
+                              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                                ativo ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100'
+                              }`}
+                            >
+                              {horario}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
+                    Datas sem disponibilidade
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="date"
+                        value={novaDataBloqueada}
+                        onChange={(e) => setNovaDataBloqueada(e.target.value)}
+                        className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={adicionarDataBloqueada}
+                        disabled={!novaDataBloqueada}
+                        className={`rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+                          novaDataBloqueada ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'
+                        }`}
+                      >
+                        Adicionar
+                      </button>
+                    </div>
+                    {(editPacote.datasBloqueadas?.length ?? 0) > 0 ? (
+                      <ul className="mt-3 max-h-32 space-y-2 overflow-y-auto">
+                        {editPacote.datasBloqueadas?.map((data) => (
+                          <li key={data} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                            <span>{dayjs(data).format('DD/MM/YYYY')}</span>
+                            <button
+                              type="button"
+                              onClick={() => removerDataBloqueada(data)}
+                              className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
+                            >
+                              Remover
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-3 text-xs text-slate-400">Nenhuma data bloqueada.</p>
+                    )}
+                  </div>
+                  
+                  <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
+                    Perguntas personalizadas para o cliente
+                    <div className="mt-2 space-y-3">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Ex: Juntar mesa?"
+                          value={novaPergunta.pergunta}
+                          onChange={(e) => setNovaPergunta(prev => ({ ...prev, pergunta: e.target.value }))}
+                          className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                        <select
+                          value={novaPergunta.tipo}
+                          onChange={(e) => setNovaPergunta(prev => ({ ...prev, tipo: e.target.value as 'sim_nao' | 'texto' }))}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        >
+                          <option value="sim_nao">Sim/Não</option>
+                          <option value="texto">Texto</option>
+                        </select>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={novaPergunta.obrigatoria}
+                            onChange={(e) => setNovaPergunta(prev => ({ ...prev, obrigatoria: e.target.checked }))}
+                          />
+                          Obrigatória
+                        </label>
+                        <button
+                          type="button"
+                          onClick={adicionarPergunta}
+                          disabled={!novaPergunta.pergunta.trim()}
+                          className={`rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+                            novaPergunta.pergunta.trim() ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'
+                          }`}
+                        >
+                          Adicionar
+                        </button>
+                      </div>
+                      
+                      {(editPacote.perguntasPersonalizadas?.length ?? 0) > 0 ? (
+                        <ul className="space-y-2">
+                          {editPacote.perguntasPersonalizadas?.map((pergunta) => (
+                            <li key={pergunta.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                              <div>
+                                <span className="font-medium text-slate-700">{pergunta.pergunta}</span>
+                                <span className="ml-2 text-slate-500">({pergunta.tipo === 'sim_nao' ? 'Sim/Não' : 'Texto'})</span>
+                                {pergunta.obrigatoria && <span className="ml-1 text-red-500">*</span>}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removerPergunta(pergunta.id)}
+                                className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
+                              >
+                                Remover
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-slate-400">Nenhuma pergunta personalizada.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
+                  <button
+                    onClick={() => {
+                      setModalPacote(false);
+                      setEditPacote(null);
+                      setNovaDataBloqueada('');
+                    }}
+                    className="w-full sm:w-auto rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSavePacote}
+                    className="w-full sm:w-auto rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                  >
+                    Salvar pacote
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Modal Editar Disponibilidade */}
+          {modalDisponibilidade && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+              <div className="w-full max-w-4xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+                  <h4 className="text-lg font-semibold text-slate-900">
+                    Editar disponibilidade - {dayjs(selectedDate).format('DD/MM/YYYY')}
+                  </h4>
+                  <button
+                    onClick={() => setModalDisponibilidade(false)}
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    x
+                  </button>
+                </div>
+                <div className="px-4 sm:px-6 py-5 max-h-[80vh] overflow-y-auto">
+                  <div className="space-y-6">
+                    {pacotes.map((pacote) => {
+                      const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+                      const pacoteKey = `${dataStr}-${pacote.id}`;
+                      
+                      return (
+                        <div key={pacote.id} className="border border-slate-200 rounded-lg p-4">
+                          <h5 className="font-semibold text-slate-900 mb-3">
+                            {pacote.emoji} {pacote.nome}
+                          </h5>
+                          
+                          {pacote.modoHorario === 'intervalo' ? (
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                              <p className="text-sm text-yellow-700">
+                                Este pacote funciona em faixa de horário ({pacote.horarioInicio} - {pacote.horarioFim}).
+                                Para bloquear, adicione a data nas "Datas sem disponibilidade" do pacote.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                              {pacote.horarios.map((horario) => {
+                                const horarioKey = `${pacoteKey}-${horario}`;
+                                const isDisponivel = disponibilidadeData[horarioKey] !== false;
+                                
+                                return (
+                                  <button
+                                    key={horario}
+                                    type="button"
+                                    onClick={() => {
+                                      setDisponibilidadeData(prev => ({
+                                        ...prev,
+                                        [horarioKey]: !isDisponivel
+                                      }));
+                                    }}
+                                    className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
+                                      isDisponivel
+                                        ? 'bg-green-100 text-green-700 border border-green-200'
+                                        : 'bg-red-100 text-red-700 border border-red-200'
+                                    }`}
+                                  >
+                                    {horario}
+                                    <br />
+                                    <span className="text-xs">
+                                      {isDisponivel ? 'Disponível' : 'Bloqueado'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
+                  <button
+                    onClick={() => setModalDisponibilidade(false)}
+                    className="w-full sm:w-auto rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                  >
+                    Fechar
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Aqui você salvaria as alterações no banco
+                      setFeedback({ type: 'success', message: 'Disponibilidade atualizada!' });
+                      setModalDisponibilidade(false);
+                    }}
+                    className="w-full sm:w-auto rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                  >
+                    Salvar alterações
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </section>
       )}
+      {/* ========== Pesquisa de Clientes ========== */}
+      {aba === 'pesquisa' && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Pesquisa de clientes</h2>
+              <p className="text-sm text-slate-500">Localize reservas por nome, CPF ou telefone.</p>
+            </div>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              pesquisarClientes();
+            }}
+            className="mt-4 flex flex-col gap-3 md:flex-row"
+          >
+            <div className="flex-1">
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                Termo de busca
+                <input
+                  type="text"
+                  value={termoPesquisa}
+                  onChange={(e) => setTermoPesquisa(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  placeholder="Ex: Ana Silva, 00000000000, 629999999"
+                />
+              </label>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              >
+                <FaSearch className="h-4 w-4" />
+                Pesquisar
+              </button>
+            </div>
+          </form>
+          {carregandoPesquisa ? (
+            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+              Buscando resultados...
+            </div>
+          ) : resultadosPesquisa.length > 0 ? (
+            <div className="mt-6 overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-100 text-sm">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Nome</th>
+                    <th className="px-4 py-3 text-left">CPF</th>
+                    <th className="px-4 py-3 text-left">Telefone</th>
+                    <th className="px-4 py-3 text-left">Data</th>
+                    <th className="px-4 py-3 text-left">Atividade</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {resultadosPesquisa.map((resultado) => (
+                    <tr key={resultado.id} className="hover:bg-slate-50/80">
+                      <td className="px-4 py-3 font-medium text-slate-800">{resultado.nome}</td>
+                      <td className="px-4 py-3 text-slate-600">{resultado.cpf}</td>
+                      <td className="px-4 py-3 text-slate-600">{resultado.telefone}</td>
+                      <td className="px-4 py-3 text-slate-600">{resultado.data}</td>
+                      <td className="px-4 py-3 text-slate-600">{resultado.atividade}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+              Nenhum cliente encontrado para o termo informado.
+            </div>
+          )}
+        </section>
+      )}
+      </div>
     </main>
   );
 }

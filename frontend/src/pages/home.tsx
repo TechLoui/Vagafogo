@@ -6,6 +6,7 @@ import { TrailSection } from "../components/TrailSection.tsx"
 import { EducationSection } from "../components/EducationSection.tsx"
 import { BookingSection } from "../components/BookingSection.tsx"
 import { Footer } from "../components/Footer.tsx"
+
 export function Home() {
   return (
     <>
@@ -13,11 +14,11 @@ export function Home() {
       <main className="mt-24 px-4">
         <HeroSection/>
         <FeatureSection/>
-        < BrunchSection/>
-        < TrailSection/>
-        < EducationSection/>
-        < BookingSection/>
-        < Footer/>
+        <BrunchSection/>
+        <TrailSection/>
+        <EducationSection/>
+        <BookingSection/>
+        <Footer/>
       </main>
     </>
   )

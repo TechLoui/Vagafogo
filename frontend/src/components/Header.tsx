@@ -36,15 +36,17 @@ export default function Header() {
           </a>
         </nav>
 
-        {/* Botão Reservar */}
-        <a
-          href="#reservas"
-          className="hidden md:block bg-[#8B4F23] text-white font-bold px-8 py-2 rounded-full text-lg shadow hover:bg-[#A05D2B] transition min-w-[170px] text-center"
-        >
-          Reservar Agora
-        </a>
+        {/* Botões */}
+        <div className="hidden md:flex items-center gap-4">
+          <a
+            href="#reservas"
+            className="bg-[#8B4F23] text-white font-bold px-8 py-2 rounded-full text-lg shadow hover:bg-[#A05D2B] transition"
+          >
+            Reservar Agora
+          </a>
+        </div>
 
-        {/* Botão hamburguer mobile */}
+        {/* Botão hamburguer mobile - sempre visível no header */}
         <button
           onClick={() => setMenuAberto(!menuAberto)}
           className="lg:hidden text-3xl ml-2 text-[#8B4F23]"
@@ -62,6 +64,8 @@ export default function Header() {
           </svg>
         </button>
       </div>
+
+
 
       {/* Menu Mobile */}
       {menuAberto && (

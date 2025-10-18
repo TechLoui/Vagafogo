@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { useEffect, useState, useRef } from "react";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from '../../firebase';
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -9,6 +9,7 @@ type Pacote = {
   id?: string;
   nome: string;
   tipo: "brunch" | "trilha" | "experiencia";
+  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
@@ -16,18 +17,25 @@ type Pacote = {
   dias: number[];
   limite?: number;
   datasBloqueadas?: string[];
-  modoHorario?: "lista" | "intervalo";
+  aceitaPet?: boolean;
+  modoHorario?: 'lista' | 'intervalo';
   horarioInicio?: string;
   horarioFim?: string;
-  pacotesCombinados?: string[];
-  aceitaPet: boolean;
+};
+
+type Combo = {
+  id?: string;
+  nome: string;
+  pacoteIds: string[];
+  desconto: number;
+  ativo: boolean;
 };
 
 export function BookingSection() {
-  // Busca dos pacotes no Firestore
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
+  const [combos, setCombos] = useState<Combo[]>([]);
   const [loadingPacotes, setLoadingPacotes] = useState(true);
-  const [selectedPackage, setSelectedPackage] = useState<number>(0);
+  const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
 
   // Formulário
   const [nome, setNome] = useState<string>("");
@@ -44,70 +52,81 @@ export function BookingSection() {
   const [loading, setLoading] = useState<boolean>(false);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [formaPagamento, setFormaPagamento] = useState<"CREDIT_CARD" | "PIX">("CREDIT_CARD");
-  const [vagasRestantes, setVagasRestantes] = useState<number | null>(null);
+
 
   // PIX
   const [pixKey, setPixKey] = useState<string | null>(null);
   const [qrCodeImage, setQrCodeImage] = useState<string | null>(null);
   const [expirationDate, setExpirationDate] = useState<string | null>(null);
-  const [petPolicyNotice, setPetPolicyNotice] = useState<string | null>(null);
-  const [petSelectionWarning, setPetSelectionWarning] = useState<string | null>(null);
-  const pacotesPorId = useMemo(() => {
-    const mapa: Record<string, Pacote> = {};
-    pacotes.forEach(p => {
-      if (p.id) mapa[p.id] = p;
-    });
-    return mapa;
-  }, [pacotes]);
+  const paymentCardRef = useRef<HTMLDivElement>(null);
 
-  // BUSCA PACOTES FIRESTORE
+  const todayStart = (() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  })();
+
+  // BUSCA PACOTES E COMBOS VIA FIRESTORE
   useEffect(() => {
-    async function fetchPacotes() {
+    async function fetchData() {
       try {
-        const snap = await getDocs(collection(db, "pacotes"));
-        const arr: Pacote[] = snap.docs.map(doc => {
-          const d = doc.data();
+        // Buscar pacotes do Firestore
+        const pacotesSnapshot = await getDocs(collection(db, 'pacotes'));
+        const pacotesData = pacotesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        // Buscar combos do Firestore
+        const combosSnapshot = await getDocs(collection(db, 'combos'));
+        const combosData = combosSnapshot.docs.map(doc => {
+          const data = doc.data();
           return {
             id: doc.id,
-            nome: d.nome,
-            tipo: d.tipo,
-            precoAdulto: Number(d.precoAdulto),
-            precoCrianca: Number(d.precoCrianca),
-            precoBariatrica: Number(d.precoBariatrica),
-            horarios: Array.isArray(d.horarios) ? [...d.horarios].sort((a: string, b: string) => a.localeCompare(b)) : [],
-            dias: Array.isArray(d.dias) ? d.dias.map((dia: number) => Number(dia)).sort((a: number, b: number) => a - b) : [],
-            limite: d.limite !== undefined ? Number(d.limite) : undefined,
-            datasBloqueadas: Array.isArray(d.datasBloqueadas) ? d.datasBloqueadas : [],
-            modoHorario: d.modoHorario,
-            horarioInicio: d.horarioInicio,
-            horarioFim: d.horarioFim,
-            pacotesCombinados: Array.isArray(d.pacotesCombinados) ? d.pacotesCombinados.filter(Boolean) : [],
-            aceitaPet: d.aceitaPet === false ? false : true,
-          };
+            nome: data.nome || '',
+            pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds : [],
+            desconto: Number(data.desconto || 0),
+            ativo: Boolean(data.ativo)
+          } as Combo;
         });
+        
+        const arr: Pacote[] = pacotesData.map((d: any) => ({
+          id: d.id,
+          nome: d.nome,
+          tipo: d.tipo,
+          emoji: d.emoji,
+          precoAdulto: Number(d.precoAdulto),
+          precoCrianca: Number(d.precoCrianca),
+          precoBariatrica: Number(d.precoBariatrica),
+          horarios: d.horarios ?? [],
+          dias: Array.isArray(d.dias) ? d.dias : [],
+          limite: d.limite !== undefined ? Number(d.limite) : undefined,
+          datasBloqueadas: Array.isArray(d.datasBloqueadas) ? d.datasBloqueadas : [],
+          aceitaPet: d.aceitaPet !== false,
+          modoHorario: d.modoHorario || 'lista',
+          horarioInicio: d.horarioInicio || '',
+          horarioFim: d.horarioFim || '',
+        }));
+        
         setPacotes(arr);
-        if (arr.length > 0) {
-          const pacoteSelecionado = arr[0];
-          if (!pacoteSelecionado.aceitaPet) {
-            setPetPolicyNotice(`Aviso: o pacote ${pacoteSelecionado.nome} nao aceita pets.`);
-            setPetSelectionWarning('Este pacote nao aceita pets.');
-          } else {
-            setPetPolicyNotice(null);
-            setPetSelectionWarning(null);
-          }
-        }
+        setCombos(combosData);
+        
+        // Debug: verificar datas bloqueadas
+        console.log('📅 Pacotes carregados:', arr.map(p => ({
+          nome: p.nome,
+          datasBloqueadas: p.datasBloqueadas
+        })));
       } catch (err) {
+        console.error('Erro ao buscar dados:', err);
         setPacotes([]);
-        setPetPolicyNotice(null);
-        setPetSelectionWarning(null);
+        setCombos([]);
       } finally {
         setLoadingPacotes(false);
       }
     }
-    fetchPacotes();
+    fetchData();
   }, []);
 
-  // Enquanto carrega os pacotes
   if (loadingPacotes) {
     return (
       <section id="reservas" className="py-16 bg-[#F7FAEF]">
@@ -125,7 +144,6 @@ export function BookingSection() {
     );
   }
 
-  // Se não achar nenhum pacote
   if (pacotes.length === 0) {
     return (
       <section id="reservas" className="py-16 bg-[#F7FAEF]">
@@ -143,153 +161,101 @@ export function BookingSection() {
     );
   }
 
-  // Formulário normal
-  const pacote = pacotes[selectedPackage];
-  if (!pacote) {
+  const selectedPacotes = pacotes.filter(p => selectedPackages.includes(p.id!));
+  const comboAtivo = combos.find(c => 
+    c.ativo && 
+    c.pacoteIds.length === selectedPackages.length && 
+    c.pacoteIds.every(id => selectedPackages.includes(id))
+  );
+
+  const calcularTotal = () => {
+    let total = 0;
+    selectedPacotes.forEach(p => {
+      total += adultos * p.precoAdulto + criancas * p.precoCrianca + bariatrica * p.precoBariatrica;
+    });
+    
+    if (comboAtivo) {
+      total = total * (1 - comboAtivo.desconto / 100);
+    }
+    
+    return total;
+  };
+
+  const allowedDays = (day: Date) => {
+    if (selectedPacotes.length === 0) return false;
+    
+    const dayStr = day.toISOString().slice(0, 10);
+    const isBlocked = selectedPacotes.some(p => 
+      p.datasBloqueadas?.includes(dayStr)
+    );
+    
+    if (isBlocked) return false;
+    
+    return selectedPacotes.some(p => p.dias.includes(day.getDay()));
+  };
+
+  const isBlockedDay = (day: Date) => {
+    if (selectedPacotes.length === 0) return false;
+    const dayStr = day.toISOString().slice(0, 10);
+    return selectedPacotes.some(p => p.datasBloqueadas?.includes(dayStr));
+  };
+
+  const getPetMessage = () => {
+    if (selectedPacotes.length === 0) return null;
+    
+    const pacotesComPet = selectedPacotes.filter(p => p.aceitaPet);
+    const pacotesSemPet = selectedPacotes.filter(p => !p.aceitaPet);
+    
+    if (pacotesSemPet.length > 0 && pacotesComPet.length > 0) {
+      const nomesSemPet = pacotesSemPet.map(p => p.nome).join(", ");
+      const nomesComPet = pacotesComPet.map(p => p.nome).join(", ");
+      return `A atividade ${nomesSemPet} não permite Pets, A ${nomesComPet} sim.`;
+    }
+    
+    if (pacotesSemPet.length > 0 && pacotesComPet.length === 0) {
+      const nomes = pacotesSemPet.map(p => p.nome).join(", ");
+      return `Não é permitido pets na atividade: ${nomes}`;
+    }
+    
     return null;
-  }
+  };
 
-  const total = adultos * pacote.precoAdulto + criancas * pacote.precoCrianca + bariatrica * pacote.precoBariatrica;
-  const isIntervalo = pacote.modoHorario === "intervalo" && Boolean(pacote.horarioInicio) && Boolean(pacote.horarioFim);
-  const horariosDisponiveis = isIntervalo ? [] : pacote.horarios ?? [];
-  const faixaHorarioLabel = isIntervalo && pacote.horarioInicio && pacote.horarioFim
-    ? `${pacote.horarioInicio} às ${pacote.horarioFim}`
-    : null;
-  const possuiDiasConfigurados = pacote.dias.length > 0;
-  const datasBloqueadasSet = new Set(pacote.datasBloqueadas ?? []);
-  const datasBloqueadasLista = Array.from(datasBloqueadasSet).sort();
-  const datasBloqueadasFormatadas = datasBloqueadasLista
-    .map(data => {
-      const dateObj = new Date(`${data}T00:00:00`);
-      return Number.isNaN(dateObj.getTime()) ? null : dateObj.toLocaleDateString("pt-BR");
-    })
-    .filter((valor): valor is string => Boolean(valor));
-  const isSelectableWeekday = (day: Date) => !possuiDiasConfigurados || pacote.dias.includes(day.getDay());
-  const isBlockedDay = (day: Date) => datasBloqueadasSet.has(day.toISOString().slice(0, 10));
-  const allowedDays = (day: Date) => isSelectableWeekday(day) && !isBlockedDay(day);
-  const comboNames = (pacote.pacotesCombinados ?? [])
-    .map(id => pacotesPorId[id]?.nome)
-    .filter((nome): nome is string => Boolean(nome));
+  const horariosDisponiveis = selectedPacotes.length > 0 
+    ? [...new Set(selectedPacotes.flatMap(p => p.horarios || []))]
+    : [];
 
-  async function verificarVagas(pacote: Pacote, data: Date | undefined, horario: string) {
-    if (!data || !horario || !pacote.limite) {
-      setVagasRestantes(null);
-      return;
-    }
-    const dataStr = data.toISOString().slice(0, 10);
-    try {
-      const q = query(
-        collection(db, "reservas"),
-        where("data", "==", dataStr),
-        where("horario", "==", horario),
-        where("status", "==", "pago")
-      );
-      const snapshot = await getDocs(q);
-      let total = 0;
-      snapshot.forEach(doc => {
-        const dados = doc.data();
-        total += dados.participantes || 0;
-      });
-      const restantes = pacote.limite - total;
-      setVagasRestantes(restantes);
-    } catch (error) {
-      setVagasRestantes(null);
-    }
-  }
+  const temPacoteFaixa = selectedPacotes.some(p => 
+    p.modoHorario === 'intervalo' || (p.horarios && p.horarios.length === 0)
+  );
 
-  function handlePackage(idx: number) {
-    const pacoteAnterior = pacotes[selectedPackage];
-    const novoPacote = pacotes[idx];
-    setSelectedPackage(idx);
-    setSelectedDay(undefined);
+  const handlePackageToggle = (packageId: string) => {
+    setSelectedPackages(prev => 
+      prev.includes(packageId) 
+        ? prev.filter(id => id !== packageId)
+        : [...prev, packageId]
+    );
     setHorario("");
-    setVagasRestantes(null);
 
-    if (!novoPacote.aceitaPet) {
-      setPetPolicyNotice(`Aviso: o pacote ${novoPacote.nome} nao aceita pets.`);
-      setPetSelectionWarning('Este pacote nao aceita pets.');
-      if (temPet === true) {
-        setTemPet(null);
-      }
-    } else if (pacoteAnterior && pacoteAnterior.aceitaPet !== novoPacote.aceitaPet) {
-      setPetPolicyNotice(`Aviso: o pacote ${novoPacote.nome} aceita pets, diferente do pacote selecionado anteriormente.`);
-      setPetSelectionWarning(null);
-    } else {
-      setPetPolicyNotice(null);
-      setPetSelectionWarning(null);
-    }
-  }
-
-  function handlePetChoice(valor: boolean) {
-    if (valor && !pacote.aceitaPet) {
-      setPetSelectionWarning('Este pacote nao aceita pets. Escolha "Nao" ou selecione outro pacote.');
-      setTemPet(null);
-      return;
-    }
-    setTemPet(valor);
-    setPetSelectionWarning(null);
-  }
-
-  function handleDate(date: Date | undefined) {
-    setSelectedDay(date);
-    setHorario("");
-    setVagasRestantes(null);
-    if (date && horariosDisponiveis.length > 0 && horario) {
-      verificarVagas(pacote, date, horario);
-    }
-  }
-
-  function handleHorario(novoHorario: string) {
-    setHorario(novoHorario);
-    if (selectedDay && novoHorario && pacote.limite) {
-      verificarVagas(pacote, selectedDay, novoHorario);
-    }
-  }
+  };
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (selectedPackages.length === 0) return alert("Selecione pelo menos um pacote!");
     if (!selectedDay) return alert("Selecione uma data válida!");
     if (horariosDisponiveis.length > 0 && !horario) return alert("Selecione o horário!");
     if (!nome || !email || !cpf) return alert("Preencha todos os campos obrigatórios!");
     if (temPet === null) return alert("Informe se vai levar um pet!");
-    if (temPet === true && !pacote.aceitaPet) {
-      setLoading(false);
-      return alert("Este pacote nao aceita pets. Escolha outro pacote ou informe que nao levara pet.");
-    }
 
     setLoading(true);
 
     try {
       const dataStr = selectedDay.toISOString().slice(0, 10);
-      const whereFilters = [
-        where("data", "==", dataStr),
-        where("status", "==", "pago"),
-      ];
-      if (horariosDisponiveis.length > 0) {
-        whereFilters.push(where("horario", "==", horario));
-      }
-      const q = query(collection(db, "reservas"), ...whereFilters);
-      const querySnapshot = await getDocs(q);
-
-      let totalReservas = 0;
-      querySnapshot.forEach((doc) => {
-        const dados = doc.data();
-        totalReservas += dados.participantes || 0;
-      });
-
-      const limite = pacote.limite ?? 30;
       const totalParticipantes = adultos + criancas + bariatrica + naoPagante;
-      if (pacote.limite && (totalReservas + totalParticipantes > limite)) {
-        alert(`Limite de ${limite} pessoas por horário já atingido. Por favor, escolha outro horário.`);
-        setLoading(false);
-        return;
-      }
-      setVagasRestantes(pacote.limite ? limite - totalReservas : null);
-
-      const horarioParaReserva = isIntervalo && faixaHorarioLabel
-        ? `Faixa ${faixaHorarioLabel}`
-        : (horariosDisponiveis.length > 0 ? horario : "Trilha");
+      const total = calcularTotal();
+      
+      const atividades = selectedPacotes.map(p => p.nome).join(" + ");
+      const comboInfo = comboAtivo ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% desconto)` : "";
 
       const payload: any = {
         nome,
@@ -297,7 +263,7 @@ export function BookingSection() {
         valor: total,
         cpf,
         telefone,
-        atividade: pacote.nome,
+        atividade: atividades + comboInfo,
         data: dataStr,
         participantes: totalParticipantes,
         adultos,
@@ -305,12 +271,14 @@ export function BookingSection() {
         criancas,
         naoPagante,
         billingType: formaPagamento,
-        horario: horarioParaReserva,
+        horario: horariosDisponiveis.length > 0 ? horario : "Sem horário específico",
         temPet,
-        pacotesCombinados: pacote.pacotesCombinados ?? [],
-        pacoteAceitaPet: pacote.aceitaPet,
+        pacoteIds: selectedPackages,
+        comboId: comboAtivo?.id || null,
       };
 
+      console.log('📤 Enviando payload:', payload);
+      
       const rawResponse = await fetch("https://vagafogo-production.up.railway.app/criar-cobranca", {
         method: "POST",
         headers: {
@@ -319,10 +287,15 @@ export function BookingSection() {
         },
         body: JSON.stringify(payload),
       });
+      
+      console.log('📥 Status da resposta:', rawResponse.status);
+      
       const resposta = await rawResponse.json().catch(() => ({}));
+      console.log('📥 Resposta completa:', resposta);
 
       if (!rawResponse.ok) {
-        alert("Erro ao criar a cobrança: " + (resposta?.message || rawResponse.statusText));
+        console.error('❌ Erro na resposta:', resposta);
+        alert("Erro ao criar a cobrança: " + (resposta?.error || resposta?.message || rawResponse.statusText));
         setLoading(false);
         return;
       }
@@ -332,16 +305,25 @@ export function BookingSection() {
         setPixKey(resposta.cobranca.pixKey);
         setQrCodeImage(resposta.cobranca.qrCodeImage);
         setExpirationDate(resposta.cobranca.expirationDate);
+        
+        // Scroll automático para o card de pagamento
+        setTimeout(() => {
+          paymentCardRef.current?.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+        }, 100);
+        
+        // Mostrar mensagem sobre carteirinha bariátrica
+        if (bariatrica > 0) {
+          alert("⚠️ IMPORTANTE: Como você selecionou opção bariátrica, será necessário enviar a foto da carteirinha via WhatsApp após realizar a reserva para validação.");
+        }
       } else {
-        alert(
-          resposta?.cobranca?.status
-            ? `Cobrança criada, mas o link não foi retornado. Status: ${resposta.cobranca.status}`
-            : "Erro ao criar a cobrança. Verifique os dados ou tente novamente."
-        );
+        alert("Erro ao criar a cobrança. Verifique os dados ou tente novamente.");
       }
 
     } catch (error) {
-      alert("Erro ao verificar disponibilidade. Tente novamente.");
+      alert("Erro ao processar reserva. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -358,385 +340,446 @@ export function BookingSection() {
             Faça sua Reserva Agora
           </h2>
         </div>
+        
         <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
-            {/* Pacotes */}
-            <label className="block text-base font-semibold text-[#8B4F23] mb-4">
-              Escolha seu Pacote:
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-              {pacotes.map((pkg, idx) => (
-                <div
-                  key={pkg.id || idx}
-                  className={`border-2 p-4 rounded-xl text-center cursor-pointer transition ${
-                    selectedPackage === idx ? "border-[#8B4F23] bg-[#F7FAEF]" : "border-gray-200"
-                  }`}
-                  onClick={() => handlePackage(idx)}
-                >
-                  <div className="text-3xl mb-2 text-[#8B4F23]">
-                    {pkg.tipo === "brunch" ? "🥐" : pkg.tipo === "trilha" ? "🌳" : "✨"}
+            
+            {/* Seleção Múltipla de Pacotes */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Selecione os Pacotes *
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pacotes.map((pacote) => (
+                  <div
+                    key={pacote.id}
+                    className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
+                      selectedPackages.includes(pacote.id!)
+                        ? 'border-green-500 bg-green-50'
+                        : 'border-gray-200 hover:border-green-300'
+                    }`}
+                    onClick={() => handlePackageToggle(pacote.id!)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-semibold text-gray-800">
+                          {pacote.emoji} {pacote.nome}
+                        </h3>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Adulto: R$ {pacote.precoAdulto.toFixed(2)}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Criança: R$ {pacote.precoCrianca.toFixed(2)}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          Bariátrica: R$ {pacote.precoBariatrica.toFixed(2)}
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={selectedPackages.includes(pacote.id!)}
+                        onChange={() => handlePackageToggle(pacote.id!)}
+                        className="w-5 h-5 text-green-600"
+                      />
+                    </div>
                   </div>
-                  <h4 className="font-bold text-[#8B4F23]">{pkg.nome}</h4>
-                  <p className="text-sm text-gray-500">
-                    Adulto: R$ {pkg.precoAdulto} | Criança: R$ {pkg.precoCrianca}
-                  </p>
-                  <p className={`text-xs font-semibold mt-1 ${pkg.aceitaPet ? "text-green-600" : "text-red-600"}`}>
-                    {pkg.aceitaPet ? "Aceita pets" : "Nao aceita pets"}
+                ))}
+              </div>
+              
+              {comboAtivo && (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm font-medium text-yellow-800">
+                    🎉 Combo Ativo: {comboAtivo.nome} - {comboAtivo.desconto}% de desconto!
                   </p>
                 </div>
-              ))}
-            </div>
-            {petPolicyNotice && (
-              <div className="mb-4 text-xs md:text-sm text-red-600 font-semibold bg-red-50 border border-red-200 px-3 py-2 rounded">
-                {petPolicyNotice}
-              </div>
-            )}
-            {comboNames.length > 0 && (
-              <div className="mb-4 text-xs md:text-sm text-[#8B4F23] bg-[#F7FAEF] border border-[#8B4F23]/20 px-3 py-2 rounded">
-                <span className="font-semibold">Combo especial:</span> {comboNames.join(', ')}
-              </div>
-            )}
-            {/* Dados pessoais */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Nome Completo *</label>
-                <input
-                  type="text"
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  value={nome}
-                  onChange={e => setNome(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">E-mail *</label>
-                <input
-                  type="email"
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              {petSelectionWarning && (
-                <p className="mt-2 text-xs text-red-600 font-semibold">{petSelectionWarning}</p>
-              )}
-              {pacote.aceitaPet === false && !petSelectionWarning && (
-                <p className="mt-2 text-xs text-red-600">Este pacote nao permite a presenca de pets.</p>
               )}
             </div>
 
+            {/* Dados Pessoais */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Telefone/WhatsApp *</label>
-                <input
-                  type="tel"
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  value={telefone}
-                  onChange={e => setTelefone(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">CPF *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nome Completo *
+                </label>
                 <input
                   type="text"
-                  placeholder="000.000.000-00"
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  CPF *
+                </label>
+                <input
+                  type="text"
                   value={cpf}
-                  onChange={e => setCpf(e.target.value)}
+                  onChange={(e) => setCpf(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="000.000.000-00"
                   required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Telefone
+                </label>
+                <input
+                  type="tel"
+                  value={telefone}
+                  onChange={(e) => setTelefone(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="(11) 99999-9999"
                 />
               </div>
             </div>
 
-            {/* CALENDÁRIO */}
-            <div className="mb-4">
-              <style>{`
-                .rdp-mobile {
-                  width: 100%;
-                  max-width: 320px;
-                  margin: 0 auto;
-                  text-align: center;
-                }
-                .rdp-mobile .rdp-table {
-                  width: 100%;
-                  margin: 0 auto;
-                }
-                .rdp-mobile .rdp-table {
-                  width: 100%;
-                }
-                .rdp-mobile .rdp-day {
-                  width: 48px;
-                  height: 48px;
-                  font-size: 14px;
-                }
-                @media (max-width: 640px) {
-                  .rdp-mobile {
-                    max-width: 260px;
-                  }
-                  .rdp-mobile .rdp-day {
-                    width: 28px;
-                    height: 28px;
-                    font-size: 9px;
-                  }
-                }
-                @media (max-width: 450px) {
-                  .rdp-mobile {
-                    max-width: 240px;
-                  }
-                  .rdp-mobile .rdp-day {
-                    width: 26px;
-                    height: 26px;
-                    font-size: 8px;
-                  }
-                }
-              `}</style>
-              <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
-              <div className="w-full flex justify-center md:justify-center sm:justify-start sm:-ml-8">
-                <DayPicker
-                  mode="single"
-                  selected={selectedDay}
-                  onSelect={handleDate}
-                  fromDate={new Date()}
-                  locale={ptBR}
-                  modifiers={{
-                    allowed: allowedDays,
-                    blocked: (day) => isSelectableWeekday(day) && isBlockedDay(day),
-                  }}
-                  modifiersClassNames={{
-                    allowed: "bg-[#F7FAEF] text-[#8B4F23] font-bold",
-                    selected: "bg-white text-[#8B4F23] ring-2 ring-[#8B4F23] font-bold",
-                    today: "bg-[#e7dfd7] text-[#8B4F23] font-bold",
-                    disabled: "bg-gray-100 text-gray-400 cursor-not-allowed",
-                    blocked: "bg-red-100 text-red-600 cursor-not-allowed font-bold"
-                  }}
-                  disabled={(day) => !allowedDays(day)}
-                  footer={!selectedDay && <span className="text-xs text-red-400">Selecione uma data válida.</span>}
-                  className="rdp-mobile"
-                />
-              </div>
-              {datasBloqueadasFormatadas.length > 0 && (
-                <p className="text-[11px] text-gray-500 mt-2 text-center md:text-left">
-                  Datas indisponíveis: {datasBloqueadasFormatadas.join(", ")}
-                </p>
-              )}
-            </div>
-
-            {/* Horários */}
-            {horariosDisponiveis.length > 0 && (
-              <div className="mb-4">
-                <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Horário *</label>
-                <select
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  value={horario}
-                  onChange={e => handleHorario(e.target.value)}
-                  required
-                >
-                  <option value="">Selecione o horário</option>
-                  {horariosDisponiveis.map((h) => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-                {vagasRestantes !== null && (
-                  <p className={`text-sm mt-2 ${vagasRestantes <= 0 ? "text-red-600" : "text-green-600 font-bold"}`}>
-                    {vagasRestantes <= 0
-                      ? "Sem vagas disponíveis para este horário."
-                      : ` ${vagasRestantes} Vagas restantes`}
-                  </p>
+            {/* Seleção de Data */}
+            {selectedPackages.length > 0 && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Selecione a Data *
+                </label>
+                
+                {/* Mostrar datas bloqueadas */}
+                {selectedPacotes.some(p => p.datasBloqueadas && p.datasBloqueadas.length > 0) && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm font-medium text-red-700 mb-2">⚠️ Datas bloqueadas:</p>
+                    {selectedPacotes.map(p => 
+                      p.datasBloqueadas && p.datasBloqueadas.length > 0 ? (
+                        <div key={p.id} className="text-sm text-red-600">
+                          <strong>{p.nome}:</strong> {p.datasBloqueadas.map(data => 
+                            new Date(data + 'T00:00:00').toLocaleDateString('pt-BR')
+                          ).join(', ')}
+                        </div>
+                      ) : null
+                    )}
+                  </div>
                 )}
+                
+                <div className="flex justify-center">
+                  <DayPicker
+                    mode="single"
+                    selected={selectedDay}
+                    onSelect={setSelectedDay}
+                    disabled={[{ before: todayStart }, (day) => !allowedDays(day) || isBlockedDay(day)]}
+                    locale={ptBR}
+                    className="border border-gray-300 rounded-lg p-4"
+                    modifiers={{
+                      blocked: (day) => isBlockedDay(day)
+                    }}
+                    modifiersStyles={{
+                      blocked: {
+                        backgroundColor: '#fee2e2',
+                        color: '#dc2626',
+                        textDecoration: 'line-through'
+                      }
+                    }}
+                  />
+                </div>
               </div>
             )}
-            {isIntervalo && faixaHorarioLabel && (
-              <div className="mb-4 bg-[#F7FAEF] border border-[#8B4F23]/20 text-[#8B4F23] text-xs md:text-sm rounded px-3 py-2">
-                Esta atividade acontece livremente das <strong>{faixaHorarioLabel}</strong>. Nao e necessario escolher um horario especifico.
+
+            {/* Seleção de Horário */}
+            {selectedDay && selectedPacotes.length > 0 && (
+              <div className="mb-6">
+                {horariosDisponiveis.length > 0 ? (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Horário *
+                    </label>
+                    <select
+                      value={horario}
+                      onChange={(e) => setHorario(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      required
+                    >
+                      <option value="">Selecione um horário</option>
+                      {horariosDisponiveis.map((h) => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    {temPacoteFaixa && (
+                      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        {selectedPacotes
+                          .filter(p => p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim)
+                          .map(p => (
+                            <p key={p.id} className="text-sm text-blue-700 mb-1 last:mb-0">
+                              ℹ️ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
+                            </p>
+                          ))
+                        }
+                      </div>
+                    )}
+                  </>
+                ) : temPacoteFaixa ? (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    {selectedPacotes
+                      .filter(p => p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim)
+                      .map(p => (
+                        <p key={p.id} className="text-sm font-medium text-green-700 mb-1 last:mb-0">
+                          ✓ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
+                        </p>
+                      ))
+                    }
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* Número de Participantes */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Adultos *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={adultos}
+                  onChange={(e) => setAdultos(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Crianças
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={criancas}
+                  onChange={(e) => setCriancas(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Bariátrica
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={bariatrica}
+                  onChange={(e) => setBariatica(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Não Pagante
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={naoPagante}
+                  onChange={(e) => setPagante(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+            </div>
+            
+            {bariatrica > 0 && (
+              <div className="mb-6 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="text-sm text-orange-700">
+                  ⚠️ <strong>Importante:</strong> É obrigatório apresentar a carteirinha bariátrica via WhatsApp após a reserva para validação.
+                </p>
               </div>
             )}
 
             {/* Pet */}
-            <div className="mb-4">
-              <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Vai levar um pet? *</label>
-              <div className="flex gap-6">
-                <label className="flex items-center gap-2 text-sm text-[#8B4F23]">
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Vai levar pet? *
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-6">
+                <label className="flex items-center cursor-pointer">
                   <input
                     type="radio"
                     name="pet"
-                    value="true"
                     checked={temPet === true}
-                    onChange={() => handlePetChoice(true)}
-                    disabled={!pacote.aceitaPet}
-                    required
+                    onChange={() => setTemPet(true)}
+                    className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
                   />
-                  Sim
+                  <span className="text-sm font-medium text-gray-700">Sim</span>
                 </label>
-                <label className="flex items-center gap-2 text-sm text-[#8B4F23]">
+                <label className="flex items-center cursor-pointer">
                   <input
                     type="radio"
                     name="pet"
-                    value="false"
                     checked={temPet === false}
-                    onChange={() => handlePetChoice(false)}
-                    required
+                    onChange={() => setTemPet(false)}
+                    className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
                   />
-                  Não
+                  <span className="text-sm font-medium text-gray-700">Não</span>
                 </label>
               </div>
+              
+              {temPet === true && getPetMessage() && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-700">
+                    ⚠️ {getPetMessage()}
+                  </p>
+                </div>
+              )}
             </div>
 
-            {/* Participantes */}
-            <div className="flex flex-col md:flex-row gap-4 mb-6">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Adultos</label>
-                <input type="number" min={1} max={30} className="w-full px-4 py-3 border rounded-lg text-sm" value={adultos} onChange={e => setAdultos(Number(e.target.value))} required />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Crianças (5 a 12 anos)</label>
-                <input type="number" min={0} max={30} className="w-full px-4 py-3 border rounded-lg text-sm" value={criancas} onChange={e => setCriancas(Number(e.target.value))} required />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Bariátrico</label>
-                <input type="number" min={0} max={30} className="w-full px-4 py-3 border rounded-lg text-sm" value={bariatrica} onChange={e => setBariatica(Number(e.target.value))} required />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Não pagante (&lt;5 anos)</label>
-                <input type="number" min={0} max={30} className="w-full px-4 py-3 border rounded-lg text-sm" value={naoPagante} onChange={e => setPagante(Number(e.target.value))} required />
+            {/* Forma de Pagamento */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Forma de Pagamento
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-6">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="pagamento"
+                    checked={formaPagamento === "CREDIT_CARD"}
+                    onChange={() => setFormaPagamento("CREDIT_CARD")}
+                    className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Cartão de Crédito</span>
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="pagamento"
+                    checked={formaPagamento === "PIX"}
+                    onChange={() => setFormaPagamento("PIX")}
+                    className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">PIX</span>
+                </label>
               </div>
             </div>
 
             {/* Total */}
-            <div className="flex justify-between text-xs mb-2">
-              <span>
-                <b>Total de Pessoas:</b>{" "}
-                <span className="font-semibold text-[#8B4F23]">{adultos + criancas + bariatrica + naoPagante}</span>
-              </span>
-              <span>
-                <b>Valor Total:</b>{" "}
-                <span className="font-semibold text-[#8B4F23]">R$ {total.toFixed(2)}</span>
-              </span>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Forma de Pagamento *</label>
-              <div className="flex gap-6">
-                <label className="flex items-center gap-2 text-sm text-[#8B4F23]">
-                  <input
-                    type="radio"
-                    name="formaPagamento"
-                    value="CREDIT_CARD"
-                    checked={formaPagamento === "CREDIT_CARD"}
-                    onChange={() => setFormaPagamento("CREDIT_CARD")}
-                  />
-                  Cartão de Crédito
-                </label>
-                <label className="flex items-center gap-2 text-sm text-[#8B4F23]">
-                  <input
-                    type="radio"
-                    name="formaPagamento"
-                    value="PIX"
-                    checked={formaPagamento === "PIX"}
-                    onChange={() => setFormaPagamento("PIX")}
-                  />
-                  PIX
-                </label>
-              </div>
-            </div>
-
-            {/* Botão */}
-            <div className="flex justify-center mt-8">
-              <button
-                type="submit"
-                className="bg-[#8B4F23] flex items-center gap-2 text-white font-medium px-8 py-3 rounded-full shadow hover:bg-[#A05D2B] transition-all duration-300"
-                disabled={loading}
-              >
-                <i className="fas fa-paper-plane"></i>{" "}
-                {loading ? "Enviando..." : "Enviar Reserva e Pagar"}
-              </button>
-            </div>
-
-            {/* Link de pagamento */}
-            {checkoutUrl && (
-              <div className="text-center mt-8">
-                <a
-                  href={checkoutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block px-6 py-3 bg-green-600 text-white rounded-full font-semibold shadow hover:bg-green-700 transition"
-                >
-                  Clique aqui para concluir o pagamento
-                </a>
-              </div>
-            )}
-
-            {/* Exibir dados do PIX */}
-            {formaPagamento === "PIX" && pixKey && qrCodeImage && (
-              <div className="mt-8 p-6 bg-gray-50 rounded-lg border border-gray-200">
-                <h3 className="text-xl font-bold text-[#8B4F23] mb-4">Pagamento via PIX</h3>
-                <div className="flex justify-center mb-6">
-                  <img
-                    src={`data:image/png;base64,${qrCodeImage}`}
-                    alt="QR Code para pagamento via PIX"
-                    className="w-56 h-56 border-4 border-white shadow-md"
-                  />
+            {selectedPackages.length > 0 && (
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                <div className="flex justify-between items-center">
+                  <span className="text-lg font-semibold text-gray-700">Total:</span>
+                  <span className="text-2xl font-bold text-green-600">
+                    R$ {calcularTotal().toFixed(2)}
+                  </span>
                 </div>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Chave PIX (copiar e colar):
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={pixKey}
-                      className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm shadow-sm focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(pixKey || '');
-                        alert('Chave PIX copiada com sucesso!');
-                      }}
-                      className="px-3 py-2 bg-[#8B4F23] text-white rounded-md hover:bg-[#A05D2B] transition-colors"
-                    >
-                      Copiar
-                    </button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="font-medium text-gray-700">Valor:</p>
-                    <p className="text-[#8B4F23] font-semibold">R$ {total.toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-700">Válido até:</p>
-                    <p className="text-[#8B4F23] font-semibold">
-                      {expirationDate ? new Date(expirationDate).toLocaleString('pt-BR') : '-'}
-                    </p>
-                  </div>
-                </div>
-                {checkoutUrl && (
-                  <div className="mt-4 text-center">
-                    <a
-                      href={checkoutUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-block px-4 py-2 text-sm text-[#8B4F23] underline hover:text-[#A05D2B]"
-                    >
-                      Visualizar fatura completa
-                    </a>
-                  </div>
-                )}
-                <div className="mt-6 p-3 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700">
-                  <p className="text-sm">
-                    <strong>Atenção:</strong> O pagamento via PIX pode levar alguns minutos para ser confirmado.
+                {comboAtivo && (
+                  <p className="text-sm text-green-600 mt-1">
+                    Desconto de {comboAtivo.desconto}% aplicado!
                   </p>
-                </div>
+                )}
               </div>
             )}
+
+            {/* Botão de Envio */}
+            <button
+              type="submit"
+              disabled={loading || selectedPackages.length === 0}
+              className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? "Processando..." : "Fazer Reserva"}
+            </button>
           </form>
+
+          {/* Resultado do Pagamento */}
+          {checkoutUrl && (
+            <div 
+              ref={paymentCardRef}
+              className="mt-8 p-6 bg-white rounded-2xl shadow-xl relative"
+              style={{
+                animation: 'pulse-border 2s infinite',
+                border: '3px solid transparent',
+                backgroundImage: 'linear-gradient(white, white), linear-gradient(45deg, #10b981, #3b82f6, #10b981)',
+                backgroundOrigin: 'border-box',
+                backgroundClip: 'content-box, border-box'
+              }}
+            >
+              <h3 className="text-xl font-bold text-blue-600 mb-4">
+                Finalize seu Pagamento
+              </h3>
+              
+              {formaPagamento === "CREDIT_CARD" && (
+                <div className="text-center">
+                  <p className="mb-6 text-lg text-gray-700">Clique no botão abaixo para finalizar o pagamento:</p>
+                  <a
+                    href={checkoutUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block bg-green-600 text-white py-4 px-8 rounded-lg font-bold text-lg hover:bg-green-700 transition-colors shadow-lg transform hover:scale-105"
+                  >
+                    💳 Realizar Pagamento
+                  </a>
+                  <p className="mt-4 text-sm text-gray-600">Você será redirecionado para a página segura de pagamento</p>
+                </div>
+              )}
+              
+              {formaPagamento === "PIX" && pixKey && (
+                <div>
+                  <p className="mb-4">Use a chave PIX abaixo para pagamento:</p>
+                  <div className="bg-gray-100 p-4 rounded-lg mb-4">
+                    <p className="font-mono text-sm break-all">{pixKey}</p>
+                  </div>
+                  
+                  {qrCodeImage && (
+                    <div className="text-center mb-4">
+                      <img
+                        src={qrCodeImage}
+                        alt="QR Code PIX"
+                        className="mx-auto max-w-xs"
+                      />
+                    </div>
+                  )}
+                  
+                  {expirationDate && (
+                    <p className="text-sm text-red-600">
+                      Válido até: {new Date(expirationDate).toLocaleString('pt-BR')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </section>
   );
 }
 
-
+// Adicionar CSS para animação pulsante
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes pulse-border {
+    0%, 100% {
+      filter: brightness(1);
+      transform: scale(1);
+    }
+    50% {
+      filter: brightness(1.1);
+      transform: scale(1.02);
+    }
+  }
+`;
+if (!document.head.querySelector('style[data-pulse-border]')) {
+  style.setAttribute('data-pulse-border', 'true');
+  document.head.appendChild(style);
+}
