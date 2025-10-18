@@ -48,12 +48,12 @@ async function criarCobrancaHandler(req, res) {
     }
     try {
         // 🔍 Verificar disponibilidade no Firebase
-        const reservasQuery = (0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("data", "==", data), (0, firestore_1.where)("horario", "==", horarioFormatado));
+        const reservasQuery = (0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("Data", "==", data), (0, firestore_1.where)("Horario", "==", horarioFormatado));
         const snapshot = await (0, firestore_1.getDocs)(reservasQuery);
         let totalReservados = 0;
         snapshot.forEach((doc) => {
             const dados = doc.data();
-            totalReservados += dados.participantes || 0;
+            totalReservados += dados.Participantes || 0;
         });
         if (totalReservados + participantes > 30) {
             res.status(400).json({

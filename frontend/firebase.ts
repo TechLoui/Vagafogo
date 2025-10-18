@@ -1,7 +1,8 @@
 // Importar Firebase App e Firestore
 import { initializeApp } from "firebase/app";
-import { getFirestore, enableNetwork } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { collection, getDocs, getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; // ADICIONE ESTA LINHA
+
 
 // Config do Firebase
 const firebaseConfig = {
@@ -16,26 +17,21 @@ const firebaseConfig = {
 // Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
 
-// Instância do Firestore
-const db = getFirestore(app);
-const auth = getAuth(app);
+// Instância do Firestore para usar no projeto
+export const db = getFirestore(app);
+export const auth = getAuth(app);  // ADICIONE ESTA LINHA
 
-// Log da configuração
-console.log('🔧 Firebase inicializado:', {
-  projectId: firebaseConfig.projectId,
-  authDomain: firebaseConfig.authDomain,
-  timestamp: new Date().toISOString()
-});
-
-// Função para testar conectividade
-export const testFirebaseConnection = async () => {
+export async function testFirebaseConnection() {
   try {
-    await enableNetwork(db);
-    return { success: true, message: 'Conexão estabelecida' };
+    await getDocs(collection(db, "pacotes"));
+    return { success: true };
   } catch (error: any) {
-    console.error('❌ Erro de conexão:', error);
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: error?.message ?? String(error),
+    };
   }
-};
+}
 
-export { db, auth, app };
+// Se precisar usar o app em outros lugares:
+export { app };

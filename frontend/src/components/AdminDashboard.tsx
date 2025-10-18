@@ -1,15 +1,10 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import React from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../../firebase';
-import { useAuthState } from 'react-firebase-hooks/auth';
-import { api } from '../sevices/api';
+import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
-
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -25,27 +20,29 @@ interface Reserva {
   naoPagante?: number;
   bariatrica?: number;
   data: string;
-  horario?: string;
+  horario: string;
   atividade: string;
   valor?: number;
   status?: string;
   temPet?: boolean;
-  participantes?: number;
-  email?: string;
-  observacao?: string;
 }
 
 interface Pacote {
   id?: string;
   nome: string;
   tipo: string;
-  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
   horarios: string[];
   dias: number[];
   limite: number;
+  datasBloqueadas?: string[];
+  modoHorario?: 'lista' | 'intervalo';
+  horarioInicio?: string;
+  horarioFim?: string;
+  pacotesCombinados?: string[];
+  aceitaPet: boolean;
 }
 
 const diasDaSemana = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -55,64 +52,12 @@ const horariosDisponiveis = [
   '13:00', '14:00', '15:00', '16:00', '18:00'
 ];
 
+const ordenarHorarios = (lista: string[]) => (
+  [...lista].sort((a, b) => a.localeCompare(b))
+);
+
 export default function AdminDashboard() {
-  const [user, loading] = useAuthState(auth);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
   const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa'>('reservas');
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('ðŸ” Tentando login com:', { email, projeto: auth.app.options.projectId });
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      console.log('âœ… Login realizado com sucesso:', userCredential.user.email);
-    } catch (error: any) {
-      console.error('âŒ Erro no login:', {
-        code: error.code,
-        message: error.message,
-        email: email
-      });
-      setLoginError(`Erro: ${error.code} - ${error.message}`);
-    }
-  };
-
-  if (loading) return <div className="flex items-center justify-center min-h-screen">Carregando...</div>;
-  
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <form onSubmit={handleLogin} className="bg-white p-8 rounded shadow-md w-96">
-          <h2 className="text-2xl font-bold mb-6 text-center">Login Admin</h2>
-          {loginError && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{loginError}</div>}
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">Email:</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full border px-3 py-2 rounded"
-              required
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-sm font-medium mb-2">Senha:</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full border px-3 py-2 rounded"
-              required
-            />
-          </div>
-          <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
-            Entrar
-          </button>
-        </form>
-      </div>
-    );
-  }
 
   // Reservas
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -123,153 +68,53 @@ export default function AdminDashboard() {
   const [filtroAtividade, setFiltroAtividade] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  // Formata data YYYY-MM-DD -> DD/MM/YYYY
-  const formatDataBR = (s?: string) => {
-    if (!s) return '';
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-    try { return dayjs(s).isValid() ? dayjs(s).format('DD/MM/YYYY') : s; } catch { return s; }
-  };
-
   // Pacotes
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [modalPacote, setModalPacote] = useState(false);
   const [editPacote, setEditPacote] = useState<Pacote | null>(null);
   const [isEditingPacote, setIsEditingPacote] = useState(false);
+  const [novaDataBloqueada, setNovaDataBloqueada] = useState('');
+  const faixaHorarioDescricao = editPacote?.modoHorario === 'intervalo'
+    && (editPacote.horarioInicio ?? '')
+    && (editPacote.horarioFim ?? '')
+    ? `Disponivel das ${editPacote.horarioInicio} as ${editPacote.horarioFim}. O cliente vera apenas a faixa.`
+    : '';
+  const pacotesPorId = useMemo(() => {
+    const mapa: Record<string, Pacote> = {};
+    pacotes.forEach(p => {
+      if (p.id) mapa[p.id] = p;
+    });
+    return mapa;
+  }, [pacotes]);
 
   // Pesquisa Clientes
   const [termoPesquisa, setTermoPesquisa] = useState('');
   const [resultadosPesquisa, setResultadosPesquisa] = useState<Reserva[]>([]);
   const [carregandoPesquisa, setCarregandoPesquisa] = useState(false);
 
-  // Fechamentos do dia (bloqueios)
-  const [diaFechado, setDiaFechado] = useState<boolean>(false);
-  const [horariosFechados, setHorariosFechados] = useState<string[]>([]);
-  const [horarioParaFechar, setHorarioParaFechar] = useState<string>('');
-
-
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
-    console.log('ðŸ” Buscando reservas para:', formatted);
-    
     try {
-      console.log('ðŸ“¡ Chamando API...');
-      const dados: Reserva[] = await api.getReservas();
-      console.log('ðŸ“Š Total de reservas carregadas:', dados.length);
-      
-      if (dados.length === 0) {
-        console.log('âš ï¸ Nenhuma reserva encontrada');
-        setReservas({});
-        setFeedback({ type: 'error', message: 'Nenhuma reserva encontrada no banco de dados.' });
-        return;
-      }
-      
-      // Filtrar por data
-      const reservasDaData = dados.filter(r => r.data === formatted);
-      console.log('ðŸ“Š Reservas da data', formatted, ':', reservasDaData.length);
-      
-      // Agrupar por horÃ¡rio (todas as reservas)
-      const reservasPorHorario = reservasDaData.reduce((acc, reserva) => {
-        const horario = reserva.horario || 'Sem horário';
+      const q = query(collection(db, 'reservas'), where('data', '==', formatted));
+      const snapshot = await getDocs(q);
+      const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
+      const reservasPagas = dados.filter(r => r.status === 'pago');
+      const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
+        const horario = reserva.horario || 'Não especificado';
         if (!acc[horario]) acc[horario] = [];
         acc[horario].push(reserva);
         return acc;
       }, {} as Record<string, Reserva[]>);
-      
       setReservas(reservasPorHorario);
-      
-      if (reservasDaData.length === 0) {
-        setFeedback({ type: 'error', message: 'Nenhuma reserva encontrada para esta data.' });
-      }
-      
-    } catch (error: any) {
-      console.error('âŒ Erro ao buscar reservas:', error);
+    } catch (error) {
       setReservas({});
-      setFeedback({ 
-        type: 'error', 
-        message: `Erro ao conectar com a API: ${error?.message || 'Erro desconhecido'}` 
-      });
     }
   };
 
   useEffect(() => {
     fetchReservas(selectedDate);
   }, [selectedDate]);
-
-  // Carregar bloqueios (fechamentos) do dia selecionado
-  useEffect(() => {
-    (async () => {
-      try {
-        const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-        const ref = doc(db, 'bloqueios', dataStr);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const d: any = snap.data();
-          setDiaFechado(!!d?.fecharDia);
-          const globais: string[] = Array.isArray(d?.horariosFechados) ? d.horariosFechados : [];
-          const doPacote: string[] = [];
-          setHorariosFechados([...new Set([...(globais || []), ...(doPacote || [])])]);
-        } else {
-          setDiaFechado(false);
-          setHorariosFechados([]);
-        }
-      } catch {
-        setDiaFechado(false);
-        setHorariosFechados([]);
-      }
-    })();
-  }, [selectedDate]);
-
-  async function fecharDiaSelecionado() {
-    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-    try {
-      await setDoc(doc(db, 'bloqueios', dataStr), { fecharDia: true }, { merge: true });
-      setDiaFechado(true);
-      setFeedback({ type: 'success', message: 'Dia fechado com sucesso!' });
-    } catch {
-      setFeedback({ type: 'error', message: 'Erro ao fechar dia.' });
-    }
-  }
-
-  async function reabrirHorario(horario: string) {
-    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-    try {
-      await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayRemove(horario) });
-      setHorariosFechados(h => h.filter(h => h !== horario));
-      setFeedback({ type: 'success', message: 'Horário reaberto com sucesso!' });
-    } catch {
-      setFeedback({ type: 'error', message: 'Erro ao reabrir horário.' });
-    }
-  }
-
-  async function reabrirDia() {
-    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-    try {
-      await updateDoc(doc(db, 'bloqueios', dataStr), { fecharDia: false });
-      setDiaFechado(false);
-      setFeedback({ type: 'success', message: 'Dia reaberto com sucesso!' });
-    } catch {
-      setFeedback({ type: 'error', message: 'Erro ao reabrir dia.' });
-    }
-  }
-
-  async function fecharHorarioSelecionado() {
-    if (!horarioParaFechar) {
-      setFeedback({ type: 'error', message: 'Selecione um horário para fechar.' });
-      return;
-    }
-    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-    try {
-      await setDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: [] }, { merge: true });
-      await updateDoc(doc(db, 'bloqueios', dataStr), { horariosFechados: arrayUnion(horarioParaFechar) });
-      setHorariosFechados(h => Array.from(new Set([...(h || []), horarioParaFechar])));
-      setHorarioParaFechar('');
-      setFeedback({ type: 'success', message: 'Horário fechado com sucesso!' });
-    } catch {
-      setFeedback({ type: 'error', message: 'Erro ao fechar horário.' });
-    }
-  }
 
   useEffect(() => {
     if (feedback) {
@@ -294,12 +139,9 @@ export default function AdminDashboard() {
   const excluirReserva = async (id: string) => {
     if (confirm("Tem certeza que deseja excluir esta reserva?")) {
       try {
-        await api.deleteReserva(id);
+        await deleteDoc(doc(db, "reservas", id));
         fetchReservas(selectedDate);
-        setFeedback({ type: 'success', message: 'Reserva excluída com sucesso!' });
-      } catch (error) {
-        setFeedback({ type: 'error', message: 'Erro ao excluir reserva.' });
-      }
+      } catch (error) { }
     }
   };
 
@@ -344,17 +186,21 @@ export default function AdminDashboard() {
     }
     try {
       const participantes = calcularParticipantes(editReserva);
-      const reservaData = {
-        ...editReserva,
-        participantes,
-        status: 'pago',
-      };
 
       if (isEditingReserva && editReserva.id) {
-        await api.updateReserva(editReserva.id, reservaData);
+        const ref = doc(db, "reservas", editReserva.id);
+        await updateDoc(ref, {
+          ...editReserva,
+          participantes,
+          status: 'pago',
+        });
         setFeedback({ type: 'success', message: 'Reserva atualizada com sucesso!' });
       } else {
-        await api.createReserva(reservaData);
+        await addDoc(collection(db, "reservas"), {
+          ...editReserva,
+          participantes,
+          status: 'pago',
+        });
         setFeedback({ type: 'success', message: 'Reserva cadastrada com sucesso!' });
       }
       setModalReserva(false);
@@ -367,29 +213,29 @@ export default function AdminDashboard() {
 
   // Pacotes Logic
   const fetchPacotes = async () => {
-    try {
-      console.log('ðŸ“¦ Buscando pacotes...');
-      const pacotesData: Pacote[] = await api.getPacotes();
-      console.log('ðŸ“¦ Pacotes encontrados:', pacotesData.length);
-      
-      if (pacotesData.length === 0) {
-        console.log('âš ï¸ Nenhum pacote encontrado');
-        setPacotes([]);
-        setFeedback({ type: 'error', message: 'Nenhum pacote encontrado no banco de dados.' });
-        return;
-      }
-      
-      setPacotes(pacotesData);
-      console.log('âœ… Pacotes carregados com sucesso:', pacotesData.length);
-      
-    } catch (error: any) {
-      console.error('âŒ Erro ao buscar pacotes:', error);
-      setPacotes([]);
-      setFeedback({ 
-        type: 'error', 
-        message: `Erro ao carregar pacotes: ${error?.message || 'Erro desconhecido'}` 
-      });
-    }
+    const snap = await getDocs(collection(db, 'pacotes'));
+    const lista = snap.docs.map(docSnap => {
+      const data = docSnap.data() as Partial<Pacote>;
+      const modoHorario = data.modoHorario === 'intervalo' ? 'intervalo' : 'lista';
+      return {
+        id: docSnap.id,
+        nome: data.nome ?? '',
+        tipo: data.tipo ?? '',
+        precoAdulto: Number(data.precoAdulto ?? 0),
+        precoCrianca: Number(data.precoCrianca ?? 0),
+        precoBariatrica: Number(data.precoBariatrica ?? 0),
+        limite: Number(data.limite ?? 0),
+        dias: Array.isArray(data.dias) ? data.dias.map(Number).sort((a, b) => a - b) : [],
+        horarios: Array.isArray(data.horarios) ? ordenarHorarios(data.horarios) : [],
+        datasBloqueadas: Array.isArray(data.datasBloqueadas) ? [...data.datasBloqueadas].sort() : [],
+        modoHorario,
+        horarioInicio: data.horarioInicio ?? '',
+        horarioFim: data.horarioFim ?? '',
+        aceitaPet: data.aceitaPet === false ? false : true,
+        pacotesCombinados: Array.isArray(data.pacotesCombinados) ? data.pacotesCombinados.filter(Boolean) : [],
+      } as Pacote;
+    });
+    setPacotes(lista);
   };
 
   useEffect(() => {
@@ -397,7 +243,18 @@ export default function AdminDashboard() {
   }, [aba]);
 
   const handleEditPacote = (pacote: Pacote) => {
-    setEditPacote(pacote);
+    setEditPacote({
+      ...pacote,
+      dias: Array.isArray(pacote.dias) ? pacote.dias : [],
+      horarios: Array.isArray(pacote.horarios) ? ordenarHorarios(pacote.horarios) : [],
+      datasBloqueadas: Array.isArray(pacote.datasBloqueadas) ? [...pacote.datasBloqueadas] : [],
+      modoHorario: pacote.modoHorario ?? 'lista',
+      horarioInicio: pacote.horarioInicio ?? '',
+      horarioFim: pacote.horarioFim ?? '',
+      aceitaPet: pacote.aceitaPet ?? true,
+      pacotesCombinados: Array.isArray(pacote.pacotesCombinados) ? [...pacote.pacotesCombinados] : [],
+    });
+    setNovaDataBloqueada('');
     setIsEditingPacote(true);
     setModalPacote(true);
   };
@@ -406,33 +263,80 @@ export default function AdminDashboard() {
     setEditPacote({
       nome: '',
       tipo: '',
-      emoji: 'âœ¨',
       precoAdulto: 0,
       precoCrianca: 0,
       precoBariatrica: 0,
       horarios: [],
       dias: [],
       limite: 0,
+      datasBloqueadas: [],
+      modoHorario: 'lista',
+      horarioInicio: '',
+      horarioFim: '',
+      aceitaPet: true,
+      pacotesCombinados: [],
     });
+    setNovaDataBloqueada('');
     setIsEditingPacote(false);
     setModalPacote(true);
   };
 
   const handleSavePacote = async () => {
-    if (!editPacote?.nome) {
+    if (!editPacote) return;
+    if (!editPacote.nome) {
       setFeedback({ type: 'error', message: 'Nome obrigatório!' });
       return;
     }
+
+    const modoHorario = editPacote.modoHorario ?? 'lista';
+    const dias = Array.from(new Set(editPacote.dias ?? [])).sort((a, b) => a - b);
+    const datasBloqueadas = Array.from(new Set(editPacote.datasBloqueadas ?? [])).sort();
+    const limite = Number(editPacote.limite) || 0;
+
+    const horarioInicio = editPacote.horarioInicio ?? '';
+    const horarioFim = editPacote.horarioFim ?? '';
+    const pacotesCombinados = Array.from(new Set(editPacote.pacotesCombinados ?? []))
+      .filter(id => Boolean(id) && id !== editPacote.id);
+
+    let horariosCalculados: string[] = [];
+
+    if (modoHorario === 'intervalo') {
+      if (!horarioInicio || !horarioFim) {
+        setFeedback({ type: 'error', message: 'Informe horario inicial e final.' });
+        return;
+      }
+      horariosCalculados = [];
+    } else {
+      const listaHorarios = Array.isArray(editPacote.horarios) ? editPacote.horarios : [];
+      horariosCalculados = ordenarHorarios(Array.from(new Set(listaHorarios)));
+    }
+
+    const pacoteNormalizado: Pacote = {
+      ...editPacote,
+      modoHorario,
+      dias,
+      datasBloqueadas,
+      limite,
+      horarioInicio: modoHorario === 'intervalo' ? horarioInicio : '',
+      horarioFim: modoHorario === 'intervalo' ? horarioFim : '',
+      horarios: horariosCalculados,
+      aceitaPet: editPacote.aceitaPet ?? true,
+      pacotesCombinados,
+    };
+
+    const { id, ...dadosPacote } = pacoteNormalizado;
+
     try {
-      if (isEditingPacote && editPacote.id) {
-        await api.updatePacote(editPacote.id, editPacote);
+      if (isEditingPacote && id) {
+        await updateDoc(doc(db, 'pacotes', id), dadosPacote);
         setFeedback({ type: 'success', message: 'Pacote atualizado com sucesso!' });
       } else {
-        await api.createPacote(editPacote);
+        await addDoc(collection(db, 'pacotes'), dadosPacote);
         setFeedback({ type: 'success', message: 'Pacote cadastrado com sucesso!' });
       }
       setModalPacote(false);
       setEditPacote(null);
+      setNovaDataBloqueada('');
       fetchPacotes();
     } catch {
       setFeedback({ type: 'error', message: 'Erro ao salvar pacote.' });
@@ -441,148 +345,88 @@ export default function AdminDashboard() {
 
   const excluirPacote = async (id: string) => {
     if (window.confirm('Excluir pacote?')) {
-      try {
-        await api.deletePacote(id);
-        fetchPacotes();
-        setFeedback({ type: 'success', message: 'Pacote excluído com sucesso!' });
-      } catch (error) {
-        setFeedback({ type: 'error', message: 'Erro ao excluir pacote.' });
-      }
+      await deleteDoc(doc(db, 'pacotes', id));
+      fetchPacotes();
     }
+  };
+
+  const adicionarDataBloqueada = () => {
+    if (!novaDataBloqueada) return;
+    setEditPacote(prev => {
+      if (!prev) return prev;
+      const existentes = new Set(prev.datasBloqueadas ?? []);
+      existentes.add(novaDataBloqueada);
+      return {
+        ...prev,
+        datasBloqueadas: Array.from(existentes).sort(),
+      };
+    });
+    setNovaDataBloqueada('');
+  };
+
+  const removerDataBloqueada = (data: string) => {
+    setEditPacote(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        datasBloqueadas: (prev.datasBloqueadas ?? []).filter(item => item !== data),
+      };
+    });
   };
 
   // Pesquisa Clientes
   const pesquisarClientes = async () => {
-    if (!termoPesquisa.trim()) {
-      setFeedback({ type: 'error', message: 'Digite um termo para pesquisar.' });
-      return;
-    }
-    
+    if (!termoPesquisa.trim()) return;
     setCarregandoPesquisa(true);
     try {
-      console.log('ðŸ” Pesquisando clientes com termo:', termoPesquisa);
-      const dados: Reserva[] = await api.getReservas();
-      console.log('ðŸ“Š Total de reservas para pesquisa:', dados.length);
-      
-      const matches = dados.filter((r: Reserva) => {
-        const termo = termoPesquisa.toLowerCase();
-        return (
-          (r.nome && r.nome.toLowerCase().includes(termo)) ||
-          (r.cpf && r.cpf.includes(termoPesquisa)) ||
-          (r.telefone && r.telefone.includes(termoPesquisa))
+      const q = query(collection(db, 'reservas'));
+      const snapshot = await getDocs(q);
+      const matches = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Reserva))
+        .filter(
+          (r: Reserva) =>
+            (r.nome && r.nome.toLowerCase().includes(termoPesquisa.toLowerCase())) ||
+            (r.cpf && r.cpf.includes(termoPesquisa)) ||
+            (r.telefone && r.telefone.includes(termoPesquisa))
         );
-      });
-      
-      console.log('ðŸ” Resultados encontrados:', matches.length);
       setResultadosPesquisa(matches);
-      
-      if (matches.length === 0) {
-        setFeedback({ type: 'error', message: 'Nenhum cliente encontrado com esse termo.' });
-      }
-      
-    } catch (error: any) {
-      console.error('âŒ Erro na pesquisa:', error);
+    } catch (e) {
       setResultadosPesquisa([]);
-      setFeedback({ 
-        type: 'error', 
-        message: `Erro na pesquisa: ${error?.message || 'Erro desconhecido'}` 
-      });
     }
     setCarregandoPesquisa(false);
   };
 
   // Render
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
-      
-      {/* Header Profissional */}
-      <header className="bg-white shadow-lg border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center space-x-4">
-              <img 
-                src="/logo.png" 
-                alt="Vagafogo" 
-                className="w-12 h-12 rounded-xl object-cover"
-              />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Vagafogo Admin</h1>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-600">
-                Bem-vindo, <span className="font-medium">{user?.email}</span>
-              </div>
-              <button 
-                onClick={() => auth.signOut()}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors duration-200"
-              >
-                Sair
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Feedback Toast */}
+    <main className="min-h-screen w-full bg-gray-50">
+      {/* Feedback */}
       {feedback && (
-        <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg transition-all duration-300 transform ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white`}>
-          <div className="flex items-center space-x-2">
-            <span className="text-lg">{feedback.type === 'success' ? 'âœ“' : 'âš '}</span>
-            <span>{feedback.message}</span>
-          </div>
+        <div className={`fixed top-4 right-4 z-[99] px-6 py-2 rounded shadow transition-all text-white ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+          {feedback.message}
         </div>
       )}
 
-      {/* Navigation Tabs */}
-      <nav className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8">
-            <button 
-              onClick={() => setAba('reservas')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                aba === 'reservas' 
-                  ? 'border-green-500 text-green-600' 
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <FaPlus className="inline mr-2" />
-              Reservas
-            </button>
-            <button 
-              onClick={() => setAba('pacotes')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                aba === 'pacotes' 
-                  ? 'border-green-500 text-green-600' 
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <FaBox className="inline mr-2" />
-              Pacotes
-            </button>
-            <button 
-              onClick={() => setAba('pesquisa')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                aba === 'pesquisa' 
-                  ? 'border-green-500 text-green-600' 
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <FaSearch className="inline mr-2" />
-              Pesquisa de Clientes
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Abas */}
+      <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">
+        <button onClick={() => setAba('reservas')}
+          className={`px-3 py-1 rounded ${aba === 'reservas' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
+          <FaPlus className="inline mr-1" /> Reservas
+        </button>
+        <button onClick={() => setAba('pacotes')}
+          className={`px-3 py-1 rounded ${aba === 'pacotes' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
+          <FaBox className="inline mr-1" /> Pacotes
+        </button>
+        <button onClick={() => setAba('pesquisa')}
+          className={`px-3 py-1 rounded ${aba === 'pesquisa' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
+          <FaSearch className="inline mr-1" /> Pesquisa de Clientes
+        </button>
+      </div>
 
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
         <>
           {/* Calendário */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+          <section className="bg-white p-4 rounded shadow mb-6 w-full">
             <div className="flex justify-between items-center mb-4">
               <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
               <h2 className="text-lg font-bold">{dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}</h2>
@@ -596,109 +440,21 @@ export default function AdminDashboard() {
             <div className="grid grid-cols-7 gap-1">
               {days.map((day, idx) => {
                 const isSelected = day && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear;
-                const dateObj = day ? new Date(currentYear, currentMonth, day) : null;
-                const today0 = new Date(); today0.setHours(0,0,0,0);
-                const isPast = !!dateObj && (new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()) < today0);
                 return (
                   <div
                     key={idx}
-                    className={`text-center p-2 rounded transition-all h-10 flex items-center justify-center text-xs font-medium ${!day ? '' : isPast ? 'bg-gray-100 text-gray-600 hover:bg-gray-200 cursor-pointer' : (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200 cursor-pointer')}`}
-                    onClick={() => {
-                      if (!day) return;
-                      // Admin pode selecionar dias passados para visualizar reservas
-                      setSelectedDate(new Date(currentYear, currentMonth, day));
-                    }}
+                    className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${day ? (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200') : ''}`}
+                    onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
                   >
                     {day || ''}
                   </div>
                 );
               })}
             </div>
-          </div>
-
-          {/* Fechamentos do dia */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-            <h3 className="text-lg font-semibold mb-4">Controle de Horários - {dayjs(selectedDate).format('DD/MM/YYYY')}</h3>
-            
-            <div className="space-y-6">
-              {/* Status do Dia */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 bg-gray-50 rounded-lg gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Status do Dia</div>
-                    <div className={`text-xs ${diaFechado ? 'text-red-600' : 'text-green-600'}`}>
-                      {diaFechado ? '🔒 Fechado' : '🟢 Aberto'}
-                    </div>
-                  </div>
-                  {diaFechado ? (
-                    <button 
-                      onClick={reabrirDia} 
-                      className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
-                    >
-                      Reabrir Dia
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={fecharDiaSelecionado} 
-                      className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors"
-                    >
-                      Fechar Dia Completo
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Fechamento de Horários Específicos */}
-              <div className="space-y-3">
-                <div className="text-sm font-medium">Fechar Horário Específico</div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    className="border border-gray-300 px-3 py-2 rounded-lg text-sm flex-1 w-full"
-                    value={horarioParaFechar}
-                    onChange={e => setHorarioParaFechar(e.target.value)}
-                  >
-                    <option value="">Selecionar horário</option>
-                    {horariosDisponiveis.map(h => (
-                      <option key={h} value={h} disabled={horariosFechados.includes(h)}>
-                        {h} {horariosFechados.includes(h) ? '(Fechado)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <button 
-                    onClick={fecharHorarioSelecionado} 
-                    className="w-full sm:w-auto px-4 py-2 bg-orange-600 text-white rounded-lg text-sm hover:bg-orange-700 transition-colors disabled:opacity-50"
-                    disabled={!horarioParaFechar || horariosFechados.includes(horarioParaFechar)}
-                  >
-                    Fechar Horário
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Lista de Horários Fechados */}
-            {horariosFechados.length > 0 && (
-              <div className="mt-4 p-3 bg-red-50 rounded-lg">
-                <div className="text-sm font-medium text-red-800 mb-2">Horários Fechados:</div>
-                <div className="flex flex-wrap gap-2">
-                  {horariosFechados.map(horario => (
-                    <span key={horario} className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
-                      🔒 {horario}
-                      <button
-                        onClick={() => reabrirHorario(horario)}
-                        className="ml-1 text-red-600 hover:text-red-800"
-                        title="Reabrir horário"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          </section>
 
           {/* Reservas Tabela */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <section className="bg-white p-4 rounded shadow w-full">
             <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
               <div className="flex items-center gap-4 flex-wrap">
                 <h3 className="text-base font-bold">
@@ -715,7 +471,7 @@ export default function AdminDashboard() {
                   <option value="Brunch + trilha">Brunch + trilha</option>
                 </select>
               </div>
-              <button onClick={handleAddReserva} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 shadow-sm">
+              <button onClick={handleAddReserva} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-2 text-sm">
                 <FaPlus /> Nova Reserva
               </button>
             </div>
@@ -739,7 +495,7 @@ export default function AdminDashboard() {
                 <tbody>
                   {Object.keys(reservas).length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-2 py-3 text-gray-500 text-xs">Nenhuma reserva encontrada para esta data.</td>
+                      <td colSpan={10} className="px-2 py-3 text-gray-500 text-xs">Nenhuma reserva paga encontrada.</td>
                     </tr>
                   ) : (
                     Object.keys(reservas)
@@ -770,7 +526,7 @@ export default function AdminDashboard() {
                                 <td className="px-2 py-2">{r.naoPagante ?? 0}</td>
                                 <td className="px-2 py-2">{r.bariatrica ?? 0}</td>
                                 <td className="px-2 py-2">{calcularParticipantes(r)}</td>
-                                <td className="px-2 py-2">{r.temPet ? 'Sim' : 'Não'}</td>
+                                <td className="px-2 py-2">{r.temPet ? '🐕 Sim' : 'Não'}</td>
                                 <td className="px-2 py-2">{r.atividade}</td>
                                 <td className="px-2 py-2">
                                   {r.valor !== undefined
@@ -934,16 +690,16 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
-          </div>
+          </section>
         </>
       )}
 
       {/* ========== Pacotes ========== */}
       {aba === 'pacotes' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <section className="bg-white p-4 rounded shadow w-full">
           <div className="flex justify-between mb-4">
             <h2 className="font-bold">Pacotes</h2>
-            <button onClick={handleAddPacote} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 shadow-sm">
+            <button onClick={handleAddPacote} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
               <FaPlus /> Novo Pacote
             </button>
           </div>
@@ -951,7 +707,6 @@ export default function AdminDashboard() {
             <table className="min-w-full divide-y divide-gray-200 text-xs mb-4">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="px-2 py-2 text-left">Emoji</th>
                   <th className="px-2 py-2 text-left">Nome</th>
                   <th className="px-2 py-2 text-left">Tipo</th>
                   <th className="px-2 py-2 text-left">Preço Adulto</th>
@@ -960,24 +715,47 @@ export default function AdminDashboard() {
                   <th className="px-2 py-2 text-left">Dias</th>
                   <th className="px-2 py-2 text-left">Horários</th>
                   <th className="px-2 py-2 text-left">Limite</th>
+                  <th className="px-2 py-2 text-left">Combos</th>
+                  <th className="px-2 py-2 text-left">Pets</th>
+                  <th className="px-2 py-2 text-left">Datas bloqueadas</th>
                   <th className="px-2 py-2 text-left"></th>
                 </tr>
               </thead>
               <tbody>
                 {pacotes.map(p => (
                   <tr key={p.id}>
-                    <td className="px-2 py-1 text-2xl">{p.emoji || 'âœ¨'}</td>
                     <td className="px-2 py-1">{p.nome}</td>
                     <td className="px-2 py-1">{p.tipo}</td>
                     <td className="px-2 py-1">R$ {Number(p.precoAdulto).toLocaleString('pt-BR')}</td>
                     <td className="px-2 py-1">R$ {Number(p.precoCrianca).toLocaleString('pt-BR')}</td>
                     <td className="px-2 py-1">R$ {Number(p.precoBariatrica).toLocaleString('pt-BR')}</td>
                     <td className="px-2 py-1">{p.dias.map(i => diasDaSemana[i]).join(', ') || '-'}</td>
-                    <td className="px-2 py-1">{p.horarios.join(', ') || '-'}</td>
+                    <td className="px-2 py-1">
+                      {p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim
+                        ? `${p.horarioInicio} - ${p.horarioFim} (faixa)`
+                        : p.horarios.join(', ') || '-'}
+                    </td>
                     <td className="px-2 py-1">{p.limite}</td>
+                    <td className="px-2 py-1 text-xs">
+                      {p.pacotesCombinados && p.pacotesCombinados.length > 0
+                        ? p.pacotesCombinados
+                            .map(id => pacotesPorId[id]?.nome || 'Pacote removido')
+                            .join(', ')
+                        : '-'}
+                    </td>
+                    <td className="px-2 py-1">
+                      <span className={p.aceitaPet ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                        {p.aceitaPet ? 'Aceita pets' : 'Nao aceita pets'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1">
+                      {p.datasBloqueadas && p.datasBloqueadas.length > 0
+                        ? `${p.datasBloqueadas.length} dia(s)`
+                        : '-'}
+                    </td>
                     <td className="px-2 py-1 flex gap-1">
-                      <button className="text-blue-600 hover:text-blue-800 px-2 py-1 rounded" onClick={() => handleEditPacote(p)}>Editar</button>
-                      <button className="text-red-600 hover:text-red-800 px-2 py-1 rounded" onClick={() => excluirPacote(p.id!)}>Excluir</button>
+                      <button className="text-blue-600" onClick={() => handleEditPacote(p)}>Editar</button>
+                      <button className="text-red-600" onClick={() => excluirPacote(p.id!)}>Excluir</button>
                     </td>
                   </tr>
                 ))}
@@ -988,20 +766,8 @@ export default function AdminDashboard() {
           {/* Modal Pacote */}
           {modalPacote && editPacote && (
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded shadow w-full max-w-xs max-h-[95vh] overflow-y-auto">
+              <div className="bg-white p-6 rounded shadow w-full max-w-lg max-h-[95vh] overflow-y-auto">
                 <h4 className="font-bold mb-2">{isEditingPacote ? 'Editar' : 'Novo'} Pacote</h4>
-                <label className="block mb-1 text-xs">Emoji do pacote:
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{editPacote.emoji || 'âœ¨'}</span>
-                    <input 
-                      value={editPacote.emoji || ''} 
-                      onChange={e => setEditPacote(f => ({ ...f!, emoji: e.target.value }))} 
-                      className="w-full border px-2 py-1 rounded" 
-                      placeholder="âœ¨"
-                      maxLength={2}
-                    />
-                  </div>
-                </label>
                 <label className="block mb-1 text-xs">Nome da atividade:
                   <input value={editPacote.nome} onChange={e => setEditPacote(f => ({ ...f!, nome: e.target.value }))} className="w-full border px-2 py-1 rounded" />
                 </label>
@@ -1021,7 +787,28 @@ export default function AdminDashboard() {
                   <input type="number" value={editPacote.limite} onChange={e => setEditPacote(f => ({ ...f!, limite: Number(e.target.value) }))} className="w-full border px-2 py-1 rounded" />
                 </label>
 
-                {/* Dias da semana */}
+                <label className="block mb-1 mt-2 text-xs font-semibold">Política de pets:</label>
+                <div className="flex items-center gap-3 mb-2 text-xs">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="aceitaPet"
+                      checked={editPacote.aceitaPet}
+                      onChange={() => setEditPacote(f => ({ ...f!, aceitaPet: true }))}
+                    />
+                    Aceita pets
+                  </label>
+                  <label className="flex items-center gap-1 text-red-600">
+                    <input
+                      type="radio"
+                      name="aceitaPet"
+                      checked={!editPacote.aceitaPet}
+                      onChange={() => setEditPacote(f => ({ ...f!, aceitaPet: false }))}
+                    />
+                    Nao aceita pets
+                  </label>
+                </div>
+
                 <label className="block mb-1 mt-2 text-xs font-semibold">Dias disponíveis:</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {diasDaSemana.map((dia, i) => (
@@ -1042,40 +829,152 @@ export default function AdminDashboard() {
                   ))}
                 </div>
 
-                {/* HorÃ¡rios disponÃ­veis */}
-                <label className="block mb-1 mt-2 text-xs font-semibold">Horários:</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {horariosDisponiveis.map(horario => (
-                    <label key={horario} className="flex items-center text-xs">
+                <label className="block mb-1 mt-2 text-xs font-semibold">Formato de horarios:</label>
+                <select
+                  value={editPacote.modoHorario ?? 'lista'}
+                  onChange={e => setEditPacote(f => ({ ...f!, modoHorario: e.target.value as 'lista' | 'intervalo' }))}
+                  className="w-full border px-2 py-1 rounded text-xs mb-2"
+                >
+                  <option value="lista">Horários fixos</option>
+                  <option value="intervalo">Faixa contínua</option>
+                </select>
+
+                <label className="block mb-1 text-xs font-semibold">
+                  {editPacote.modoHorario === 'intervalo' ? 'Faixa de horarios:' : 'Horarios disponiveis:'}
+                </label>
+                {editPacote.modoHorario === 'intervalo' ? (
+                  <div className="space-y-2 mb-2">
+                    <label className="block text-xs">Horário inicial:
                       <input
-                        type="checkbox"
-                        checked={editPacote.horarios.includes(horario)}
-                        onChange={e => setEditPacote(f => ({
-                          ...f!,
-                          horarios: e.target.checked
-                            ? [...f!.horarios, horario]
-                            : f!.horarios.filter(h => h !== horario)
-                        }))}
-                        className="mr-1"
+                        type="time"
+                        value={editPacote.horarioInicio ?? ''}
+                        onChange={e => setEditPacote(f => ({ ...f!, horarioInicio: e.target.value }))}
+                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
                       />
-                      {horario}
                     </label>
-                  ))}
+                    <label className="block text-xs">Horário final:
+                      <input
+                        type="time"
+                        value={editPacote.horarioFim ?? ''}
+                        onChange={e => setEditPacote(f => ({ ...f!, horarioFim: e.target.value }))}
+                        className="w-full border px-2 py-1 rounded mt-1 text-xs"
+                      />
+                    </label>
+                    <p className="text-[11px] text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                      {faixaHorarioDescricao || 'Informe horario inicial e final para exibir ao cliente a faixa continua sem selecao de horario.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {horariosDisponiveis.map(horario => (
+                      <label key={horario} className="flex items-center text-xs">
+                        <input
+                          type="checkbox"
+                          checked={editPacote.horarios.includes(horario)}
+                          onChange={e => setEditPacote(f => ({
+                            ...f!,
+                            horarios: e.target.checked
+                              ? [...f!.horarios, horario]
+                              : f!.horarios.filter(h => h !== horario)
+                          }))}
+                          className="mr-1"
+                        />
+                        {horario}
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <label className="block mb-1 mt-2 text-xs font-semibold">Pacotes incluidos (combo opcional):</label>
+                <div className="border rounded p-2 mb-2 max-h-28 overflow-y-auto bg-gray-50">
+                  {pacotes.filter(p => !editPacote.id || p.id !== editPacote.id).length > 0 ? (
+                    pacotes
+                      .filter(p => !editPacote.id || p.id !== editPacote.id)
+                      .map(p => (
+                        <label key={p.id} className="flex items-center justify-between text-xs py-1">
+                          <span className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={editPacote.pacotesCombinados?.includes(p.id ?? '')}
+                              onChange={e => setEditPacote(f => {
+                                if (!f) return f;
+                                const atual = new Set(f.pacotesCombinados ?? []);
+                                if (e.target.checked && p.id) atual.add(p.id);
+                                if (!e.target.checked && p.id) atual.delete(p.id);
+                                return { ...f, pacotesCombinados: Array.from(atual) };
+                              })}
+                            />
+                            <span>{p.nome}</span>
+                          </span>
+                          <span className="text-[11px] text-gray-500">{p.tipo}</span>
+                        </label>
+                      ))
+                  ) : (
+                    <p className="text-[11px] text-gray-500">Cadastre outros pacotes para criar combos.</p>
+                  )}
                 </div>
+                <p className="text-[11px] text-gray-500 mb-2">
+                  Os valores promocionais do combo devem ser definidos nos campos de preco acima.
+                </p>
+
+                <label className="block mb-1 mt-2 text-xs font-semibold">Datas sem disponibilidade:</label>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="date"
+                    value={novaDataBloqueada}
+                    onChange={e => setNovaDataBloqueada(e.target.value)}
+                    className="flex-1 border px-2 py-1 rounded text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={adicionarDataBloqueada}
+                    disabled={!novaDataBloqueada}
+                    className={`px-2 py-1 rounded text-xs text-white ${novaDataBloqueada ? 'bg-blue-600' : 'bg-gray-300 cursor-not-allowed'}`}
+                  >
+                    Adicionar
+                  </button>
+                </div>
+                {editPacote.datasBloqueadas && editPacote.datasBloqueadas.length > 0 ? (
+                  <ul className="text-xs space-y-1 mb-2 max-h-24 overflow-y-auto">
+                    {editPacote.datasBloqueadas.map(data => (
+                      <li key={data} className="flex items-center justify-between bg-gray-100 px-2 py-1 rounded">
+                        <span>{dayjs(data).format('DD/MM/YYYY')}</span>
+                        <button
+                          type="button"
+                          onClick={() => removerDataBloqueada(data)}
+                          className="text-red-600 text-[11px]"
+                        >
+                          Remover
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-gray-500 mb-2">Nenhuma data bloqueada.</p>
+                )}
 
                 <div className="flex gap-2 mt-2">
-                  <button onClick={() => setModalPacote(false)} className="px-2 py-1 bg-gray-400 text-white rounded text-xs">Cancelar</button>
+                  <button
+                    onClick={() => {
+                      setModalPacote(false);
+                      setEditPacote(null);
+                      setNovaDataBloqueada('');
+                    }}
+                    className="px-2 py-1 bg-gray-400 text-white rounded text-xs"
+                  >
+                    Cancelar
+                  </button>
                   <button onClick={handleSavePacote} className="px-2 py-1 bg-green-600 text-white rounded text-xs">Salvar</button>
                 </div>
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* ========== Pesquisa de Clientes ========== */}
       {aba === 'pesquisa' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <section className="bg-white p-4 rounded shadow w-full">
           <h2 className="font-bold mb-4">Pesquisa de Clientes</h2>
           <div className="flex gap-2 mb-4">
             <input
@@ -1086,7 +985,7 @@ export default function AdminDashboard() {
               placeholder="Digite nome, CPF ou telefone"
               onKeyDown={e => e.key === 'Enter' && pesquisarClientes()}
             />
-            <button onClick={pesquisarClientes} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow-sm">Pesquisar</button>
+            <button onClick={pesquisarClientes} className="bg-blue-600 text-white px-4 py-2 rounded">Pesquisar</button>
           </div>
           {carregandoPesquisa ? (
             <div className="text-sm text-gray-500">Buscando...</div>
@@ -1107,7 +1006,7 @@ export default function AdminDashboard() {
                     <td className="px-2 py-1">{r.nome}</td>
                     <td className="px-2 py-1">{r.cpf}</td>
                     <td className="px-2 py-1">{r.telefone}</td>
-                    <td className="px-2 py-1">{formatDataBR(r.data)}</td>
+                    <td className="px-2 py-1">{r.data}</td>
                     <td className="px-2 py-1">{r.atividade}</td>
                   </tr>
                 ))}
@@ -1116,10 +1015,8 @@ export default function AdminDashboard() {
           ) : (
             <div className="text-gray-500 text-sm">Nenhum cliente encontrado.</div>
           )}
-        </div>
+        </section>
       )}
-      </main>
-    </div>
+    </main>
   );
 }
-

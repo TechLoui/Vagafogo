@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from '../../firebase';
 import { DayPicker } from "react-day-picker";
@@ -9,13 +9,18 @@ type Pacote = {
   id?: string;
   nome: string;
   tipo: "brunch" | "trilha" | "experiencia";
-  emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
   horarios?: string[];
   dias: number[];
   limite?: number;
+  datasBloqueadas?: string[];
+  modoHorario?: "lista" | "intervalo";
+  horarioInicio?: string;
+  horarioFim?: string;
+  pacotesCombinados?: string[];
+  aceitaPet: boolean;
 };
 
 export function BookingSection() {
@@ -45,13 +50,15 @@ export function BookingSection() {
   const [pixKey, setPixKey] = useState<string | null>(null);
   const [qrCodeImage, setQrCodeImage] = useState<string | null>(null);
   const [expirationDate, setExpirationDate] = useState<string | null>(null);
-
-  // Início do dia atual (00:00) para travar seleção de datas anteriores
-  const todayStart = (() => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    return t;
-  })();
+  const [petPolicyNotice, setPetPolicyNotice] = useState<string | null>(null);
+  const [petSelectionWarning, setPetSelectionWarning] = useState<string | null>(null);
+  const pacotesPorId = useMemo(() => {
+    const mapa: Record<string, Pacote> = {};
+    pacotes.forEach(p => {
+      if (p.id) mapa[p.id] = p;
+    });
+    return mapa;
+  }, [pacotes]);
 
   // BUSCA PACOTES FIRESTORE
   useEffect(() => {
@@ -64,18 +71,35 @@ export function BookingSection() {
             id: doc.id,
             nome: d.nome,
             tipo: d.tipo,
-            emoji: d.emoji,
             precoAdulto: Number(d.precoAdulto),
             precoCrianca: Number(d.precoCrianca),
             precoBariatrica: Number(d.precoBariatrica),
-            horarios: d.horarios ?? [],
-            dias: Array.isArray(d.dias) ? d.dias : [],
+            horarios: Array.isArray(d.horarios) ? [...d.horarios].sort((a: string, b: string) => a.localeCompare(b)) : [],
+            dias: Array.isArray(d.dias) ? d.dias.map((dia: number) => Number(dia)).sort((a: number, b: number) => a - b) : [],
             limite: d.limite !== undefined ? Number(d.limite) : undefined,
+            datasBloqueadas: Array.isArray(d.datasBloqueadas) ? d.datasBloqueadas : [],
+            modoHorario: d.modoHorario,
+            horarioInicio: d.horarioInicio,
+            horarioFim: d.horarioFim,
+            pacotesCombinados: Array.isArray(d.pacotesCombinados) ? d.pacotesCombinados.filter(Boolean) : [],
+            aceitaPet: d.aceitaPet === false ? false : true,
           };
         });
         setPacotes(arr);
+        if (arr.length > 0) {
+          const pacoteSelecionado = arr[0];
+          if (!pacoteSelecionado.aceitaPet) {
+            setPetPolicyNotice(`Aviso: o pacote ${pacoteSelecionado.nome} nao aceita pets.`);
+            setPetSelectionWarning('Este pacote nao aceita pets.');
+          } else {
+            setPetPolicyNotice(null);
+            setPetSelectionWarning(null);
+          }
+        }
       } catch (err) {
         setPacotes([]);
+        setPetPolicyNotice(null);
+        setPetSelectionWarning(null);
       } finally {
         setLoadingPacotes(false);
       }
@@ -121,9 +145,31 @@ export function BookingSection() {
 
   // Formulário normal
   const pacote = pacotes[selectedPackage];
+  if (!pacote) {
+    return null;
+  }
+
   const total = adultos * pacote.precoAdulto + criancas * pacote.precoCrianca + bariatrica * pacote.precoBariatrica;
-  const allowedDays = (day: Date) => pacote.dias.includes(day.getDay());
-  const horariosDisponiveis = pacote.horarios || [];
+  const isIntervalo = pacote.modoHorario === "intervalo" && Boolean(pacote.horarioInicio) && Boolean(pacote.horarioFim);
+  const horariosDisponiveis = isIntervalo ? [] : pacote.horarios ?? [];
+  const faixaHorarioLabel = isIntervalo && pacote.horarioInicio && pacote.horarioFim
+    ? `${pacote.horarioInicio} às ${pacote.horarioFim}`
+    : null;
+  const possuiDiasConfigurados = pacote.dias.length > 0;
+  const datasBloqueadasSet = new Set(pacote.datasBloqueadas ?? []);
+  const datasBloqueadasLista = Array.from(datasBloqueadasSet).sort();
+  const datasBloqueadasFormatadas = datasBloqueadasLista
+    .map(data => {
+      const dateObj = new Date(`${data}T00:00:00`);
+      return Number.isNaN(dateObj.getTime()) ? null : dateObj.toLocaleDateString("pt-BR");
+    })
+    .filter((valor): valor is string => Boolean(valor));
+  const isSelectableWeekday = (day: Date) => !possuiDiasConfigurados || pacote.dias.includes(day.getDay());
+  const isBlockedDay = (day: Date) => datasBloqueadasSet.has(day.toISOString().slice(0, 10));
+  const allowedDays = (day: Date) => isSelectableWeekday(day) && !isBlockedDay(day);
+  const comboNames = (pacote.pacotesCombinados ?? [])
+    .map(id => pacotesPorId[id]?.nome)
+    .filter((nome): nome is string => Boolean(nome));
 
   async function verificarVagas(pacote: Pacote, data: Date | undefined, horario: string) {
     if (!data || !horario || !pacote.limite) {
@@ -135,7 +181,8 @@ export function BookingSection() {
       const q = query(
         collection(db, "reservas"),
         where("data", "==", dataStr),
-        where("horario", "==", horario)
+        where("horario", "==", horario),
+        where("status", "==", "pago")
       );
       const snapshot = await getDocs(q);
       let total = 0;
@@ -151,12 +198,36 @@ export function BookingSection() {
   }
 
   function handlePackage(idx: number) {
+    const pacoteAnterior = pacotes[selectedPackage];
+    const novoPacote = pacotes[idx];
     setSelectedPackage(idx);
+    setSelectedDay(undefined);
     setHorario("");
     setVagasRestantes(null);
-    if (selectedDay && pacotes[idx].horarios && horario) {
-      verificarVagas(pacotes[idx], selectedDay, horario);
+
+    if (!novoPacote.aceitaPet) {
+      setPetPolicyNotice(`Aviso: o pacote ${novoPacote.nome} nao aceita pets.`);
+      setPetSelectionWarning('Este pacote nao aceita pets.');
+      if (temPet === true) {
+        setTemPet(null);
+      }
+    } else if (pacoteAnterior && pacoteAnterior.aceitaPet !== novoPacote.aceitaPet) {
+      setPetPolicyNotice(`Aviso: o pacote ${novoPacote.nome} aceita pets, diferente do pacote selecionado anteriormente.`);
+      setPetSelectionWarning(null);
+    } else {
+      setPetPolicyNotice(null);
+      setPetSelectionWarning(null);
     }
+  }
+
+  function handlePetChoice(valor: boolean) {
+    if (valor && !pacote.aceitaPet) {
+      setPetSelectionWarning('Este pacote nao aceita pets. Escolha "Nao" ou selecione outro pacote.');
+      setTemPet(null);
+      return;
+    }
+    setTemPet(valor);
+    setPetSelectionWarning(null);
   }
 
   function handleDate(date: Date | undefined) {
@@ -182,22 +253,18 @@ export function BookingSection() {
     if (horariosDisponiveis.length > 0 && !horario) return alert("Selecione o horário!");
     if (!nome || !email || !cpf) return alert("Preencha todos os campos obrigatórios!");
     if (temPet === null) return alert("Informe se vai levar um pet!");
+    if (temPet === true && !pacote.aceitaPet) {
+      setLoading(false);
+      return alert("Este pacote nao aceita pets. Escolha outro pacote ou informe que nao levara pet.");
+    }
 
     setLoading(true);
 
     try {
-      // Bloqueio extra no cliente para datas passadas
-      const today0 = new Date();
-      today0.setHours(0, 0, 0, 0);
-      const selected0 = new Date(selectedDay.getFullYear(), selectedDay.getMonth(), selectedDay.getDate());
-      if (selected0 < today0) {
-        alert("Não é permitido reservar em datas passadas.");
-        setLoading(false);
-        return;
-      }
       const dataStr = selectedDay.toISOString().slice(0, 10);
       const whereFilters = [
         where("data", "==", dataStr),
+        where("status", "==", "pago"),
       ];
       if (horariosDisponiveis.length > 0) {
         whereFilters.push(where("horario", "==", horario));
@@ -220,6 +287,10 @@ export function BookingSection() {
       }
       setVagasRestantes(pacote.limite ? limite - totalReservas : null);
 
+      const horarioParaReserva = isIntervalo && faixaHorarioLabel
+        ? `Faixa ${faixaHorarioLabel}`
+        : (horariosDisponiveis.length > 0 ? horario : "Trilha");
+
       const payload: any = {
         nome,
         email,
@@ -234,8 +305,10 @@ export function BookingSection() {
         criancas,
         naoPagante,
         billingType: formaPagamento,
-        horario: horariosDisponiveis.length > 0 ? horario : "Sem horário específico",
+        horario: horarioParaReserva,
         temPet,
+        pacotesCombinados: pacote.pacotesCombinados ?? [],
+        pacoteAceitaPet: pacote.aceitaPet,
       };
 
       const rawResponse = await fetch("https://vagafogo-production.up.railway.app/criar-cobranca", {
@@ -274,12 +347,6 @@ export function BookingSection() {
     }
   }
 
-  const blockedDates =["2025-08-12"];
-  function isDayBlocked (day: Date) {
-    const dayStr = day.toISOString().slice(0,10);
-    return blockedDates.includes(dayStr);
-  }
-''
   return (
     <section id="reservas" className="py-16 bg-[#F7FAEF]">
       <div className="container mx-auto px-4">
@@ -307,15 +374,28 @@ export function BookingSection() {
                   onClick={() => handlePackage(idx)}
                 >
                   <div className="text-3xl mb-2 text-[#8B4F23]">
-                    {pkg.emoji || (pkg.tipo === "brunch" ? "🥐" : pkg.tipo === "trilha" ? "🌳" : "✨")}
+                    {pkg.tipo === "brunch" ? "🥐" : pkg.tipo === "trilha" ? "🌳" : "✨"}
                   </div>
                   <h4 className="font-bold text-[#8B4F23]">{pkg.nome}</h4>
                   <p className="text-sm text-gray-500">
                     Adulto: R$ {pkg.precoAdulto} | Criança: R$ {pkg.precoCrianca}
                   </p>
+                  <p className={`text-xs font-semibold mt-1 ${pkg.aceitaPet ? "text-green-600" : "text-red-600"}`}>
+                    {pkg.aceitaPet ? "Aceita pets" : "Nao aceita pets"}
+                  </p>
                 </div>
               ))}
             </div>
+            {petPolicyNotice && (
+              <div className="mb-4 text-xs md:text-sm text-red-600 font-semibold bg-red-50 border border-red-200 px-3 py-2 rounded">
+                {petPolicyNotice}
+              </div>
+            )}
+            {comboNames.length > 0 && (
+              <div className="mb-4 text-xs md:text-sm text-[#8B4F23] bg-[#F7FAEF] border border-[#8B4F23]/20 px-3 py-2 rounded">
+                <span className="font-semibold">Combo especial:</span> {comboNames.join(', ')}
+              </div>
+            )}
             {/* Dados pessoais */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
@@ -338,6 +418,12 @@ export function BookingSection() {
                   required
                 />
               </div>
+              {petSelectionWarning && (
+                <p className="mt-2 text-xs text-red-600 font-semibold">{petSelectionWarning}</p>
+              )}
+              {pacote.aceitaPet === false && !petSelectionWarning && (
+                <p className="mt-2 text-xs text-red-600">Este pacote nao permite a presenca de pets.</p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -367,77 +453,74 @@ export function BookingSection() {
             {/* CALENDÁRIO */}
             <div className="mb-4">
               <style>{`
-                /* Container universal */
                 .rdp-mobile {
                   width: 100%;
-                  max-width: 100%;
+                  max-width: 320px;
                   margin: 0 auto;
                   text-align: center;
-                  overflow-x: hidden;
                 }
-                /* Garante que o calendário ocupe 100% do contêiner */
-                .rdp-mobile .rdp,
-                .rdp-mobile .rdp-months,
-                .rdp-mobile .rdp-month,
-                .rdp-mobile .rdp-table { width: 100%; margin: 0 auto; }
-                .rdp-mobile .rdp-caption { display: flex; justify-content: center; }
-                .rdp-mobile .rdp-head_cell, .rdp-mobile .rdp-cell { padding: 0; }
-                /* Tamanhos adaptáveis por viewport: funcionam bem em 280px+ até desktops */
+                .rdp-mobile .rdp-table {
+                  width: 100%;
+                  margin: 0 auto;
+                }
+                .rdp-mobile .rdp-table {
+                  width: 100%;
+                }
                 .rdp-mobile .rdp-day {
-                  width: clamp(28px, 12.5vw, 48px);
-                  height: clamp(28px, 12.5vw, 48px);
-                  font-size: clamp(10px, 2.8vw, 14px);
+                  width: 48px;
+                  height: 48px;
+                  font-size: 14px;
                 }
-                /* Em telas bem pequenas, reduz um pouco o espaçamento geral */
-                @media (max-width: 360px) {
-                  .rdp-mobile .rdp-day { width: clamp(26px, 12vw, 44px); height: clamp(26px, 12vw, 44px); }
+                @media (max-width: 640px) {
+                  .rdp-mobile {
+                    max-width: 260px;
+                  }
+                  .rdp-mobile .rdp-day {
+                    width: 28px;
+                    height: 28px;
+                    font-size: 9px;
+                  }
+                }
+                @media (max-width: 450px) {
+                  .rdp-mobile {
+                    max-width: 240px;
+                  }
+                  .rdp-mobile .rdp-day {
+                    width: 26px;
+                    height: 26px;
+                    font-size: 8px;
+                  }
                 }
               `}</style>
               <label className="block text-xs font-semibold text-[#8B4F23] mb-2">Data Preferida *</label>
-              {/* Mobile: input nativo para evitar corte */}
-              <div className="sm:hidden mb-3">
-                <input
-                  type="date"
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  min={(() => { const t = new Date(); t.setHours(0,0,0,0); return t.toISOString().slice(0,10); })()}
-                  value={selectedDay ? selectedDay.toISOString().slice(0,10) : ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) { setSelectedDay(undefined); setHorario(''); setVagasRestantes(null); return; }
-                    const [yy, mm, dd] = v.split('-').map(Number);
-                    const d = new Date(yy, (mm || 1)-1, dd || 1);
-                    // Restrições: dia permitido pelo pacote e não bloqueado
-                    if (!allowedDays(d)) { alert('Dia indisponível para este pacote.'); return; }
-                    if (isDayBlocked(d)) { alert('Este dia está fechado para reservas.'); return; }
-                    setSelectedDay(d);
-                    setHorario('');
-                    setVagasRestantes(null);
-                  }}
-                />
-              </div>
-              {/* Desktop/tablet: DayPicker completo */}
-              <div className="hidden sm:flex w-full justify-center px-2 md:px-0 overflow-x-auto sm:overflow-x-hidden">
+              <div className="w-full flex justify-center md:justify-center sm:justify-start sm:-ml-8">
                 <DayPicker
                   mode="single"
                   selected={selectedDay}
                   onSelect={handleDate}
-                  fromDate={todayStart}
+                  fromDate={new Date()}
                   locale={ptBR}
-                  modifiers={{ allowed: allowedDays }}
+                  modifiers={{
+                    allowed: allowedDays,
+                    blocked: (day) => isSelectableWeekday(day) && isBlockedDay(day),
+                  }}
                   modifiersClassNames={{
                     allowed: "bg-[#F7FAEF] text-[#8B4F23] font-bold",
                     selected: "bg-white text-[#8B4F23] ring-2 ring-[#8B4F23] font-bold",
                     today: "bg-[#e7dfd7] text-[#8B4F23] font-bold",
-                    disabled: "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    disabled: "bg-gray-100 text-gray-400 cursor-not-allowed",
+                    blocked: "bg-red-100 text-red-600 cursor-not-allowed font-bold"
                   }}
-                  disabled={(day) => {
-                    const d = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-                    return d < todayStart || !allowedDays(day) || isDayBlocked(day);
-                  }}
+                  disabled={(day) => !allowedDays(day)}
                   footer={!selectedDay && <span className="text-xs text-red-400">Selecione uma data válida.</span>}
                   className="rdp-mobile"
                 />
               </div>
+              {datasBloqueadasFormatadas.length > 0 && (
+                <p className="text-[11px] text-gray-500 mt-2 text-center md:text-left">
+                  Datas indisponíveis: {datasBloqueadasFormatadas.join(", ")}
+                </p>
+              )}
             </div>
 
             {/* Horários */}
@@ -464,6 +547,11 @@ export function BookingSection() {
                 )}
               </div>
             )}
+            {isIntervalo && faixaHorarioLabel && (
+              <div className="mb-4 bg-[#F7FAEF] border border-[#8B4F23]/20 text-[#8B4F23] text-xs md:text-sm rounded px-3 py-2">
+                Esta atividade acontece livremente das <strong>{faixaHorarioLabel}</strong>. Nao e necessario escolher um horario especifico.
+              </div>
+            )}
 
             {/* Pet */}
             <div className="mb-4">
@@ -475,7 +563,8 @@ export function BookingSection() {
                     name="pet"
                     value="true"
                     checked={temPet === true}
-                    onChange={() => setTemPet(true)}
+                    onChange={() => handlePetChoice(true)}
+                    disabled={!pacote.aceitaPet}
                     required
                   />
                   Sim
@@ -486,7 +575,7 @@ export function BookingSection() {
                     name="pet"
                     value="false"
                     checked={temPet === false}
-                    onChange={() => setTemPet(false)}
+                    onChange={() => handlePetChoice(false)}
                     required
                   />
                   Não
@@ -649,3 +738,5 @@ export function BookingSection() {
     </section>
   );
 }
+
+
