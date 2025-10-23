@@ -88,6 +88,26 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     return;
   }
 
+  // Validar CPF
+  const cpfLimpo = cpf.replace(/\D/g, '');
+  if (cpfLimpo.length !== 11) {
+    res.status(400).json({
+      status: "erro",
+      error: "CPF deve ter 11 dígitos.",
+    });
+    return;
+  }
+
+  // Validar telefone
+  const telefoneLimpo = telefone.replace(/\D/g, '');
+  if (telefoneLimpo.length < 10) {
+    res.status(400).json({
+      status: "erro",
+      error: "Telefone deve ter pelo menos 10 dígitos.",
+    });
+    return;
+  }
+
   try {
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = query(
@@ -139,7 +159,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
     // 🔍 Verificar se o cliente já existe no Asaas (pelo CPF)
     const customerSearch = await fetch(
-      `https://api.asaas.com/v3/customers?cpfCnpj=${cpf}`,
+      `https://api.asaas.com/v3/customers?cpfCnpj=${cpfLimpo}`,
       {
         method: "GET",
         headers: {
@@ -157,26 +177,38 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       console.log("🔁 Cliente encontrado:", customerId);
     } else {
       // 👤 Criar novo cliente
+      const customerPayload = {
+        name: nome,
+        email,
+        cpfCnpj: cpfLimpo,
+        phone: telefoneLimpo,
+        notificationDisabled: true,
+      };
+      
+      console.log("👤 Criando cliente:", customerPayload);
+      
       const customerCreate = await fetch("https://api.asaas.com/v3/customers", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           access_token: process.env.ASAAS_API_KEY!,
         },
-        body: JSON.stringify({
-          name: nome,
-          email,
-          cpfCnpj: cpf,
-          phone: telefone,
-          notificationDisabledSet: true,
-        }),
+        body: JSON.stringify(customerPayload),
       });
 
       const customerData = await customerCreate.json();
+      console.log("👤 Resposta criação cliente:", customerData);
 
       if (!customerCreate.ok) {
-        console.error("❌ Erro ao criar cliente no Asaas:", customerData);
-        res.status(400).json({ status: "erro", erro: customerData });
+        console.error("❌ Erro ao criar cliente no Asaas:", {
+          status: customerCreate.status,
+          data: customerData
+        });
+        res.status(400).json({ 
+          status: "erro", 
+          error: customerData.errors?.[0]?.description || "Erro ao criar cliente",
+          details: customerData 
+        });
         return;
       }
 
@@ -207,12 +239,26 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     });
 
     const cobrancaData = await paymentResponse.json();
-    console.log("💵 Resposta do Asaas:", cobrancaData);
+    console.log("💵 Resposta do Asaas:", JSON.stringify(cobrancaData, null, 2));
+    console.log("💳 Tipo de pagamento:", billingType);
+    console.log("🔗 Invoice URL:", cobrancaData.invoiceUrl);
 
     if (!paymentResponse.ok) {
-      console.error("❌ Erro ao criar cobrança:", cobrancaData);
-      res.status(400).json({ status: "erro", erro: cobrancaData });
+      console.error("❌ Erro ao criar cobrança:", {
+        status: paymentResponse.status,
+        statusText: paymentResponse.statusText,
+        data: cobrancaData
+      });
+      res.status(400).json({ 
+        status: "erro", 
+        error: cobrancaData.errors?.[0]?.description || cobrancaData.message || "Erro ao criar cobrança",
+        details: cobrancaData 
+      });
       return;
+    }
+
+    if (billingType === "CREDIT_CARD" && !cobrancaData.invoiceUrl) {
+      console.warn("⚠️ Invoice URL não retornada para cartão de crédito");
     }
 
     // ✅ Resposta de sucesso
@@ -221,9 +267,17 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       cobranca: {
         id: cobrancaData.id,
         status: cobrancaData.status,
-        invoiceUrl: cobrancaData.invoiceUrl,
+        invoiceUrl: cobrancaData.invoiceUrl || null,
       },
     };
+
+    console.log("💳 Dados da cobrança criada:", {
+      id: cobrancaData.id,
+      status: cobrancaData.status,
+      billingType: cobrancaData.billingType,
+      invoiceUrl: cobrancaData.invoiceUrl,
+      value: cobrancaData.value
+    });
 
     // Adicionar dados do PIX se for pagamento PIX
     if (billingType === "PIX" && cobrancaData.pixTransaction) {

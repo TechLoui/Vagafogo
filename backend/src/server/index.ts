@@ -16,6 +16,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Webhook test - resposta instantânea
+app.post('/webhook-test', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.post("/criar-cobranca", criarCobrancaHandler);
 app.use('/webhook', webhookRouter);
 
