@@ -113,6 +113,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     }
 
     // ✅ Criar reserva no Firebase
+    console.log("💾 Criando reserva no Firebase...");
     const reservaId = await criarReserva({
       nome,
       cpf,
@@ -132,6 +133,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       temPet,
       perguntasPersonalizadas,
     });
+    console.log("✅ Reserva criada com ID:", reservaId);
 
     const dataHoje = new Date().toISOString().split("T")[0];
 
@@ -183,6 +185,17 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     }
 
     // 💰 Criar pagamento com o customer correto
+    const paymentPayload = {
+      billingType,
+      customer: customerId,
+      value: valor,
+      dueDate: dataHoje,
+      description: `Cobrança de ${nome}`,
+      externalReference: reservaId,
+    };
+    
+    console.log("💰 Criando pagamento no Asaas:", paymentPayload);
+    
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
       method: "POST",
       headers: {
@@ -190,17 +203,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         accept: "application/json",
         access_token: process.env.ASAAS_API_KEY!,
       },
-      body: JSON.stringify({
-        billingType,
-        customer: customerId,
-        value: valor,
-        dueDate: dataHoje,
-        description: `Cobrança de ${nome}`,
-        externalReference: reservaId,
-      }),
+      body: JSON.stringify(paymentPayload),
     });
 
     const cobrancaData = await paymentResponse.json();
+    console.log("💵 Resposta do Asaas:", cobrancaData);
 
     if (!paymentResponse.ok) {
       console.error("❌ Erro ao criar cobrança:", cobrancaData);
@@ -209,14 +216,24 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     }
 
     // ✅ Resposta de sucesso
-    res.status(200).json({
+    const resposta: any = {
       status: "ok",
       cobranca: {
         id: cobrancaData.id,
         status: cobrancaData.status,
         invoiceUrl: cobrancaData.invoiceUrl,
       },
-    });
+    };
+
+    // Adicionar dados do PIX se for pagamento PIX
+    if (billingType === "PIX" && cobrancaData.pixTransaction) {
+      resposta.cobranca.pixKey = cobrancaData.pixTransaction.payload;
+      resposta.cobranca.qrCodeImage = cobrancaData.pixTransaction.qrCode?.encodedImage;
+      resposta.cobranca.expirationDate = cobrancaData.pixTransaction.expirationDate;
+    }
+
+    console.log("✅ Resposta enviada:", resposta);
+    res.status(200).json(resposta);
   } catch (error) {
     console.error("🔥 Erro inesperado ao criar cobrança:", error);
     res.status(500).json({

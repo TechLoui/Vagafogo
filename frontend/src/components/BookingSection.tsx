@@ -583,10 +583,14 @@ export function BookingSection() {
       }
 
       if (resposta?.status === 'ok') {
-        setCheckoutUrl(resposta.cobranca.invoiceUrl);
-        setPixKey(resposta.cobranca.pixKey);
-        setQrCodeImage(resposta.cobranca.qrCodeImage);
-        setExpirationDate(resposta.cobranca.expirationDate);
+        console.log('✅ Resposta OK recebida:', resposta);
+        console.log('🔗 Invoice URL:', resposta.cobranca?.invoiceUrl);
+        console.log('🔑 PIX Key:', resposta.cobranca?.pixKey);
+        
+        setCheckoutUrl(resposta.cobranca?.invoiceUrl || null);
+        setPixKey(resposta.cobranca?.pixKey || null);
+        setQrCodeImage(resposta.cobranca?.qrCodeImage || null);
+        setExpirationDate(resposta.cobranca?.expirationDate || null);
 
         // Scroll automático para o card de pagamento
         setTimeout(() => {
@@ -601,6 +605,7 @@ export function BookingSection() {
           alert("⚠️ IMPORTANTE: Como você selecionou opção bariátrica, será necessário enviar a foto da carteirinha via WhatsApp após realizar a reserva para validação.");
         }
       } else {
+        console.error('❌ Status não é OK:', resposta?.status);
         alert("Erro ao criar a cobrança. Verifique os dados ou tente novamente.");
       }
 
@@ -1121,22 +1126,19 @@ export function BookingSection() {
           {checkoutUrl && (
             <div 
               ref={paymentCardRef}
-              className="mt-8 p-6 bg-white rounded-2xl shadow-xl relative"
+              className="mt-8 p-8 rounded-3xl shadow-2xl relative overflow-hidden"
               style={{
-                animation: 'pulse-border 2s infinite',
-                border: '3px solid transparent',
-                backgroundImage: 'linear-gradient(white, white), linear-gradient(45deg, #10b981, #3b82f6, #10b981)',
-                backgroundOrigin: 'border-box',
-                backgroundClip: 'content-box, border-box'
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                animation: 'pulse-glow 3s ease-in-out infinite'
               }}
             >
-              <h3 className="text-xl font-bold text-blue-600 mb-4">
-                Finalize seu Pagamento
+              <h3 className="text-2xl font-bold text-white mb-6 text-center">
+                ✨ Finalize seu Pagamento
               </h3>
               
-              {formaPagamento === "CREDIT_CARD" && (
+              {formaPagamento === "CREDIT_CARD" && checkoutUrl && (
                 <div className="text-center">
-                  <p className="mb-6 text-lg text-gray-700">Clique no botão abaixo para finalizar o pagamento:</p>
+                  <p className="mb-6 text-lg text-white/90 text-center">Clique no botão abaixo para finalizar o pagamento:</p>
                   <a
                     href={checkoutUrl}
                     target="_blank"
@@ -1145,15 +1147,21 @@ export function BookingSection() {
                   >
                     💳 Realizar Pagamento
                   </a>
-                  <p className="mt-4 text-sm text-gray-600">Você será redirecionado para a página segura de pagamento</p>
+                  <p className="mt-4 text-sm text-white/80 text-center">Você será redirecionado para a página segura de pagamento</p>
+                </div>
+              )}
+              
+              {formaPagamento === "CREDIT_CARD" && !checkoutUrl && (
+                <div className="text-center p-4 bg-white/20 backdrop-blur-sm border border-white/30 rounded-lg">
+                  <p className="text-white">⚠️ Link de pagamento não disponível. Verifique o console para mais detalhes.</p>
                 </div>
               )}
               
               {formaPagamento === "PIX" && pixKey && (
                 <div>
-                  <p className="mb-4">Use a chave PIX abaixo para pagamento:</p>
-                  <div className="bg-gray-100 p-4 rounded-lg mb-4">
-                    <p className="font-mono text-sm break-all">{pixKey}</p>
+                  <p className="mb-4 text-white/90 text-center">Use a chave PIX abaixo para pagamento:</p>
+                  <div className="bg-white/20 backdrop-blur-sm p-4 rounded-lg mb-4 border border-white/30">
+                    <p className="font-mono text-sm break-all text-white">{pixKey}</p>
                   </div>
                   
                   {qrCodeImage && (
@@ -1167,8 +1175,8 @@ export function BookingSection() {
                   )}
                   
                   {expirationDate && (
-                    <p className="text-sm text-red-600">
-                      Válido até: {new Date(expirationDate).toLocaleString('pt-BR')}
+                    <p className="text-sm text-white/80 text-center">
+                      ⏰ Válido até: {new Date(expirationDate).toLocaleString('pt-BR')}
                     </p>
                   )}
                 </div>
@@ -1181,21 +1189,21 @@ export function BookingSection() {
   );
 }
 
-// Adicionar CSS para animação pulsante
+// Adicionar CSS para animação do card de pagamento
 const style = document.createElement('style');
 style.textContent = `
-  @keyframes pulse-border {
+  @keyframes pulse-glow {
     0%, 100% {
-      filter: brightness(1);
-      transform: scale(1);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1);
+      transform: translateY(0);
     }
     50% {
-      filter: brightness(1.1);
-      transform: scale(1.02);
+      box-shadow: 0 25px 50px -12px rgba(102, 126, 234, 0.4), 0 0 30px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
     }
   }
 `;
-if (!document.head.querySelector('style[data-pulse-border]')) {
-  style.setAttribute('data-pulse-border', 'true');
+if (!document.head.querySelector('style[data-payment-card]')) {
+  style.setAttribute('data-payment-card', 'true');
   document.head.appendChild(style);
 }

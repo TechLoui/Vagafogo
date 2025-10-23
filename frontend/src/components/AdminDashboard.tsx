@@ -163,11 +163,17 @@ export default function AdminDashboard() {
   // Reservas Logic
   const fetchReservas = async (date: Date) => {
     const formatted = dayjs(date).format('YYYY-MM-DD');
+    console.log('🔍 Buscando reservas para:', formatted);
     try {
       const q = query(collection(db, 'reservas'), where('data', '==', formatted));
       const snapshot = await getDocs(q);
       const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
+      console.log('📊 Total de reservas encontradas:', dados.length);
+      console.log('📊 Status das reservas:', dados.map(r => ({ nome: r.nome, status: r.status })));
+      
       const reservasPagas = dados.filter(r => r.status === 'pago');
+      console.log('✅ Reservas pagas:', reservasPagas.length);
+      
       const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
         const horario = reserva.horario || 'Não especificado';
         if (!acc[horario]) acc[horario] = [];
@@ -295,12 +301,7 @@ export default function AdminDashboard() {
     return nomes.join(' + ');
   };
 
-  const detalharParticipantes = (reserva: Reserva) => {
-    const criancas = reserva.criancas ?? 0;
-    const bariatricos = reserva.bariatrica ?? 0;
-    const adultos = reserva.adultos ?? 0;
-    return `C:${criancas} B:${bariatricos} A:${adultos}`;
-  };
+
 
   const handleSaveReserva = async () => {
     if (!editReserva) return;
@@ -984,23 +985,23 @@ export default function AdminDashboard() {
                                 const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
                                 const pacoteDescricao = formatarPacote(reserva);
                                 const valorFormatado = formatarValor(reserva.valor);
-                                const participantesDetalhe = detalharParticipantes(reserva);
+
                                 return (
                                   <tr key={reserva.id} className="transition hover:bg-slate-50/70">
                                     <td className="px-4 py-4">
                                       <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
                                     </td>
                                     <td className="px-4 py-4">
-                                      <div className="flex flex-col gap-1">
-                                        <span className="font-semibold text-slate-900">{participantes}</span>
-                                        <span className="text-xs text-slate-500">{participantesDetalhe}</span>
+                                      <div className="text-xs space-y-0.5">
+                                        <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
+                                        <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                        <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                        <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
                                       </div>
                                     </td>
                                     <td className="px-4 py-4 text-center">
-                                      <span className={`inline-flex items-center justify-center rounded-full px-2 py-1 text-xs font-medium ${
-                                        reserva.temPet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
-                                      }`}>
-                                        {reserva.temPet ? 'Com pet' : 'Sem pet'}
+                                      <span className="text-xl">
+                                        {reserva.temPet ? '🐕' : '❌'}
                                       </span>
                                     </td>
                                     <td className="px-4 py-4 text-slate-600 whitespace-nowrap">
@@ -1104,16 +1105,18 @@ export default function AdminDashboard() {
                             const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
                             const pacoteDescricao = formatarPacote(reserva);
                             const valorFormatado = formatarValor(reserva.valor);
-                            const participantesDetalhe = detalharParticipantes(reserva);
+
                             return (
                               <div key={reserva.id} className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
                                 <div className="flex justify-between items-start mb-3">
                                   <div className="flex-1 pr-4">
                                     <h5 className="font-medium text-slate-900">{reserva.nome || '---'}</h5>
                                   </div>
-                                  <div className="text-right">
-                                    <span className="font-semibold text-slate-900">{participantes}</span>
-                                    <p className="text-xs text-slate-500">{participantesDetalhe}</p>
+                                  <div className="text-right text-xs space-y-0.5">
+                                    <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
+                                    <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                    <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                    <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
                                   </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1133,10 +1136,8 @@ export default function AdminDashboard() {
                                   </div>
                                   <div>
                                     <p className="text-xs text-slate-500 mb-1">Pet</p>
-                                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                                      reserva.temPet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
-                                    }`}>
-                                      {reserva.temPet ? 'Com pet' : 'Sem pet'}
+                                    <span className="text-lg">
+                                      {reserva.temPet ? '🐕' : '❌'}
                                     </span>
                                   </div>
                                   <div>
