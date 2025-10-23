@@ -86,16 +86,16 @@ app.post('/process-emails', async (req, res) => {
           
           emailsEnviados++;
           console.log(`✉️ Email enviado: ${reserva.email}`);
-        } catch (emailError) {
-          console.error(`❌ Erro email ${reserva.email}:`, emailError.message);
+        } catch (emailError: any) {
+          console.error(`❌ Erro email ${reserva.email}:`, emailError?.message || emailError);
         }
       }
     }
     
     res.json({ success: true, emailsEnviados });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro ao processar emails:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error?.message || 'Erro desconhecido' });
   }
 });
 
