@@ -46,6 +46,59 @@ app.post('/test-update-status/:reservaId', async (req, res) => {
   }
 });
 
+// Endpoint para processar emails de confirmação
+app.post('/process-emails', async (req, res) => {
+  try {
+    const { collection, query, where, getDocs, getDoc, doc } = await import('firebase/firestore');
+    const { db } = await import('../services/firebase');
+    const { enviarEmailConfirmacao } = await import('../services/emailService');
+    
+    // Buscar reservas pagas sem email enviado
+    const q = query(
+      collection(db, 'reservas'),
+      where('status', '==', 'pago')
+    );
+    
+    const snapshot = await getDocs(q);
+    let emailsEnviados = 0;
+    
+    for (const docSnap of snapshot.docs) {
+      const reserva = docSnap.data();
+      
+      // Verificar se já foi enviado email (evitar spam)
+      if (!reserva.emailEnviado) {
+        try {
+          await enviarEmailConfirmacao({
+            nome: reserva.nome,
+            email: reserva.email,
+            atividade: reserva.atividade,
+            data: reserva.data,
+            horario: reserva.horario,
+            participantes: reserva.participantes,
+          });
+          
+          // Marcar como enviado
+          const { updateDoc } = await import('firebase/firestore');
+          await updateDoc(doc(db, 'reservas', docSnap.id), {
+            emailEnviado: true,
+            dataEmailEnviado: new Date()
+          });
+          
+          emailsEnviados++;
+          console.log(`✉️ Email enviado: ${reserva.email}`);
+        } catch (emailError) {
+          console.error(`❌ Erro email ${reserva.email}:`, emailError.message);
+        }
+      }
+    }
+    
+    res.json({ success: true, emailsEnviados });
+  } catch (error) {
+    console.error('Erro ao processar emails:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Endpoint para testar webhook
 app.post('/test-webhook', (req, res) => {
   const mockWebhookData = {

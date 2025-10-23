@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { db } from '../services/firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
-import { enviarEmailConfirmacao } from '../services/emailService';
+import { doc, updateDoc } from 'firebase/firestore';
 
 const router = Router();
 
@@ -53,26 +52,8 @@ router.post('/', async (req, res) => {
       res.status(200).send('OK');
     }
     
-    // Email em background (não bloqueia resposta)
-    setImmediate(async () => {
-      try {
-        const reservaSnap = await getDoc(reservaRef);
-        if (reservaSnap.exists()) {
-          const reserva = reservaSnap.data();
-          await enviarEmailConfirmacao({
-            nome: reserva.nome,
-            email: reserva.email,
-            atividade: reserva.atividade,
-            data: reserva.data,
-            horario: reserva.horario,
-            participantes: reserva.participantes,
-          });
-          console.log(`✉️ Email enviado: ${reserva.email}`);
-        }
-      } catch (emailError) {
-        console.error('❌ Erro no email:', emailError);
-      }
-    });
+    // Email será processado separadamente para evitar timeout
+    console.log(`📧 Email será processado separadamente para: ${externalId}`);
     
   } catch (error) {
     console.error('❌ Erro no webhook:', error);
