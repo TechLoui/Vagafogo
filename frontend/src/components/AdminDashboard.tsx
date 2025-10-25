@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import React from 'react';
-import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaChair } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle } from 'react-icons/fa';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -162,34 +162,42 @@ export default function AdminDashboard() {
   const [carregandoPesquisa, setCarregandoPesquisa] = useState(false);
 
   // Reservas Logic
-  const fetchReservas = async (date: Date) => {
-    const formatted = dayjs(date).format('YYYY-MM-DD');
-    console.log('🔍 Buscando reservas para:', formatted);
-    try {
-      const q = query(collection(db, 'reservas'), where('data', '==', formatted));
-      const snapshot = await getDocs(q);
-      const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
-      console.log('📊 Total de reservas encontradas:', dados.length);
-      console.log('📊 Status das reservas:', dados.map(r => ({ nome: r.nome, status: r.status })));
-      
-      const reservasPagas = dados.filter(r => r.status === 'pago');
-      console.log('✅ Reservas pagas:', reservasPagas.length);
-      
-      const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
-        const horario = reserva.horario || 'Não especificado';
-        if (!acc[horario]) acc[horario] = [];
-        acc[horario].push(reserva);
-        return acc;
-      }, {} as Record<string, Reserva[]>);
-      setReservas(reservasPorHorario);
-    } catch (error) {
-      console.error('Erro ao buscar reservas:', error);
-      setReservas({});
-    }
-  };
-
   useEffect(() => {
-    fetchReservas(selectedDate);
+    const formatted = dayjs(selectedDate).format('YYYY-MM-DD');
+    console.log('🔍 Observando reservas para:', formatted);
+
+    const q = query(collection(db, 'reservas'), where('data', '==', formatted));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const dados: Reserva[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Reserva),
+        }));
+        console.log('📥 Atualização de reservas:', dados.length);
+        const reservasPagas = dados.filter(
+          (reserva) => (reserva.status ?? '').toString().toLowerCase() === 'pago'
+        );
+        console.log('✅ Reservas pagas:', reservasPagas.length);
+
+        const reservasPorHorario = reservasPagas.reduce((acc, reserva) => {
+          const horario = reserva.horario || 'Não especificado';
+          if (!acc[horario]) acc[horario] = [];
+          acc[horario].push(reserva);
+          return acc;
+        }, {} as Record<string, Reserva[]>);
+
+        setReservas(reservasPorHorario);
+      },
+      (error) => {
+        console.error('Erro ao escutar reservas:', error);
+        setReservas({});
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, [selectedDate]);
 
   useEffect(() => {
@@ -220,7 +228,6 @@ export default function AdminDashboard() {
     if (confirm("Tem certeza que deseja excluir esta reserva?")) {
       try {
         await deleteDoc(doc(db, "reservas", id));
-        fetchReservas(selectedDate);
       } catch (error) {
         console.error('Erro ao excluir reserva:', error);
       }
@@ -392,7 +399,6 @@ export default function AdminDashboard() {
       }
       setModalReserva(false);
       setEditReserva(null);
-      fetchReservas(selectedDate);
     } catch (error) {
       console.error('Erro ao salvar reserva:', error);
       setFeedback({ type: 'error', message: 'Erro ao salvar reserva.' });
@@ -1049,7 +1055,8 @@ export default function AdminDashboard() {
                                 const valorFormatado = formatarValor(reserva.valor);
                                 const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${reserva.data}`;
                                 const perguntasRespondidas = obterPerguntasComResposta(reserva);
-                                const podeExibirIconeMesa = desejaJuntarMesa(reserva) && perguntasRespondidas.length > 0;
+                                const possuiPerguntas = perguntasRespondidas.length > 0;
+                                const destaquePerguntas = desejaJuntarMesa(reserva);
                                 const detalhesAbertos = reservaDetalhesAberta === reservaKey;
 
                                 return (
@@ -1058,19 +1065,24 @@ export default function AdminDashboard() {
                                       <td className="px-4 py-4">
                                         <div className="flex items-center gap-2">
                                           <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
-                                          {podeExibirIconeMesa && (
+                                          {possuiPerguntas && (
                                             <button
                                               type="button"
                                               onClick={() => toggleDetalhesReserva(reservaKey)}
-                                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs transition ${
+                                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
                                                 detalhesAbertos
                                                   ? 'border-amber-400 bg-amber-50 text-amber-700'
-                                                  : 'border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:text-amber-600'
+                                                  : destaquePerguntas
+                                                    ? 'border-amber-200 text-amber-600 hover:bg-amber-50'
+                                                    : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
                                               }`}
                                               aria-label="Ver respostas personalizadas"
                                               aria-pressed={detalhesAbertos}
                                             >
-                                              <FaChair className="h-3.5 w-3.5" />
+                                              <FaQuestionCircle className="h-3.5 w-3.5" />
+                                              <span className="hidden sm:inline">
+                                                {detalhesAbertos ? 'Fechar' : 'Perguntas'}
+                                              </span>
                                             </button>
                                           )}
                                         </div>
@@ -1078,15 +1090,15 @@ export default function AdminDashboard() {
                                       <td className="px-4 py-4">
                                         <div className="text-xs space-y-0.5">
                                           <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
-                                          <div>Crian??a: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
-                                          <div>Bari?trico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
-                                          <div>Nao pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
+                                          <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                          <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                          <div>Não pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
                                           <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
                                         </div>
                                       </td>
                                       <td className="px-4 py-4 text-center">
                                         <span className="text-xl">
-                                          {reserva.temPet ? '?Y?' : '??O'}
+                                          {reserva.temPet ? '🐕' : '❌'}
                                         </span>
                                       </td>
                                       <td className="px-4 py-4 text-slate-600 whitespace-nowrap">
@@ -1242,9 +1254,9 @@ export default function AdminDashboard() {
                                   </div>
                                   <div className="text-right text-xs space-y-0.5">
                                     <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
-                                    <div>Crian??a: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
-                                    <div>Bari?trico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
-                                    <div>Nao pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
+                                    <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                    <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                    <div>Não pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
                                     <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
                                   </div>
                                 </div>
@@ -1266,7 +1278,7 @@ export default function AdminDashboard() {
                                   <div>
                                     <p className="text-xs text-slate-500 mb-1">Pet</p>
                                     <span className="text-lg">
-                                      {reserva.temPet ? '?Y?' : '??O'}
+                                      {reserva.temPet ? '🐕' : '❌'}
                                     </span>
                                   </div>
                                   <div>

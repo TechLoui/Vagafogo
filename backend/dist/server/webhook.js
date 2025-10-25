@@ -58,9 +58,9 @@ async function processTask(task) {
 }
 async function handleWebhook(payload) {
     const event = payload?.event;
-    const payment = payload?.payment;
+    const payment = payload?.payment ?? undefined;
     if (!shouldProcess(event, payment)) {
-        console.log(`[webhook] Evento ignorado (${event ?? "desconhecido"}) | status: ${payment?.status ?? "-"} | método: ${payment?.billingType ?? "-"}`);
+        console.log(`[webhook] Evento ignorado (${event ?? "desconhecido"}) | status: ${payment?.status ?? "-"} | metodo: ${payment?.billingType ?? "-"}`);
         return;
     }
     const externalReference = payment?.externalReference;
@@ -70,7 +70,7 @@ async function handleWebhook(payload) {
     const reservaRef = (0, firestore_1.doc)(firebase_1.db, "reservas", externalReference);
     const reservaSnap = await (0, firestore_1.getDoc)(reservaRef);
     if (!reservaSnap.exists()) {
-        console.warn(`[webhook] Reserva ${externalReference} não encontrada no Firestore`);
+        console.warn(`[webhook] Reserva ${externalReference} nao encontrada no Firestore`);
         return;
     }
     await (0, firestore_1.updateDoc)(reservaRef, {
@@ -83,7 +83,7 @@ async function handleWebhook(payload) {
         return;
     }
     if (reserva.emailEnviado) {
-        console.log(`[webhook] E-mail já havia sido enviado para ${externalReference}, ignorando duplicidade.`);
+        console.log(`[webhook] E-mail ja havia sido enviado para ${externalReference}, ignorando duplicidade.`);
         return;
     }
     await (0, emailService_1.enviarEmailConfirmacao)({
@@ -108,7 +108,9 @@ function shouldProcess(event, payment) {
     const status = payment.status;
     const method = payment.billingType;
     const isCardConfirmed = event === "PAYMENT_CONFIRMED" && status === "CONFIRMED";
-    const isPixConfirmed = event === "PAYMENT_RECEIVED" && method === "PIX" && status === "RECEIVED";
+    const isPixConfirmed = event === "PAYMENT_RECEIVED" &&
+        method === "PIX" &&
+        status === "RECEIVED";
     return isCardConfirmed || isPixConfirmed;
 }
 exports.default = router;
