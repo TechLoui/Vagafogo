@@ -4,7 +4,7 @@ import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc, getD
 import { db } from '../../firebase';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaChair } from 'react-icons/fa';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -102,6 +102,7 @@ export default function AdminDashboard() {
   const [isEditingReserva, setIsEditingReserva] = useState(false);
   const [filtroAtividade, setFiltroAtividade] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [reservaDetalhesAberta, setReservaDetalhesAberta] = useState<string | null>(null);
 
   // Pacotes
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
@@ -192,6 +193,10 @@ export default function AdminDashboard() {
   }, [selectedDate]);
 
   useEffect(() => {
+    setReservaDetalhesAberta(null);
+  }, [selectedDate, filtroAtividade]);
+
+  useEffect(() => {
     if (feedback) {
       const timer = setTimeout(() => setFeedback(null), 3000);
       return () => clearTimeout(timer);
@@ -244,6 +249,63 @@ export default function AdminDashboard() {
     });
     setIsEditingReserva(false);
     setModalReserva(true);
+  };
+
+  const normalizarTexto = (valor?: string) =>
+    valor
+      ? valor
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .trim()
+      : '';
+
+  const obterPerguntasComResposta = (reserva: Reserva) => {
+    return (reserva.perguntasPersonalizadas ?? []).filter((pergunta) => {
+      const perguntaValida = typeof pergunta?.pergunta === 'string' && pergunta.pergunta.trim().length > 0;
+      const respostaValida = typeof pergunta?.resposta === 'string' && pergunta.resposta.trim().length > 0;
+      return perguntaValida && respostaValida;
+    });
+  };
+
+  const desejaJuntarMesa = (reserva: Reserva) => {
+    return (reserva.perguntasPersonalizadas ?? []).some((pergunta) => {
+      const perguntaNormalizada = normalizarTexto(pergunta.pergunta);
+      if (!perguntaNormalizada.includes('juntar mesa')) return false;
+      const respostaNormalizada = normalizarTexto(pergunta.resposta);
+      return respostaNormalizada.startsWith('sim') || respostaNormalizada === 's';
+    });
+  };
+
+  const toggleDetalhesReserva = (reservaId: string) => {
+    setReservaDetalhesAberta((prev) => (prev === reservaId ? null : reservaId));
+  };
+
+  const renderPerguntasPersonalizadas = (perguntas: PerguntaPersonalizadaResposta[]) => {
+    if (perguntas.length === 0) {
+      return <p className="text-sm text-slate-500">Nenhuma resposta personalizada.</p>;
+    }
+
+    return (
+      <dl className="divide-y divide-slate-100 text-sm">
+        {perguntas.map((pergunta) => (
+          <div key={`${pergunta.perguntaId}-${pergunta.pergunta}`} className="py-2 first:pt-0 last:pb-0">
+            <dt className="text-xs font-semibold uppercase text-slate-500">{pergunta.pergunta}</dt>
+            <dd className="mt-1 font-medium text-slate-900">{pergunta.resposta || '---'}</dd>
+            {pergunta.perguntaCondicional?.pergunta && (
+              <div className="mt-2 rounded-lg bg-slate-50 p-2">
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  {pergunta.perguntaCondicional.pergunta}
+                </p>
+                <p className="text-sm font-medium text-slate-900">
+                  {pergunta.perguntaCondicional.resposta || '---'}
+                </p>
+              </div>
+            )}
+          </div>
+        ))}
+      </dl>
+    );
   };
 
   function calcularParticipantes(reserva: Reserva) {
@@ -985,70 +1047,115 @@ export default function AdminDashboard() {
                                 const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
                                 const pacoteDescricao = formatarPacote(reserva);
                                 const valorFormatado = formatarValor(reserva.valor);
+                                const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${reserva.data}`;
+                                const perguntasRespondidas = obterPerguntasComResposta(reserva);
+                                const podeExibirIconeMesa = desejaJuntarMesa(reserva) && perguntasRespondidas.length > 0;
+                                const detalhesAbertos = reservaDetalhesAberta === reservaKey;
 
                                 return (
-                                  <tr key={reserva.id} className="transition hover:bg-slate-50/70">
-                                    <td className="px-4 py-4">
-                                      <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
-                                    </td>
-                                    <td className="px-4 py-4">
-                                      <div className="text-xs space-y-0.5">
-                                        <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
-                                        <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
-                                        <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
-                                        <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-4 text-center">
-                                      <span className="text-xl">
-                                        {reserva.temPet ? '🐕' : '❌'}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-4 text-slate-600 whitespace-nowrap">
-                                      {reserva.cpf || '---'}
-                                    </td>
-                                    <td className="px-4 py-4">
-                                      {pacoteDescricao === '---' ? (
-                                        <span className="text-slate-500">---</span>
-                                      ) : (
-                                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600">
-                                          {pacoteDescricao}
+                                  <React.Fragment key={reservaKey}>
+                                    <tr className="transition hover:bg-slate-50/70">
+                                      <td className="px-4 py-4">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
+                                          {podeExibirIconeMesa && (
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleDetalhesReserva(reservaKey)}
+                                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs transition ${
+                                                detalhesAbertos
+                                                  ? 'border-amber-400 bg-amber-50 text-amber-700'
+                                                  : 'border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:text-amber-600'
+                                              }`}
+                                              aria-label="Ver respostas personalizadas"
+                                              aria-pressed={detalhesAbertos}
+                                            >
+                                              <FaChair className="h-3.5 w-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-4">
+                                        <div className="text-xs space-y-0.5">
+                                          <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
+                                          <div>Crian??a: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                          <div>Bari?trico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                          <div>Nao pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
+                                          <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-4 text-center">
+                                        <span className="text-xl">
+                                          {reserva.temPet ? '?Y?' : '??O'}
                                         </span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-4 text-right font-medium text-slate-900">
-                                      {valorFormatado}
-                                    </td>
-                                    <td className="px-4 py-4">
-                                      <div className="flex justify-end gap-2">
-                                        <button
-                                          onClick={() => whatsappUrl && window.open(whatsappUrl, '_blank')}
-                                          disabled={!whatsappUrl}
-                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
-                                          aria-label="Enviar mensagem no WhatsApp"
-                                          title="WhatsApp"
-                                        >
-                                          <FaWhatsapp className="h-4 w-4" />
-                                        </button>
-                                        <button
-                                          onClick={() => handleEditReserva(reserva)}
-                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-                                          aria-label="Editar reserva"
-                                          title="Editar"
-                                        >
-                                          <FaEdit className="h-4 w-4" />
-                                        </button>
-                                        <button
-                                          onClick={() => reserva.id && excluirReserva(reserva.id)}
-                                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
-                                          aria-label="Excluir reserva"
-                                          title="Excluir"
-                                        >
-                                          <FaTrash className="h-4 w-4" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
+                                      </td>
+                                      <td className="px-4 py-4 text-slate-600 whitespace-nowrap">
+                                        {reserva.cpf || '---'}
+                                      </td>
+                                      <td className="px-4 py-4">
+                                        {pacoteDescricao === '---' ? (
+                                          <span className="text-slate-500">---</span>
+                                        ) : (
+                                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600">
+                                            {pacoteDescricao}
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-4 text-right font-medium text-slate-900">
+                                        {valorFormatado}
+                                      </td>
+                                      <td className="px-4 py-4">
+                                        <div className="flex justify-end gap-2">
+                                          <button
+                                            onClick={() => whatsappUrl && window.open(whatsappUrl, '_blank')}
+                                            disabled={!whatsappUrl}
+                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                            aria-label="Enviar mensagem no WhatsApp"
+                                            title="WhatsApp"
+                                          >
+                                            <FaWhatsapp className="h-4 w-4" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleEditReserva(reserva)}
+                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+                                            aria-label="Editar reserva"
+                                            title="Editar"
+                                          >
+                                            <FaEdit className="h-4 w-4" />
+                                          </button>
+                                          <button
+                                            onClick={() => reserva.id && excluirReserva(reserva.id)}
+                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                                            aria-label="Excluir reserva"
+                                            title="Excluir"
+                                          >
+                                            <FaTrash className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    {detalhesAbertos && perguntasRespondidas.length > 0 && (
+                                      <tr className="bg-amber-50/60">
+                                        <td colSpan={7} className="px-6 pb-4">
+                                          <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                                            <div className="flex items-center justify-between gap-3">
+                                              <p className="text-sm font-semibold text-slate-800">Respostas do cliente</p>
+                                              <button
+                                                type="button"
+                                                onClick={() => toggleDetalhesReserva(reservaKey)}
+                                                className="text-xs font-semibold text-amber-700 transition hover:text-amber-900"
+                                              >
+                                                Fechar
+                                              </button>
+                                            </div>
+                                            <div className="mt-3">
+                                              {renderPerguntasPersonalizadas(perguntasRespondidas)}
+                                            </div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
                                 );
                               })}
                             </React.Fragment>
@@ -1105,17 +1212,39 @@ export default function AdminDashboard() {
                             const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
                             const pacoteDescricao = formatarPacote(reserva);
                             const valorFormatado = formatarValor(reserva.valor);
+                            const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${reserva.data}`;
+                            const perguntasRespondidas = obterPerguntasComResposta(reserva);
+                            const podeExibirIconeMesa = desejaJuntarMesa(reserva) && perguntasRespondidas.length > 0;
+                            const detalhesAbertos = reservaDetalhesAberta === reservaKey;
 
                             return (
-                              <div key={reserva.id} className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
+                              <div key={reservaKey} className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
                                 <div className="flex justify-between items-start mb-3">
                                   <div className="flex-1 pr-4">
-                                    <h5 className="font-medium text-slate-900">{reserva.nome || '---'}</h5>
+                                    <div className="flex items-center gap-2">
+                                      <h5 className="font-medium text-slate-900">{reserva.nome || '---'}</h5>
+                                      {podeExibirIconeMesa && (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleDetalhesReserva(reservaKey)}
+                                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs transition ${
+                                            detalhesAbertos
+                                              ? 'border-amber-400 bg-amber-50 text-amber-700'
+                                              : 'border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:text-amber-600'
+                                          }`}
+                                          aria-label="Ver respostas personalizadas"
+                                          aria-pressed={detalhesAbertos}
+                                        >
+                                          <FaChair className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="text-right text-xs space-y-0.5">
                                     <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
-                                    <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
-                                    <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                    <div>Crian??a: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                    <div>Bari?trico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                    <div>Nao pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
                                     <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
                                   </div>
                                 </div>
@@ -1137,7 +1266,7 @@ export default function AdminDashboard() {
                                   <div>
                                     <p className="text-xs text-slate-500 mb-1">Pet</p>
                                     <span className="text-lg">
-                                      {reserva.temPet ? '🐕' : '❌'}
+                                      {reserva.temPet ? '?Y?' : '??O'}
                                     </span>
                                   </div>
                                   <div>
@@ -1145,6 +1274,14 @@ export default function AdminDashboard() {
                                     <span className="font-medium text-slate-900">{valorFormatado}</span>
                                   </div>
                                 </div>
+                                {detalhesAbertos && perguntasRespondidas.length > 0 && (
+                                  <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/50 p-3">
+                                    <p className="text-xs font-semibold uppercase text-amber-700">Respostas do cliente</p>
+                                    <div className="mt-2">
+                                      {renderPerguntasPersonalizadas(perguntasRespondidas)}
+                                    </div>
+                                  </div>
+                                )}
                                 <div className="flex items-center justify-between">
                                   <span className="text-xs text-slate-500">{reserva.telefone ? `Tel: ${reserva.telefone}` : 'Tel: ---'}</span>
                                   <div className="flex gap-2">

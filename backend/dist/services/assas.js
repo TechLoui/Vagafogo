@@ -5,9 +5,11 @@ const reservas_1 = require("./reservas");
 const firestore_1 = require("firebase/firestore");
 const firebase_1 = require("./firebase");
 async function criarCobrancaHandler(req, res) {
-    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, billingType, temPet, } = req.body;
+    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, billingType, temPet, perguntasPersonalizadas, } = req.body;
     console.log("📥 Dados recebidos:", req.body);
     const horarioFormatado = horario?.toString().trim();
+    const participantesCalculados = (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0) + (naoPagante ?? 0);
+    const participantesConsiderados = Math.max(participantesCalculados, Number.isFinite(participantes) ? participantes : 0);
     // Debug detalhado dos campos
     const camposFaltando = [];
     if (!nome)
@@ -26,7 +28,7 @@ async function criarCobrancaHandler(req, res) {
         camposFaltando.push('data');
     if (!horarioFormatado)
         camposFaltando.push('horario');
-    if (!participantes)
+    if (participantesConsiderados <= 0)
         camposFaltando.push('participantes');
     if (!billingType)
         camposFaltando.push('billingType');
@@ -46,6 +48,24 @@ async function criarCobrancaHandler(req, res) {
         });
         return;
     }
+    // Validar CPF
+    const cpfLimpo = cpf.replace(/\D/g, '');
+    if (cpfLimpo.length !== 11) {
+        res.status(400).json({
+            status: "erro",
+            error: "CPF deve ter 11 dígitos.",
+        });
+        return;
+    }
+    // Validar telefone
+    const telefoneLimpo = telefone.replace(/\D/g, '');
+    if (telefoneLimpo.length < 10) {
+        res.status(400).json({
+            status: "erro",
+            error: "Telefone deve ter pelo menos 10 dígitos.",
+        });
+        return;
+    }
     try {
         // 🔍 Verificar disponibilidade no Firebase
         const reservasQuery = (0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("Data", "==", data), (0, firestore_1.where)("Horario", "==", horarioFormatado));
@@ -53,9 +73,12 @@ async function criarCobrancaHandler(req, res) {
         let totalReservados = 0;
         snapshot.forEach((doc) => {
             const dados = doc.data();
-            totalReservados += dados.Participantes || 0;
+            const participantesReserva = Number(dados.participantes ?? dados.Participantes ?? 0);
+            totalReservados += Number.isFinite(participantesReserva)
+                ? participantesReserva
+                : 0;
         });
-        if (totalReservados + participantes > 30) {
+        if (totalReservados + participantesConsiderados > 30) {
             res.status(400).json({
                 status: "erro",
                 error: "Limite de 30 pessoas por horário atingido. Escolha outro horário.",
@@ -63,6 +86,7 @@ async function criarCobrancaHandler(req, res) {
             return;
         }
         // ✅ Criar reserva no Firebase
+        console.log("💾 Criando reserva no Firebase...");
         const reservaId = await (0, reservas_1.criarReserva)({
             nome,
             cpf,
@@ -71,7 +95,7 @@ async function criarCobrancaHandler(req, res) {
             atividade,
             valor,
             data,
-            participantes,
+            participantes: participantesConsiderados,
             adultos,
             bariatrica,
             criancas,
@@ -80,10 +104,12 @@ async function criarCobrancaHandler(req, res) {
             horario: horarioFormatado,
             status: "aguardando",
             temPet,
+            perguntasPersonalizadas,
         });
+        console.log("✅ Reserva criada com ID:", reservaId);
         const dataHoje = new Date().toISOString().split("T")[0];
         // 🔍 Verificar se o cliente já existe no Asaas (pelo CPF)
-        const customerSearch = await fetch(`https://api.asaas.com/v3/customers?cpfCnpj=${cpf}`, {
+        const customerSearch = await fetch(`https://api.asaas.com/v3/customers?cpfCnpj=${cpfLimpo}`, {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
@@ -98,30 +124,49 @@ async function criarCobrancaHandler(req, res) {
         }
         else {
             // 👤 Criar novo cliente
+            const customerPayload = {
+                name: nome,
+                email,
+                cpfCnpj: cpfLimpo,
+                phone: telefoneLimpo,
+                notificationDisabled: true,
+            };
+            console.log("👤 Criando cliente:", customerPayload);
             const customerCreate = await fetch("https://api.asaas.com/v3/customers", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     access_token: process.env.ASAAS_API_KEY,
                 },
-                body: JSON.stringify({
-                    name: nome,
-                    email,
-                    cpfCnpj: cpf,
-                    phone: telefone,
-                    notificationDisabledSet: true,
-                }),
+                body: JSON.stringify(customerPayload),
             });
             const customerData = await customerCreate.json();
+            console.log("👤 Resposta criação cliente:", customerData);
             if (!customerCreate.ok) {
-                console.error("❌ Erro ao criar cliente no Asaas:", customerData);
-                res.status(400).json({ status: "erro", erro: customerData });
+                console.error("❌ Erro ao criar cliente no Asaas:", {
+                    status: customerCreate.status,
+                    data: customerData
+                });
+                res.status(400).json({
+                    status: "erro",
+                    error: customerData.errors?.[0]?.description || "Erro ao criar cliente",
+                    details: customerData
+                });
                 return;
             }
             customerId = customerData.id;
             console.log("🆕 Cliente criado:", customerId);
         }
         // 💰 Criar pagamento com o customer correto
+        const paymentPayload = {
+            billingType,
+            customer: customerId,
+            value: valor,
+            dueDate: dataHoje,
+            description: `Cobrança de ${nome}`,
+            externalReference: reservaId,
+        };
+        console.log("💰 Criando pagamento no Asaas:", paymentPayload);
         const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
             method: "POST",
             headers: {
@@ -129,30 +174,52 @@ async function criarCobrancaHandler(req, res) {
                 accept: "application/json",
                 access_token: process.env.ASAAS_API_KEY,
             },
-            body: JSON.stringify({
-                billingType,
-                customer: customerId,
-                value: valor,
-                dueDate: dataHoje,
-                description: `Cobrança de ${nome}`,
-                externalReference: reservaId,
-            }),
+            body: JSON.stringify(paymentPayload),
         });
         const cobrancaData = await paymentResponse.json();
+        console.log("💵 Resposta do Asaas:", JSON.stringify(cobrancaData, null, 2));
+        console.log("💳 Tipo de pagamento:", billingType);
+        console.log("🔗 Invoice URL:", cobrancaData.invoiceUrl);
         if (!paymentResponse.ok) {
-            console.error("❌ Erro ao criar cobrança:", cobrancaData);
-            res.status(400).json({ status: "erro", erro: cobrancaData });
+            console.error("❌ Erro ao criar cobrança:", {
+                status: paymentResponse.status,
+                statusText: paymentResponse.statusText,
+                data: cobrancaData
+            });
+            res.status(400).json({
+                status: "erro",
+                error: cobrancaData.errors?.[0]?.description || cobrancaData.message || "Erro ao criar cobrança",
+                details: cobrancaData
+            });
             return;
         }
+        if (billingType === "CREDIT_CARD" && !cobrancaData.invoiceUrl) {
+            console.warn("⚠️ Invoice URL não retornada para cartão de crédito");
+        }
         // ✅ Resposta de sucesso
-        res.status(200).json({
+        const resposta = {
             status: "ok",
             cobranca: {
                 id: cobrancaData.id,
                 status: cobrancaData.status,
-                invoiceUrl: cobrancaData.invoiceUrl,
+                invoiceUrl: cobrancaData.invoiceUrl || null,
             },
+        };
+        console.log("💳 Dados da cobrança criada:", {
+            id: cobrancaData.id,
+            status: cobrancaData.status,
+            billingType: cobrancaData.billingType,
+            invoiceUrl: cobrancaData.invoiceUrl,
+            value: cobrancaData.value
         });
+        // Adicionar dados do PIX se for pagamento PIX
+        if (billingType === "PIX" && cobrancaData.pixTransaction) {
+            resposta.cobranca.pixKey = cobrancaData.pixTransaction.payload;
+            resposta.cobranca.qrCodeImage = cobrancaData.pixTransaction.qrCode?.encodedImage;
+            resposta.cobranca.expirationDate = cobrancaData.pixTransaction.expirationDate;
+        }
+        console.log("✅ Resposta enviada:", resposta);
+        res.status(200).json(resposta);
     }
     catch (error) {
         console.error("🔥 Erro inesperado ao criar cobrança:", error);

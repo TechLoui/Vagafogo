@@ -56,6 +56,12 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   console.log("📥 Dados recebidos:", req.body);
 
   const horarioFormatado = horario?.toString().trim();
+  const participantesCalculados =
+    (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0) + (naoPagante ?? 0);
+  const participantesConsiderados = Math.max(
+    participantesCalculados,
+    Number.isFinite(participantes) ? participantes : 0
+  );
 
   // Debug detalhado dos campos
   const camposFaltando = [];
@@ -67,7 +73,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   if (!atividade) camposFaltando.push('atividade');
   if (!data) camposFaltando.push('data');
   if (!horarioFormatado) camposFaltando.push('horario');
-  if (!participantes) camposFaltando.push('participantes');
+  if (participantesConsiderados <= 0) camposFaltando.push('participantes');
   if (!billingType) camposFaltando.push('billingType');
 
   if (camposFaltando.length > 0) {
@@ -121,10 +127,15 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     let totalReservados = 0;
     snapshot.forEach((doc) => {
       const dados = doc.data();
-      totalReservados += dados.Participantes || 0;
+      const participantesReserva = Number(
+        dados.participantes ?? dados.Participantes ?? 0
+      );
+      totalReservados += Number.isFinite(participantesReserva)
+        ? participantesReserva
+        : 0;
     });
 
-    if (totalReservados + participantes > 30) {
+    if (totalReservados + participantesConsiderados > 30) {
       res.status(400).json({
         status: "erro",
         error: "Limite de 30 pessoas por horário atingido. Escolha outro horário.",
@@ -142,7 +153,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       atividade,
       valor,
       data,
-      participantes,
+      participantes: participantesConsiderados,
       adultos,
       bariatrica,
       criancas,
