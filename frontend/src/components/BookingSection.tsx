@@ -301,23 +301,22 @@ export function BookingSection() {
     return total;
   };
 
-  const allowedDays = (day: Date) => {
+  const hasDisponibilidadeNoDia = (day: Date) => {
     if (selectedPacotes.length === 0) return false;
-    
     const dayStr = day.toISOString().slice(0, 10);
-    const isBlocked = selectedPacotes.some(p => 
-      p.datasBloqueadas?.includes(dayStr)
-    );
-    
-    if (isBlocked) return false;
-    
-    return selectedPacotes.some(p => p.dias.includes(day.getDay()));
+
+    return selectedPacotes.some((pacote) => {
+      const datasBloqueadas = pacote.datasBloqueadas ?? [];
+      return !datasBloqueadas.includes(dayStr);
+    });
   };
 
   const isBlockedDay = (day: Date) => {
     if (selectedPacotes.length === 0) return false;
     const dayStr = day.toISOString().slice(0, 10);
-    return selectedPacotes.some(p => p.datasBloqueadas?.includes(dayStr));
+    return selectedPacotes.every((pacote) =>
+      (pacote.datasBloqueadas ?? []).includes(dayStr)
+    );
   };
 
   const getPetMessage = () => {
@@ -753,7 +752,7 @@ export function BookingSection() {
                     mode="single"
                     selected={selectedDay}
                     onSelect={setSelectedDay}
-                    disabled={[{ before: todayStart }, (day) => !allowedDays(day) || isBlockedDay(day)]}
+                    disabled={[{ before: todayStart }, (day) => !hasDisponibilidadeNoDia(day)]}
                     locale={ptBR}
                     className="border border-gray-300 rounded-lg p-4"
                     modifiers={{

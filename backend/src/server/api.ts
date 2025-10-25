@@ -21,7 +21,8 @@ const pacotesRef = collection(db, "pacotes");
 
 app.get("/api/reservas", async (_req, res) => {
   try {
-    const reservasQuery = query(reservasRef, where("status", "in", ["pago"]));
+    const statusVisiveis = ["pago", "confirmado", "pre_reserva"];
+    const reservasQuery = query(reservasRef, where("status", "in", statusVisiveis));
     const snapshot = await getDocs(reservasQuery);
     const reservas = snapshot.docs.map((registro) => ({
       id: registro.id,
@@ -48,8 +49,13 @@ app.get("/api/pacotes", async (_req, res) => {
 
 app.post("/api/reservas", async (req, res) => {
   try {
-    const novo = await addDoc(reservasRef, req.body);
-    res.json({ id: novo.id, ...req.body });
+    const body = (req.body ?? {}) as Record<string, any>;
+    const payload = {
+      ...body,
+      status: typeof body.status === "string" ? body.status : "pre_reserva",
+    };
+    const novo = await addDoc(reservasRef, payload);
+    res.json({ id: novo.id, ...payload });
   } catch (error: any) {
     res.status(500).json({ error: error.message ?? "Erro ao criar reserva" });
   }
