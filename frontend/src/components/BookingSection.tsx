@@ -62,6 +62,9 @@ type Combo = {
   nome: string;
   pacoteIds: string[];
   preco?: number;
+  precoAdulto?: number;
+  precoCrianca?: number;
+  precoBariatrica?: number;
   desconto?: number;
   ativo: boolean;
 };
@@ -73,6 +76,20 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
+
+const hasCustomComboPricing = (combo?: Combo | null) => {
+  if (!combo) return false;
+  const valores = [combo.precoAdulto, combo.precoCrianca, combo.precoBariatrica];
+  return valores.some((valor) => (valor ?? 0) > 0);
+};
+
+const describeComboValores = (combo: Combo) => {
+  const partes: string[] = [];
+  if ((combo.precoAdulto ?? 0) > 0) partes.push(`Adulto ${formatCurrency(combo.precoAdulto ?? 0)}`);
+  if ((combo.precoCrianca ?? 0) > 0) partes.push(`Criança ${formatCurrency(combo.precoCrianca ?? 0)}`);
+  if ((combo.precoBariatrica ?? 0) > 0) partes.push(`Bariátrica ${formatCurrency(combo.precoBariatrica ?? 0)}`);
+  return partes.join(" • ");
+};
 
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
 
@@ -536,11 +553,18 @@ export function BookingSection() {
     });
 
     if (comboAtivo) {
-      const valorCombo = Number(comboAtivo.preco);
-      if (Number.isFinite(valorCombo) && valorCombo > 0) {
-        total = valorCombo;
-      } else if (comboAtivo.desconto && comboAtivo.desconto > 0) {
-        total = total * (1 - comboAtivo.desconto / 100);
+      if (hasCustomComboPricing(comboAtivo)) {
+        total =
+          adultos * Number(comboAtivo.precoAdulto ?? 0) +
+          criancas * Number(comboAtivo.precoCrianca ?? 0) +
+          bariatrica * Number(comboAtivo.precoBariatrica ?? 0);
+      } else {
+        const valorCombo = Number(comboAtivo.preco);
+        if (Number.isFinite(valorCombo) && valorCombo > 0) {
+          total = valorCombo;
+        } else if (comboAtivo.desconto && comboAtivo.desconto > 0) {
+          total = total * (1 - comboAtivo.desconto / 100);
+        }
       }
     }
 
@@ -839,11 +863,13 @@ export function BookingSection() {
 
       const atividades = selectedPacotes.map(p => p.nome).join(" + ");
       const comboInfo = comboAtivo
-        ? comboAtivo.preco && comboAtivo.preco > 0
-          ? ` (Combo: ${comboAtivo.nome} - valor especial ${formatCurrency(comboAtivo.preco)})`
-          : comboAtivo.desconto && comboAtivo.desconto > 0
-            ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% de desconto)`
-            : ` (Combo: ${comboAtivo.nome})`
+        ? hasCustomComboPricing(comboAtivo)
+          ? ` (Combo: ${comboAtivo.nome} - ${describeComboValores(comboAtivo)})`
+          : comboAtivo.preco && comboAtivo.preco > 0
+            ? ` (Combo: ${comboAtivo.nome} - valor especial ${formatCurrency(comboAtivo.preco)})`
+            : comboAtivo.desconto && comboAtivo.desconto > 0
+              ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% de desconto)`
+              : ` (Combo: ${comboAtivo.nome})`
         : "";
 
       const payload: any = {
@@ -954,6 +980,8 @@ export function BookingSection() {
                       .filter(Boolean)
                       .join(", ");
                     const ativo = comboAtivo?.id === combo.id;
+                    const possuiTabela = hasCustomComboPricing(combo);
+                    const resumoValores = describeComboValores(combo);
                     return (
                       <button
                         key={combo.id}
@@ -965,20 +993,29 @@ export function BookingSection() {
                             : "border-gray-200 hover:border-green-300 hover:bg-green-50/40"
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-gray-800">{combo.nome}</p>
-                            <p className="text-xs text-gray-500">
-                              Inclui: {nomes || "Pacotes removidos"}
-                            </p>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-800">{combo.nome}</p>
+                              <p className="text-xs text-gray-500">
+                                Inclui: {nomes || "Pacotes removidos"}
+                              </p>
+                            </div>
+                            <span className="text-xs font-semibold text-green-700">
+                              {possuiTabela
+                                ? "Tabela personalizada"
+                                : combo.preco && combo.preco > 0
+                                ? formatCurrency(combo.preco)
+                                : combo.desconto && combo.desconto > 0
+                                ? `${combo.desconto}% off`
+                                : "Especial"}
+                            </span>
                           </div>
-                          <span className="text-xs font-semibold text-green-700">
-                            {combo.preco && combo.preco > 0
-                              ? formatCurrency(combo.preco)
-                              : combo.desconto && combo.desconto > 0
-                              ? `${combo.desconto}% off`
-                              : "Especial"}
-                          </span>
+                          {possuiTabela && (
+                            <div className="text-xs text-gray-600">
+                              {resumoValores || "Configuração por tipo"}
+                            </div>
+                          )}
                         </div>
                       </button>
                     );
@@ -1036,7 +1073,9 @@ export function BookingSection() {
                 <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <p className="text-sm font-medium text-yellow-800">
                     🎉 Combo ativo: {comboAtivo.nome} —{" "}
-                    {comboAtivo.preco && comboAtivo.preco > 0
+                    {hasCustomComboPricing(comboAtivo)
+                      ? describeComboValores(comboAtivo) || "valores personalizados"
+                      : comboAtivo.preco && comboAtivo.preco > 0
                       ? `valor especial ${formatCurrency(comboAtivo.preco)}`
                       : comboAtivo.desconto && comboAtivo.desconto > 0
                       ? `${comboAtivo.desconto}% de desconto aplicado`
@@ -1537,7 +1576,9 @@ export function BookingSection() {
                 </div>
                 {comboAtivo && (
                   <p className="text-sm text-green-600 mt-1">
-                    {comboAtivo.preco && comboAtivo.preco > 0
+                    {hasCustomComboPricing(comboAtivo)
+                      ? `Valores do combo ${comboAtivo.nome}: ${describeComboValores(comboAtivo)}.`
+                      : comboAtivo.preco && comboAtivo.preco > 0
                       ? `Valor especial do combo ${comboAtivo.nome}.`
                       : comboAtivo.desconto && comboAtivo.desconto > 0
                       ? `Desconto de ${comboAtivo.desconto}% aplicado!`

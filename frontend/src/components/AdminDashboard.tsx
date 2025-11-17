@@ -133,7 +133,13 @@ interface Combo {
 
   pacoteIds: string[];
 
-  preco: number;
+  preco?: number;
+
+  precoAdulto: number;
+
+  precoCrianca: number;
+
+  precoBariatrica: number;
 
   ativo: boolean;
 
@@ -216,6 +222,8 @@ interface Reserva {
   mesasSelecionadas?: MesaSelecionada[];
 
   capacidadeMesas?: number;
+
+  chegou?: boolean;
 
 }
 
@@ -356,6 +364,8 @@ export default function AdminDashboard() {
   const [isEditingReserva, setIsEditingReserva] = useState(false);
 
   const [filtroAtividade, setFiltroAtividade] = useState<string>('');
+
+  const [filtroChegada, setFiltroChegada] = useState<'todos' | 'chegou' | 'nao'>('todos');
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
@@ -728,6 +738,52 @@ const totalReservasConfirmadas = useMemo(() => {
 
   }, [pacotes]);
 
+  const opcoesFiltroAtividade = useMemo(() => {
+
+    const nomes = new Set<string>();
+
+    pacotes.forEach((pacote) => {
+
+      if (typeof pacote.nome === 'string' && pacote.nome.trim().length > 0) {
+
+        nomes.add(pacote.nome);
+
+      }
+
+    });
+
+    combos.forEach((combo) => {
+
+      if (typeof combo.nome === 'string' && combo.nome.trim().length > 0) {
+
+        nomes.add(combo.nome);
+
+      }
+
+    });
+
+    Object.values(reservas).forEach((lista) => {
+
+      lista.forEach((reserva) => {
+
+        const atividade = (reserva.atividade ?? '').split('(')[0]?.trim();
+
+        if (atividade) {
+
+          nomes.add(atividade);
+
+        }
+
+      });
+
+    });
+
+    return Array.from(nomes).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  }, [pacotes, combos, reservas]);
+
+  const filtroAtividadeNormalizado = filtroAtividade.trim().toLowerCase();
+
   const proximaDataBloqueada = useMemo(() => {
 
     const hoje = dayjs().startOf('day');
@@ -786,13 +842,21 @@ const totalReservasConfirmadas = useMemo(() => {
 
       (snapshot) => {
 
-        const dados: Reserva[] = snapshot.docs.map((docSnap) => ({
+        const dados: Reserva[] = snapshot.docs.map((docSnap) => {
 
-          id: docSnap.id,
+          const data = docSnap.data() as Reserva;
 
-          ...(docSnap.data() as Reserva),
+          return {
 
-        }));
+            id: docSnap.id,
+
+            ...data,
+
+            chegou: data.chegou === true,
+
+          };
+
+        });
 
         console.log('📥 Atualização de reservas:', dados.length);
 
@@ -860,7 +924,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
     setReservaDetalhesAberta(null);
 
-  }, [selectedDate, filtroAtividade]);
+  }, [selectedDate, filtroAtividade, filtroChegada]);
 
 
 
@@ -1018,49 +1082,29 @@ const totalReservasConfirmadas = useMemo(() => {
 
 
 
-  const toggleConfirmarReserva = async (reserva: Reserva) => {
+  const toggleChegadaReserva = async (reserva: Reserva) => {
 
     if (!reserva.id) return;
 
-    const statusAtual = normalizarStatus(reserva.status);
-
-    if (statusAtual === 'pago') {
-
-      setFeedback({ type: 'error', message: 'Reservas pagas já estão confirmadas automaticamente.' });
-
-      return;
-
-    }
-
-    const vaiConfirmar = !statusEhConfirmado(reserva);
-
-    const novoStatus = vaiConfirmar ? 'confirmado' : 'pre_reserva';
-
-
+    const chegou = reserva.chegou === true;
 
     try {
 
-      await updateDoc(doc(db, 'reservas', reserva.id), {
-
-        status: novoStatus,
-
-        confirmada: vaiConfirmar,
-
-      });
+      await updateDoc(doc(db, 'reservas', reserva.id), { chegou: !chegou });
 
       setFeedback({
 
         type: 'success',
 
-        message: vaiConfirmar ? 'Pré-reserva confirmada.' : 'Confirmação removida. Voltou para pré-reserva.',
+        message: chegou ? 'Marcação de chegada removida.' : 'Reserva marcada como chegada!',
 
       });
 
     } catch (error) {
 
-      console.error('Erro ao confirmar reserva:', error);
+      console.error('Erro ao atualizar chegada:', error);
 
-      setFeedback({ type: 'error', message: 'Não foi possível atualizar o status da reserva.' });
+      setFeedback({ type: 'error', message: 'Não foi possível atualizar a chegada da reserva.' });
 
     }
 
@@ -1558,7 +1602,15 @@ const totalReservasConfirmadas = useMemo(() => {
 
       const lista = snap.docs.map(docSnap => {
 
-        const data = docSnap.data() as Partial<Combo>;
+        const data = docSnap.data() as Partial<Combo> & {
+
+          precoAdulto?: number;
+
+          precoCrianca?: number;
+
+          precoBariatrica?: number;
+
+        };
 
         return {
 
@@ -1569,6 +1621,12 @@ const totalReservasConfirmadas = useMemo(() => {
           pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds.map((id) => id?.toString()).filter(Boolean) : [],
 
           preco: Number(data.preco ?? 0),
+
+          precoAdulto: Number(data.precoAdulto ?? data.preco ?? 0),
+
+          precoCrianca: Number(data.precoCrianca ?? data.preco ?? 0),
+
+          precoBariatrica: Number(data.precoBariatrica ?? data.preco ?? 0),
 
           ativo: data.ativo !== false,
 
@@ -1996,6 +2054,12 @@ const totalReservasConfirmadas = useMemo(() => {
 
       preco: 0,
 
+      precoAdulto: 0,
+
+      precoCrianca: 0,
+
+      precoBariatrica: 0,
+
       ativo: true,
 
     });
@@ -2017,6 +2081,12 @@ const totalReservasConfirmadas = useMemo(() => {
       pacoteIds: Array.isArray(combo.pacoteIds) ? combo.pacoteIds : [],
 
       preco: Number(combo.preco ?? 0),
+
+      precoAdulto: Number(combo.precoAdulto ?? combo.preco ?? 0),
+
+      precoCrianca: Number(combo.precoCrianca ?? combo.preco ?? 0),
+
+      precoBariatrica: Number(combo.precoBariatrica ?? combo.preco ?? 0),
 
       ativo: combo.ativo !== false,
 
@@ -2114,11 +2184,19 @@ const totalReservasConfirmadas = useMemo(() => {
 
     }
 
-    const preco = Number(editCombo.preco);
+    const precoTotal = Number(editCombo.preco ?? 0);
 
-    if (!Number.isFinite(preco) || preco <= 0) {
+    const precoAdulto = Number(editCombo.precoAdulto ?? 0);
 
-      setFeedback({ type: 'error', message: 'Informe um valor válido para o combo.' });
+    const precoCrianca = Number(editCombo.precoCrianca ?? 0);
+
+    const precoBariatrica = Number(editCombo.precoBariatrica ?? 0);
+
+    const possuiValoresPersonalizados = [precoAdulto, precoCrianca, precoBariatrica].some((valor) => Number.isFinite(valor) && valor > 0);
+
+    if (!possuiValoresPersonalizados) {
+
+      setFeedback({ type: 'error', message: 'Informe os valores personalizados por tipo de participante.' });
 
       return;
 
@@ -2134,7 +2212,13 @@ const totalReservasConfirmadas = useMemo(() => {
 
         pacoteIds: Array.from(new Set(editCombo.pacoteIds)),
 
-        preco,
+        preco: precoTotal,
+
+        precoAdulto: precoAdulto > 0 ? precoAdulto : 0,
+
+        precoCrianca: precoCrianca > 0 ? precoCrianca : 0,
+
+        precoBariatrica: precoBariatrica > 0 ? precoBariatrica : 0,
 
         ativo: editCombo.ativo !== false,
 
@@ -3168,33 +3252,47 @@ const totalReservasConfirmadas = useMemo(() => {
 
                 <div className="flex items-center gap-3">
 
-                  <select
+                  <div className="flex flex-col gap-2 sm:flex-row">
 
-                    value={filtroAtividade}
+                    <select
 
-                    onChange={(e) => setFiltroAtividade(e.target.value)}
+                      value={filtroAtividade}
 
-                    className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      onChange={(e) => setFiltroAtividade(e.target.value)}
 
-                  >
+                      className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
 
-                    <option value="">Todas as atividades</option>
+                    >
 
-                    {[...new Set(Object.values(reservas).flat().map(r => r.atividade))]
+                      <option value="">Todas as atividades</option>
 
-                      .filter(Boolean)
-
-                      .sort()
-
-                      .map(atividade => (
+                      {opcoesFiltroAtividade.map((atividade) => (
 
                         <option key={atividade} value={atividade}>{atividade}</option>
 
-                      ))
+                      ))}
 
-                    }
+                    </select>
 
-                  </select>
+                    <select
+
+                      value={filtroChegada}
+
+                      onChange={(e) => setFiltroChegada(e.target.value as 'todos' | 'chegou' | 'nao')}
+
+                      className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+
+                    >
+
+                      <option value="todos">Chegada: todos</option>
+
+                      <option value="chegou">Chegou</option>
+
+                      <option value="nao">Não chegou</option>
+
+                    </select>
+
+                  </div>
 
                   <button
 
@@ -3278,11 +3376,31 @@ const totalReservasConfirmadas = useMemo(() => {
 
                           const reservasPorHorario = reservas[horario];
 
-                          const filtradas = reservasPorHorario.filter(
+                          const filtradas = reservasPorHorario.filter((reserva) => {
 
-                            (reserva) => !filtroAtividade || reserva.atividade === filtroAtividade
+                            const atividadeTexto = (reserva.atividade ?? '').toLowerCase();
 
-                          );
+                            const correspondeAtividade = filtroAtividadeNormalizado
+
+                              ? atividadeTexto.includes(filtroAtividadeNormalizado)
+
+                              : true;
+
+                            const correspondeChegada =
+
+                              filtroChegada === 'todos'
+
+                                ? true
+
+                                : filtroChegada === 'chegou'
+
+                                  ? reserva.chegou === true
+
+                                  : reserva.chegou !== true;
+
+                            return correspondeAtividade && correspondeChegada;
+
+                          });
 
                           if (filtradas.length === 0) return null;
 
@@ -3326,23 +3444,25 @@ const totalReservasConfirmadas = useMemo(() => {
 
                                 const confirmada = statusEhConfirmado(reserva);
 
-                            const statusAtual = normalizarStatus(reserva.status);
+                                const statusBadge = obterBadgeStatus(reserva);
 
-                            const podeAlterarStatus = statusAtual !== 'pago';
+                                const mesasDaReserva = Array.isArray(reserva.mesasSelecionadas) ? reserva.mesasSelecionadas : [];
 
-                            const statusBadge = obterBadgeStatus(reserva);
+                                const chegou = reserva.chegou === true;
 
-                            const mesasDaReserva = Array.isArray(reserva.mesasSelecionadas) ? reserva.mesasSelecionadas : [];
+                                const rowHighlightClass = chegou
 
-                            const rowHighlightClass = confirmada
+                                  ? 'bg-emerald-100/70 border-emerald-300'
 
-                              ? 'bg-emerald-50/50 border-emerald-200'
+                                  : confirmada
 
-                              : statusEhPreReserva(reserva)
+                                    ? 'bg-emerald-50/50 border-emerald-200'
 
-                                ? 'bg-amber-50/30 border-amber-200'
+                                    : statusEhPreReserva(reserva)
 
-                                : 'bg-white border-slate-200';
+                                      ? 'bg-amber-50/30 border-amber-200'
+
+                                      : 'bg-white border-slate-200';
 
                             const mensagem = encodeURIComponent(
 
@@ -3392,6 +3512,16 @@ const totalReservasConfirmadas = useMemo(() => {
                                             {statusBadge.label}
 
                                           </span>
+
+                                          {chegou && (
+
+                                            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+
+                                              Chegou
+
+                                            </span>
+
+                                          )}
 
                                           {possuiPerguntas && (
 
@@ -3527,35 +3657,21 @@ const totalReservasConfirmadas = useMemo(() => {
 
                                           <button
 
-                                            onClick={() => podeAlterarStatus && toggleConfirmarReserva(reserva)}
-
-                                            disabled={!podeAlterarStatus}
+                                            onClick={() => toggleChegadaReserva(reserva)}
 
                                             className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${
 
-                                              confirmada
+                                              chegou
 
-                                                ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                                ? 'border-emerald-500 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
 
                                                 : 'border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-600'
 
-                                            } ${!podeAlterarStatus ? 'cursor-not-allowed opacity-40' : ''}`}
+                                            }`}
 
-                                            aria-label={confirmada ? 'Desconfirmar reserva' : 'Confirmar reserva'}
+                                            aria-label={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
 
-                                            title={
-
-                                              podeAlterarStatus
-
-                                                ? confirmada
-
-                                                  ? 'Desconfirmar'
-
-                                                  : 'Confirmar'
-
-                                                : 'Status controlado automaticamente após pagamento'
-
-                                            }
+                                            title={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
 
                                           >
 
@@ -3737,11 +3853,31 @@ const totalReservasConfirmadas = useMemo(() => {
 
                       const reservasPorHorario = reservas[horario];
 
-                      const filtradas = reservasPorHorario.filter(
+                      const filtradas = reservasPorHorario.filter((reserva) => {
 
-                        (reserva) => !filtroAtividade || reserva.atividade === filtroAtividade
+                        const atividadeTexto = (reserva.atividade ?? '').toLowerCase();
 
-                      );
+                        const correspondeAtividade = filtroAtividadeNormalizado
+
+                          ? atividadeTexto.includes(filtroAtividadeNormalizado)
+
+                          : true;
+
+                        const correspondeChegada =
+
+                          filtroChegada === 'todos'
+
+                            ? true
+
+                            : filtroChegada === 'chegou'
+
+                              ? reserva.chegou === true
+
+                              : reserva.chegou !== true;
+
+                        return correspondeAtividade && correspondeChegada;
+
+                      });
 
                       if (filtradas.length === 0) return null;
 
@@ -3781,23 +3917,25 @@ const totalReservasConfirmadas = useMemo(() => {
 
                             const confirmada = statusEhConfirmado(reserva);
 
-                            const statusAtual = normalizarStatus(reserva.status);
-
-                            const podeAlterarStatus = statusAtual !== 'pago';
-
                             const statusBadge = obterBadgeStatus(reserva);
 
                             const mesasDaReserva = Array.isArray(reserva.mesasSelecionadas) ? reserva.mesasSelecionadas : [];
 
-                            const rowHighlightClass = confirmada
+                            const chegou = reserva.chegou === true;
 
-                              ? 'bg-emerald-50/50 border-emerald-200'
+                            const rowHighlightClass = chegou
 
-                              : statusEhPreReserva(reserva)
+                              ? 'bg-emerald-100/70 border-emerald-300'
 
-                                ? 'bg-amber-50/30 border-amber-200'
+                              : confirmada
 
-                                : 'bg-white border-slate-200';
+                                ? 'bg-emerald-50/50 border-emerald-200'
+
+                                : statusEhPreReserva(reserva)
+
+                                  ? 'bg-amber-50/30 border-amber-200'
+
+                                  : 'bg-white border-slate-200';
 
                             const mensagem = encodeURIComponent(
 
@@ -3850,6 +3988,16 @@ const totalReservasConfirmadas = useMemo(() => {
                                         {statusBadge.label}
 
                                       </span>
+
+                                      {chegou && (
+
+                                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+
+                                          Chegou
+
+                                        </span>
+
+                                      )}
 
                                       {possuiPerguntas && (
 
@@ -4005,35 +4153,21 @@ const totalReservasConfirmadas = useMemo(() => {
 
                                     <button
 
-                                      onClick={() => podeAlterarStatus && toggleConfirmarReserva(reserva)}
-
-                                      disabled={!podeAlterarStatus}
+                                      onClick={() => toggleChegadaReserva(reserva)}
 
                                       className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${
 
-                                        confirmada
+                                        chegou
 
-                                          ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                          ? 'border-emerald-500 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
 
                                           : 'border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-600'
 
-                                      } ${!podeAlterarStatus ? 'cursor-not-allowed opacity-40' : ''}`}
+                                      }`}
 
-                                      aria-label={confirmada ? 'Desconfirmar reserva' : 'Confirmar reserva'}
+                                      aria-label={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
 
-                                      title={
-
-                                        podeAlterarStatus
-
-                                          ? confirmada
-
-                                            ? 'Desconfirmar'
-
-                                            : 'Confirmar'
-
-                                          : 'Status controlado automaticamente após pagamento'
-
-                                      }
+                                      title={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
 
                                     >
 
@@ -4887,9 +5021,17 @@ const totalReservasConfirmadas = useMemo(() => {
                               {combo.ativo !== false ? 'Ativo' : 'Inativo'}
                             </span>
                           </div>
-                          <p className="text-sm text-slate-600">
-                            Valor personalizado: <span className="font-semibold text-slate-900">{formatCurrency(combo.preco)}</span>
-                          </p>
+                          <div className="space-y-1 text-sm text-slate-600">
+                            <p>
+                              <span className="font-semibold text-slate-700">Adulto:</span> {formatCurrency(combo.precoAdulto)}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-slate-700">Criança:</span> {formatCurrency(combo.precoCrianca)}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-slate-700">Bariátrica:</span> {formatCurrency(combo.precoBariatrica)}
+                            </p>
+                          </div>
                           <p className="text-xs text-slate-500">
                             Inclui: {pacoteNomes.length > 0 ? pacoteNomes.join(', ') : 'Pacotes removidos'}
                           </p>
@@ -5594,25 +5736,69 @@ const totalReservasConfirmadas = useMemo(() => {
 
                   </label>
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                  <div className="grid gap-3 sm:grid-cols-3 text-xs font-semibold uppercase text-slate-500">
 
-                    Valor personalizado (R$)
+                    <label>
 
-                    <input
+                      Preço adulto (R$)
 
-                      type="number"
+                      <input
 
-                      min="0"
+                        type="number"
 
-                      value={editCombo.preco}
+                        min="0"
 
-                      onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, preco: Number(e.target.value) } : prev))}
+                        value={editCombo.precoAdulto}
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoAdulto: Number(e.target.value) } : prev))}
 
-                    />
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
 
-                  </label>
+                      />
+
+                    </label>
+
+                    <label>
+
+                      Preço criança (R$)
+
+                      <input
+
+                        type="number"
+
+                        min="0"
+
+                        value={editCombo.precoCrianca}
+
+                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoCrianca: Number(e.target.value) } : prev))}
+
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                      />
+
+                    </label>
+
+                    <label>
+
+                      Preço bariátrica (R$)
+
+                      <input
+
+                        type="number"
+
+                        min="0"
+
+                        value={editCombo.precoBariatrica}
+
+                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoBariatrica: Number(e.target.value) } : prev))}
+
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                      />
+
+                    </label>
+
+                  </div>
 
                   <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
 
