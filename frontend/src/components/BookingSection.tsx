@@ -61,9 +61,18 @@ type Combo = {
   id?: string;
   nome: string;
   pacoteIds: string[];
-  desconto: number;
+  preco?: number;
+  desconto?: number;
   ativo: boolean;
 };
+
+const currencyFormatter = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+
+const formatCurrency = (valor: number) =>
+  currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
 
@@ -155,6 +164,14 @@ export function BookingSection() {
   const [respostasPersonalizadas, setRespostasPersonalizadas] = useState<Record<string, { resposta?: string; condicional?: string }>>({});
   const [disponibilidadeHorarios, setDisponibilidadeHorarios] = useState<Record<string, boolean>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const pacotesRef = useRef<HTMLDivElement | null>(null);
+  const nomeRef = useRef<HTMLInputElement | null>(null);
+  const emailRef = useRef<HTMLInputElement | null>(null);
+  const cpfRef = useRef<HTMLInputElement | null>(null);
+  const telefoneRef = useRef<HTMLInputElement | null>(null);
+  const dataRef = useRef<HTMLDivElement | null>(null);
+  const horarioRef = useRef<HTMLDivElement | null>(null);
+  const petRef = useRef<HTMLDivElement | null>(null);
 
 
   // PIX
@@ -170,10 +187,10 @@ export function BookingSection() {
   })();
 
   const getInputClasses = (field: string) =>
-    `w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 ${
+    `w-full px-3 py-2 rounded-md border focus:outline-none focus:ring-2 ${
       formErrors[field]
         ? 'border-red-400 focus:ring-red-500'
-        : 'border-gray-300 focus:ring-green-500'
+        : 'border-black focus:ring-black'
     }`;
 
   const setFieldError = useCallback((field: string, message?: string) => {
@@ -224,6 +241,46 @@ export function BookingSection() {
     }
   };
 
+  const scrollToErrorField = useCallback((errors: Record<string, string>) => {
+    const order = ["pacotes", "nome", "email", "cpf", "telefone", "data", "horario", "pet"] as const;
+    const getTarget = (key: (typeof order)[number]): HTMLElement | null => {
+      switch (key) {
+        case "pacotes":
+          return pacotesRef.current;
+        case "nome":
+          return nomeRef.current;
+        case "email":
+          return emailRef.current;
+        case "cpf":
+          return cpfRef.current;
+        case "telefone":
+          return telefoneRef.current;
+        case "data":
+          return dataRef.current;
+        case "horario":
+          return horarioRef.current;
+        case "pet":
+          return petRef.current;
+        default:
+          return null;
+      }
+    };
+
+    for (const key of order) {
+      if (errors[key]) {
+        const target = getTarget(key);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+          const maybeFocusable = target as HTMLElement & { focus?: () => void };
+          if (typeof maybeFocusable.focus === "function") {
+            maybeFocusable.focus();
+          }
+        }
+        break;
+      }
+    }
+  }, []);
+
   const validatePersonalField = (field: PersonalField) => {
     const message = getPersonalFieldError(field);
     setFieldError(field, message || undefined);
@@ -243,16 +300,19 @@ export function BookingSection() {
         
         // Buscar combos do Firestore
         const combosSnapshot = await getDocs(collection(db, 'combos'));
-        const combosData = combosSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            nome: data.nome || '',
-            pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds : [],
-            desconto: Number(data.desconto || 0),
-            ativo: Boolean(data.ativo)
-          } as Combo;
-        });
+        const combosData = combosSnapshot.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as any;
+            return {
+              id: docSnap.id,
+              nome: data.nome || '',
+              pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds.map((id: unknown) => (id ?? '').toString()).filter(Boolean) : [],
+              preco: Number(data.preco ?? 0),
+              desconto: Number(data.desconto ?? 0),
+              ativo: data.ativo !== false,
+            } as Combo;
+          })
+          .filter((combo) => combo.ativo && combo.pacoteIds.length > 0);
         
         const arr: Pacote[] = pacotesData.map((d: any) => ({
           id: d.id,
@@ -317,15 +377,36 @@ export function BookingSection() {
     [pacotes, selectedPackages]
   );
 
+  const pacotesMap = useMemo(() => {
+    const mapa = new Map<string, Pacote>();
+    pacotes.forEach((pacote) => {
+      if (pacote.id) {
+        mapa.set(pacote.id, pacote);
+      }
+    });
+    return mapa;
+  }, [pacotes]);
+
   const comboAtivo = useMemo(() => {
     if (selectedPackages.length === 0) return undefined;
     return combos.find(
       (c) =>
-        c.ativo &&
         c.pacoteIds.length === selectedPackages.length &&
         c.pacoteIds.every((id) => selectedPackages.includes(id))
     );
   }, [combos, selectedPackages]);
+
+  const handleSelectCombo = (combo: Combo) => {
+    const jaAtivo = comboAtivo?.id === combo.id;
+    if (jaAtivo) {
+      setSelectedPackages([]);
+    } else {
+      const idsValidos = combo.pacoteIds.filter((id) => pacotesMap.has(id));
+      setSelectedPackages(idsValidos);
+    }
+    setHorario("");
+    setFieldError("pacotes");
+  };
 
   const temPacoteFaixa = useMemo(
     () =>
@@ -450,14 +531,19 @@ export function BookingSection() {
 
   const calcularTotal = () => {
     let total = 0;
-    selectedPacotes.forEach(p => {
+    selectedPacotes.forEach((p) => {
       total += adultos * p.precoAdulto + criancas * p.precoCrianca + bariatrica * p.precoBariatrica;
     });
-    
+
     if (comboAtivo) {
-      total = total * (1 - comboAtivo.desconto / 100);
+      const valorCombo = Number(comboAtivo.preco);
+      if (Number.isFinite(valorCombo) && valorCombo > 0) {
+        total = valorCombo;
+      } else if (comboAtivo.desconto && comboAtivo.desconto > 0) {
+        total = total * (1 - comboAtivo.desconto / 100);
+      }
     }
-    
+
     return total;
   };
 
@@ -716,7 +802,11 @@ export function BookingSection() {
     }
 
     setFormErrors(errors);
-    return Object.keys(errors).length === 0;
+    if (Object.keys(errors).length > 0) {
+      scrollToErrorField(errors);
+      return false;
+    }
+    return true;
   };
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -748,7 +838,13 @@ export function BookingSection() {
           : "Sem horário específico";
 
       const atividades = selectedPacotes.map(p => p.nome).join(" + ");
-      const comboInfo = comboAtivo ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% desconto)` : "";
+      const comboInfo = comboAtivo
+        ? comboAtivo.preco && comboAtivo.preco > 0
+          ? ` (Combo: ${comboAtivo.nome} - valor especial ${formatCurrency(comboAtivo.preco)})`
+          : comboAtivo.desconto && comboAtivo.desconto > 0
+            ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% de desconto)`
+            : ` (Combo: ${comboAtivo.nome})`
+        : "";
 
       const payload: any = {
         nome,
@@ -846,8 +942,56 @@ export function BookingSection() {
         <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSubmit} noValidate className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
             
+            {combos.length > 0 && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Combos especiais
+                </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {combos.map((combo) => {
+                    const nomes = combo.pacoteIds
+                      .map((id) => pacotesMap.get(id)?.nome ?? "Pacote removido")
+                      .filter(Boolean)
+                      .join(", ");
+                    const ativo = comboAtivo?.id === combo.id;
+                    return (
+                      <button
+                        key={combo.id}
+                        type="button"
+                        onClick={() => handleSelectCombo(combo)}
+                        className={`rounded-2xl border p-4 text-left transition ${
+                          ativo
+                            ? "border-green-500 bg-green-50 shadow-md"
+                            : "border-gray-200 hover:border-green-300 hover:bg-green-50/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">{combo.nome}</p>
+                            <p className="text-xs text-gray-500">
+                              Inclui: {nomes || "Pacotes removidos"}
+                            </p>
+                          </div>
+                          <span className="text-xs font-semibold text-green-700">
+                            {combo.preco && combo.preco > 0
+                              ? formatCurrency(combo.preco)
+                              : combo.desconto && combo.desconto > 0
+                              ? `${combo.desconto}% off`
+                              : "Especial"}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Ao selecionar um combo, os pacotes correspondentes são escolhidos automaticamente.
+                </p>
+              </div>
+            )}
+
             {/* Seleção Múltipla de Pacotes */}
-            <div className="mb-6">
+            <div ref={pacotesRef} className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-3">
                 Selecione os Pacotes *
               </label>
@@ -891,7 +1035,12 @@ export function BookingSection() {
               {comboAtivo && (
                 <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <p className="text-sm font-medium text-yellow-800">
-                    🎉 Combo Ativo: {comboAtivo.nome} - {comboAtivo.desconto}% de desconto!
+                    🎉 Combo ativo: {comboAtivo.nome} —{" "}
+                    {comboAtivo.preco && comboAtivo.preco > 0
+                      ? `valor especial ${formatCurrency(comboAtivo.preco)}`
+                      : comboAtivo.desconto && comboAtivo.desconto > 0
+                      ? `${comboAtivo.desconto}% de desconto aplicado`
+                      : "condições especiais aplicadas"}
                   </p>
                 </div>
               )}
@@ -916,6 +1065,7 @@ export function BookingSection() {
                   }}
                   onBlur={() => validatePersonalField("nome")}
                   className={getInputClasses("nome")}
+                  ref={nomeRef}
                   autoComplete="name"
                   required
                 />
@@ -937,6 +1087,7 @@ export function BookingSection() {
                   }}
                   onBlur={() => validatePersonalField("email")}
                   className={getInputClasses("email")}
+                  ref={emailRef}
                   autoComplete="email"
                   required
                 />
@@ -958,6 +1109,7 @@ export function BookingSection() {
                   }}
                   onBlur={() => validatePersonalField("cpf")}
                   className={getInputClasses("cpf")}
+                  ref={cpfRef}
                   placeholder="000.000.000-00"
                   inputMode="numeric"
                   maxLength={14}
@@ -982,6 +1134,7 @@ export function BookingSection() {
                   }}
                   onBlur={() => validatePersonalField("telefone")}
                   className={getInputClasses("telefone")}
+                  ref={telefoneRef}
                   placeholder="(11) 99999-9999"
                   inputMode="tel"
                   autoComplete="tel"
@@ -1002,14 +1155,14 @@ export function BookingSection() {
                 
 
                 
-                <div className="flex justify-center">
+                <div ref={dataRef} className="flex justify-center">
                   <DayPicker
                     mode="single"
                     selected={selectedDay}
                     onSelect={handleDaySelect}
                     disabled={[{ before: todayStart }, (day) => !hasDisponibilidadeNoDia(day)]}
                     locale={ptBR}
-                    className="border border-gray-300 rounded-lg p-4"
+                    className="border border-black rounded-lg p-4"
                     modifiers={{
                       blocked: (day) => isBlockedDay(day)
                     }}
@@ -1030,7 +1183,7 @@ export function BookingSection() {
 
             {/* Seleção de Horário */}
             {selectedDay && selectedPacotes.length > 0 && (
-              <div className="mb-6">
+              <div ref={horarioRef} className="mb-6">
                 {diaSelecionadoFechado ? (
                   <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                     <p className="text-sm text-red-700">
@@ -1092,27 +1245,6 @@ export function BookingSection() {
             {formErrors.horario && !diaSelecionadoFechado && (
               <p className="mt-2 text-sm text-red-600">{formErrors.horario}</p>
             )}
-                  </>
-                ) : temPacoteFaixa ? (
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                    {selectedPacotes
-                      .filter(p => p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim)
-                      .map(p => (
-                        <p key={p.id} className="text-sm font-medium text-green-700 mb-1 last:mb-0">
-                          ✓ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
-                        </p>
-                      ))
-                    }
-                  </div>
-                ) : (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-sm text-red-700">
-                      Nenhum horário disponível para os pacotes selecionados nesta data. Escolha outra data ou ajuste os pacotes.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Número de Participantes */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -1125,7 +1257,7 @@ export function BookingSection() {
                   min="1"
                   value={adultos}
                   onChange={(e) => setAdultos(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
                   required
                 />
               </div>
@@ -1139,7 +1271,7 @@ export function BookingSection() {
                   min="0"
                   value={criancas}
                   onChange={(e) => setCriancas(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
                 />
               </div>
               
@@ -1152,7 +1284,7 @@ export function BookingSection() {
                   min="0"
                   value={bariatrica}
                   onChange={(e) => setBariatica(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
                 />
               </div>
               
@@ -1165,7 +1297,7 @@ export function BookingSection() {
                   min="0"
                   value={naoPagante}
                   onChange={(e) => setPagante(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
                 />
               </div>
             </div>
@@ -1179,7 +1311,7 @@ export function BookingSection() {
             )}
 
             {/* Pet */}
-            <div className="mb-6">
+            <div ref={petRef} className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-3">
                 Vai levar pet? *
               </label>
@@ -1291,7 +1423,7 @@ export function BookingSection() {
                                 <textarea
                                   value={typeof respostaBase === 'string' ? respostaBase : ''}
                                   onChange={(e) => atualizarRespostaBase(chave, e.target.value, cond?.condicao, true)}
-                                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                                  className="w-full rounded-md border border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
                                   rows={3}
                                   placeholder="Digite sua resposta"
                                 />
@@ -1347,7 +1479,7 @@ export function BookingSection() {
                                     <textarea
                                       value={typeof registro.condicional === 'string' ? registro.condicional : ''}
                                       onChange={(e) => atualizarRespostaCondicional(chave, e.target.value, true)}
-                                      className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-100"
+                                      className="mt-2 w-full rounded-md border border-black px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black disabled:bg-gray-100"
                                       rows={2}
                                       placeholder="Digite a resposta complementar"
                                       disabled={!mostrarCondicional}
@@ -1405,7 +1537,11 @@ export function BookingSection() {
                 </div>
                 {comboAtivo && (
                   <p className="text-sm text-green-600 mt-1">
-                    Desconto de {comboAtivo.desconto}% aplicado!
+                    {comboAtivo.preco && comboAtivo.preco > 0
+                      ? `Valor especial do combo ${comboAtivo.nome}.`
+                      : comboAtivo.desconto && comboAtivo.desconto > 0
+                      ? `Desconto de ${comboAtivo.desconto}% aplicado!`
+                      : `Combo ${comboAtivo.nome} aplicado.`}
                   </p>
                 )}
               </div>

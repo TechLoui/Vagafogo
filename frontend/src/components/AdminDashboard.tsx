@@ -19,6 +19,12 @@ dayjs.extend(localizedFormat);
 
 dayjs.locale('pt-br');
 
+const moedaFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
+
+const formatCurrency = (valor: number) => moedaFormatter.format(Number.isFinite(valor) ? valor : 0);
 
 
 
@@ -114,6 +120,22 @@ interface Pacote {
   aceitaPet: boolean;
 
   perguntasPersonalizadas?: PerguntaPersonalizada[];
+
+}
+
+
+
+interface Combo {
+
+  id?: string;
+
+  nome: string;
+
+  pacoteIds: string[];
+
+  preco: number;
+
+  ativo: boolean;
 
 }
 
@@ -356,6 +378,16 @@ export default function AdminDashboard() {
   const [novaPergunta, setNovaPergunta] = useState<{ pergunta: string; tipo: 'sim_nao' | 'texto'; obrigatoria: boolean }>({ pergunta: '', tipo: 'sim_nao', obrigatoria: false });
 
   const [modalDisponibilidade, setModalDisponibilidade] = useState(false);
+
+  const [combos, setCombos] = useState<Combo[]>([]);
+
+  const [modalCombo, setModalCombo] = useState(false);
+
+  const [editCombo, setEditCombo] = useState<Combo | null>(null);
+
+  const [isEditingCombo, setIsEditingCombo] = useState(false);
+
+  const [salvandoCombo, setSalvandoCombo] = useState(false);
 
   const [disponibilidadeData, setDisponibilidadeData] = useState<Record<string, boolean>>({});
 
@@ -675,6 +707,26 @@ const totalReservasConfirmadas = useMemo(() => {
   }, [pacotes]);
 
   const totalPacotesAtivos = pacotes.length;
+
+  const totalCombosAtivos = combos.filter((combo) => combo.ativo !== false).length;
+
+  const pacotesPorId = useMemo(() => {
+
+    const mapa = new Map<string, Pacote>();
+
+    pacotes.forEach((pacote) => {
+
+      if (pacote.id) {
+
+        mapa.set(pacote.id, pacote);
+
+      }
+
+    });
+
+    return mapa;
+
+  }, [pacotes]);
 
   const proximaDataBloqueada = useMemo(() => {
 
@@ -1446,7 +1498,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
   // Pacotes Logic
 
-  const fetchPacotes = async () => {
+  const fetchPacotes = useCallback(async () => {
 
     const snap = await getDocs(collection(db, 'pacotes'));
 
@@ -1494,7 +1546,45 @@ const totalReservasConfirmadas = useMemo(() => {
 
     setPacotes(lista);
 
-  };
+  }, []);
+
+
+
+  const fetchCombos = useCallback(async () => {
+
+    try {
+
+      const snap = await getDocs(collection(db, 'combos'));
+
+      const lista = snap.docs.map(docSnap => {
+
+        const data = docSnap.data() as Partial<Combo>;
+
+        return {
+
+          id: docSnap.id,
+
+          nome: data.nome ?? '',
+
+          pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds.map((id) => id?.toString()).filter(Boolean) : [],
+
+          preco: Number(data.preco ?? 0),
+
+          ativo: data.ativo !== false,
+
+        } as Combo;
+
+      });
+
+      setCombos(lista);
+
+    } catch (error) {
+
+      console.error('Erro ao carregar combos:', error);
+
+    }
+
+  }, []);
 
 
 
@@ -1506,7 +1596,9 @@ const totalReservasConfirmadas = useMemo(() => {
 
     fetchPacotes();
 
-  }, []);
+    fetchCombos();
+
+  }, [fetchPacotes, fetchCombos]);
 
 
 
@@ -1574,9 +1666,11 @@ const totalReservasConfirmadas = useMemo(() => {
 
       fetchPacotes();
 
+      fetchCombos();
+
     }
 
-  }, [aba]);
+  }, [aba, fetchPacotes, fetchCombos]);
 
 
 
@@ -1887,6 +1981,196 @@ const totalReservasConfirmadas = useMemo(() => {
       };
 
     });
+
+  };
+
+
+
+  const handleAddCombo = () => {
+
+    setEditCombo({
+
+      nome: '',
+
+      pacoteIds: [],
+
+      preco: 0,
+
+      ativo: true,
+
+    });
+
+    setIsEditingCombo(false);
+
+    setModalCombo(true);
+
+  };
+
+
+
+  const handleEditCombo = (combo: Combo) => {
+
+    setEditCombo({
+
+      ...combo,
+
+      pacoteIds: Array.isArray(combo.pacoteIds) ? combo.pacoteIds : [],
+
+      preco: Number(combo.preco ?? 0),
+
+      ativo: combo.ativo !== false,
+
+    });
+
+    setIsEditingCombo(true);
+
+    setModalCombo(true);
+
+  };
+
+
+
+  const handleToggleComboAtivo = async (combo: Combo) => {
+
+    if (!combo.id) return;
+
+    try {
+
+      const proximoValor = !combo.ativo;
+
+      await updateDoc(doc(db, 'combos', combo.id), { ativo: proximoValor });
+
+      setCombos((prev) =>
+
+        prev.map((item) => (item.id === combo.id ? { ...item, ativo: proximoValor } : item))
+
+      );
+
+      setFeedback({
+
+        type: 'success',
+
+        message: proximoValor ? 'Combo ativado!' : 'Combo desativado.',
+
+      });
+
+    } catch (error) {
+
+      console.error('Erro ao atualizar combo:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao atualizar combo.' });
+
+    }
+
+  };
+
+
+
+  const handleDeleteCombo = async (comboId?: string) => {
+
+    if (!comboId) return;
+
+    if (!window.confirm('Deseja realmente excluir este combo?')) return;
+
+    try {
+
+      await deleteDoc(doc(db, 'combos', comboId));
+
+      setFeedback({ type: 'success', message: 'Combo removido.' });
+
+      fetchCombos();
+
+    } catch (error) {
+
+      console.error('Erro ao excluir combo:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao excluir combo.' });
+
+    }
+
+  };
+
+
+
+  const handleSaveCombo = async () => {
+
+    if (!editCombo) return;
+
+    const nome = editCombo.nome.trim();
+
+    if (!nome) {
+
+      setFeedback({ type: 'error', message: 'Informe o nome do combo.' });
+
+      return;
+
+    }
+
+    if ((editCombo.pacoteIds ?? []).length === 0) {
+
+      setFeedback({ type: 'error', message: 'Selecione ao menos um pacote para o combo.' });
+
+      return;
+
+    }
+
+    const preco = Number(editCombo.preco);
+
+    if (!Number.isFinite(preco) || preco <= 0) {
+
+      setFeedback({ type: 'error', message: 'Informe um valor válido para o combo.' });
+
+      return;
+
+    }
+
+    setSalvandoCombo(true);
+
+    try {
+
+      const payload = {
+
+        nome,
+
+        pacoteIds: Array.from(new Set(editCombo.pacoteIds)),
+
+        preco,
+
+        ativo: editCombo.ativo !== false,
+
+      };
+
+      if (isEditingCombo && editCombo.id) {
+
+        await updateDoc(doc(db, 'combos', editCombo.id), payload);
+
+        setFeedback({ type: 'success', message: 'Combo atualizado com sucesso!' });
+
+      } else {
+
+        await addDoc(collection(db, 'combos'), payload);
+
+        setFeedback({ type: 'success', message: 'Combo criado com sucesso!' });
+
+      }
+
+      setModalCombo(false);
+
+      setEditCombo(null);
+
+      fetchCombos();
+
+    } catch (error) {
+
+      console.error('Erro ao salvar combo:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao salvar combo.' });
+
+    } finally {
+
+      setSalvandoCombo(false);
+
+    }
 
   };
 
@@ -2840,7 +3124,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                     <dt>Combos cadastrados</dt>
 
-                    <dd className="font-semibold text-slate-900">0</dd>
+                    <dd className="font-semibold text-slate-900">{totalCombosAtivos}</dd>
 
                   </div>
 
@@ -4559,6 +4843,93 @@ const totalReservasConfirmadas = useMemo(() => {
 
 
 
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Combos de pacotes</h3>
+                <p className="text-sm text-slate-500">
+                  Agrupe atividades existentes e ofereça um valor especial aos clientes.
+                </p>
+              </div>
+              <button
+                onClick={handleAddCombo}
+                disabled={pacotes.length === 0}
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+                  pacotes.length === 0 ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
+              >
+                <FaLayerGroup className="h-4 w-4" />
+                Novo combo
+              </button>
+            </div>
+            {pacotes.length === 0 ? (
+              <p className="py-6 text-sm text-slate-500">Cadastre ao menos um pacote antes de criar combos.</p>
+            ) : combos.length === 0 ? (
+              <p className="py-6 text-sm text-slate-500">Nenhum combo cadastrado até o momento.</p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {combos.map((combo) => {
+                  const pacoteNomes = combo.pacoteIds
+                    .map((id) => (id ? pacotesPorId.get(id)?.nome ?? 'Pacote removido' : ''))
+                    .filter((nome) => nome && nome.length > 0);
+                  return (
+                    <article key={combo.id ?? combo.nome} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h4 className="text-base font-semibold text-slate-900">{combo.nome}</h4>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                combo.ativo !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+                              }`}
+                            >
+                              {combo.ativo !== false ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-600">
+                            Valor personalizado: <span className="font-semibold text-slate-900">{formatCurrency(combo.preco)}</span>
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Inclui: {pacoteNomes.length > 0 ? pacoteNomes.join(', ') : 'Pacotes removidos'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => handleEditCombo(combo)}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+                          >
+                            <FaEdit className="h-3.5 w-3.5" />
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => combo.id && handleDeleteCombo(combo.id)}
+                            className="inline-flex items-center gap-2 rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                          >
+                            <FaTrash className="h-3.5 w-3.5" />
+                            Excluir
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-col gap-3 border-t border-dashed border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-slate-500">Ative ou desative o combo rapidamente.</p>
+                        <button
+                          onClick={() => handleToggleComboAtivo(combo)}
+                          className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-semibold transition ${
+                            combo.ativo !== false ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          }`}
+                        >
+                          {combo.ativo !== false ? 'Desativar combo' : 'Ativar combo'}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+
           {modalPacote && editPacote && (
 
             <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
@@ -5160,6 +5531,224 @@ const totalReservasConfirmadas = useMemo(() => {
                   >
 
                     Salvar pacote
+
+                  </button>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          )}
+
+          {modalCombo && editCombo && (
+
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+
+              <div className="w-full max-w-2xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+
+                  <h4 className="text-lg font-semibold text-slate-900">
+
+                    {isEditingCombo ? 'Editar combo' : 'Novo combo'}
+
+                  </h4>
+
+                  <button
+
+                    onClick={() => {
+
+                      setModalCombo(false);
+
+                      setEditCombo(null);
+
+                    }}
+
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+
+                  >
+
+                    x
+
+                  </button>
+
+                </div>
+
+                <div className="space-y-5 px-4 sm:px-6 py-5 max-h-[75vh] overflow-y-auto">
+
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+
+                    Nome do combo
+
+                    <input
+
+                      value={editCombo.nome}
+
+                      onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, nome: e.target.value } : prev))}
+
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                    />
+
+                  </label>
+
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+
+                    Valor personalizado (R$)
+
+                    <input
+
+                      type="number"
+
+                      min="0"
+
+                      value={editCombo.preco}
+
+                      onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, preco: Number(e.target.value) } : prev))}
+
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                    />
+
+                  </label>
+
+                  <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+
+                    <input
+
+                      type="checkbox"
+
+                      checked={editCombo.ativo !== false}
+
+                      onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, ativo: e.target.checked } : prev))}
+
+                    />
+
+                    Combo ativo
+
+                  </label>
+
+                  <div>
+
+                    <p className="text-xs font-semibold uppercase text-slate-500">Selecione os pacotes</p>
+
+                    {pacotes.length === 0 ? (
+
+                      <p className="mt-2 text-sm text-slate-500">Cadastre pacotes antes de montar um combo.</p>
+
+                    ) : (
+
+                      <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+
+                        {pacotes.map((pacote) => {
+
+                          if (!pacote.id) return null;
+
+                          const selecionado = editCombo.pacoteIds.includes(pacote.id);
+
+                          return (
+
+                            <label
+
+                              key={pacote.id}
+
+                              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition ${
+
+                                selecionado ? 'border-emerald-200 bg-white text-emerald-700' : 'border-transparent bg-white text-slate-600'
+
+                              }`}
+
+                            >
+
+                              <span>{pacote.nome}</span>
+
+                              <input
+
+                                type="checkbox"
+
+                                checked={selecionado}
+
+                                onChange={(e) =>
+
+                                  setEditCombo((prev) => {
+
+                                    if (!prev) return prev;
+
+                                    const ids = new Set(prev.pacoteIds ?? []);
+
+                                    if (e.target.checked) {
+
+                                      ids.add(pacote.id!);
+
+                                    } else {
+
+                                      ids.delete(pacote.id!);
+
+                                    }
+
+                                    return { ...prev, pacoteIds: Array.from(ids) };
+
+                                  })
+
+                                }
+
+                              />
+
+                            </label>
+
+                          );
+
+                        })}
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+                <div className="flex flex-col gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4 sm:flex-row sm:items-center sm:justify-end">
+
+                  <button
+
+                    onClick={() => {
+
+                      setModalCombo(false);
+
+                      setEditCombo(null);
+
+                    }}
+
+                    className="w-full rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 sm:w-auto"
+
+                  >
+
+                    Cancelar
+
+                  </button>
+
+                  <button
+
+                    onClick={handleSaveCombo}
+
+                    disabled={salvandoCombo || pacotes.length === 0}
+
+                    className={`w-full rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition sm:w-auto ${
+
+                      salvandoCombo || pacotes.length === 0
+
+                        ? 'bg-emerald-200 cursor-not-allowed'
+
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+
+                    }`}
+
+                  >
+
+                    {salvandoCombo ? 'Salvando...' : 'Salvar combo'}
 
                   </button>
 

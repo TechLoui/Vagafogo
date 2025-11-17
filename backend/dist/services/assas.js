@@ -67,6 +67,18 @@ async function criarCobrancaHandler(req, res) {
         return;
     }
     try {
+        const disponibilidadeRef = (0, firestore_1.doc)(firebase_1.db, "disponibilidade", data);
+        const disponibilidadeSnap = await (0, firestore_1.getDoc)(disponibilidadeRef);
+        if (disponibilidadeSnap.exists()) {
+            const disponibilidadeDados = disponibilidadeSnap.data();
+            if (disponibilidadeDados?.fechado) {
+                res.status(400).json({
+                    status: "erro",
+                    error: "Este dia não está aceitando reservas no momento. Escolha outra data.",
+                });
+                return;
+            }
+        }
         // 🔍 Verificar disponibilidade no Firebase
         const reservasQuery = (0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("Data", "==", data), (0, firestore_1.where)("Horario", "==", horarioFormatado));
         const snapshot = await (0, firestore_1.getDocs)(reservasQuery);
