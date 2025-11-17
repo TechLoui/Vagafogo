@@ -14,7 +14,8 @@ const reservasRef = (0, firestore_1.collection)(firebase_1.db, "reservas");
 const pacotesRef = (0, firestore_1.collection)(firebase_1.db, "pacotes");
 app.get("/api/reservas", async (_req, res) => {
     try {
-        const reservasQuery = (0, firestore_1.query)(reservasRef, (0, firestore_1.where)("status", "in", ["pago"]));
+        const statusVisiveis = ["pago", "confirmado", "pre_reserva"];
+        const reservasQuery = (0, firestore_1.query)(reservasRef, (0, firestore_1.where)("status", "in", statusVisiveis));
         const snapshot = await (0, firestore_1.getDocs)(reservasQuery);
         const reservas = snapshot.docs.map((registro) => ({
             id: registro.id,
@@ -41,8 +42,13 @@ app.get("/api/pacotes", async (_req, res) => {
 });
 app.post("/api/reservas", async (req, res) => {
     try {
-        const novo = await (0, firestore_1.addDoc)(reservasRef, req.body);
-        res.json({ id: novo.id, ...req.body });
+        const body = (req.body ?? {});
+        const payload = {
+            ...body,
+            status: typeof body.status === "string" ? body.status : "pre_reserva",
+        };
+        const novo = await (0, firestore_1.addDoc)(reservasRef, payload);
+        res.json({ id: novo.id, ...payload });
     }
     catch (error) {
         res.status(500).json({ error: error.message ?? "Erro ao criar reserva" });

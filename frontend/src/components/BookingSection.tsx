@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from '../../firebase';
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -65,6 +65,70 @@ type Combo = {
   ativo: boolean;
 };
 
+type PersonalField = "nome" | "email" | "cpf" | "telefone";
+
+const onlyNumbers = (value: string) => value.replace(/\D/g, "");
+
+const formatCpf = (value: string): string => {
+  const digits = onlyNumbers(value).slice(0, 11);
+  const part1 = digits.slice(0, 3);
+  const part2 = digits.slice(3, 6);
+  const part3 = digits.slice(6, 9);
+  const part4 = digits.slice(9, 11);
+
+  let formatted = part1;
+  if (part2) formatted += `.${part2}`;
+  if (part3) formatted += `.${part3}`;
+  if (part4) formatted += `-${part4}`;
+  return formatted;
+};
+
+const formatPhone = (value: string): string => {
+  const digits = onlyNumbers(value).slice(0, 11);
+  if (digits.length === 0) return "";
+  if (digits.length < 2) {
+    return `(${digits}`;
+  }
+  if (digits.length === 2) {
+    return `(${digits})`;
+  }
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  }
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+};
+
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
+const isValidCpf = (value: string): boolean => {
+  const cpf = onlyNumbers(value);
+  if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) {
+    return false;
+  }
+
+  let sum = 0;
+  for (let i = 0; i < 9; i += 1) {
+    sum += Number(cpf[i]) * (10 - i);
+  }
+  let firstDigit = (sum * 10) % 11;
+  if (firstDigit === 10) firstDigit = 0;
+  if (firstDigit !== Number(cpf[9])) {
+    return false;
+  }
+
+  sum = 0;
+  for (let i = 0; i < 10; i += 1) {
+    sum += Number(cpf[i]) * (11 - i);
+  }
+  let secondDigit = (sum * 10) % 11;
+  if (secondDigit === 10) secondDigit = 0;
+
+  return secondDigit === Number(cpf[10]);
+};
+
 export function BookingSection() {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
@@ -78,6 +142,8 @@ export function BookingSection() {
   const [cpf, setCpf] = useState<string>("");
   const [selectedDay, setSelectedDay] = useState<Date | undefined>();
   const [horario, setHorario] = useState<string>("");
+  const [diasBloqueados, setDiasBloqueados] = useState<Set<string>>(new Set());
+  const [diaSelecionadoFechado, setDiaSelecionadoFechado] = useState(false);
   const [adultos, setAdultos] = useState<number>(1);
   const [bariatrica, setBariatica] = useState<number>(0);
   const [criancas, setCriancas] = useState<number>(0);
@@ -88,6 +154,7 @@ export function BookingSection() {
   const [formaPagamento, setFormaPagamento] = useState<"CREDIT_CARD" | "PIX">("CREDIT_CARD");
   const [respostasPersonalizadas, setRespostasPersonalizadas] = useState<Record<string, { resposta?: string; condicional?: string }>>({});
   const [disponibilidadeHorarios, setDisponibilidadeHorarios] = useState<Record<string, boolean>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
 
   // PIX
@@ -101,6 +168,67 @@ export function BookingSection() {
     t.setHours(0, 0, 0, 0);
     return t;
   })();
+
+  const getInputClasses = (field: string) =>
+    `w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 ${
+      formErrors[field]
+        ? 'border-red-400 focus:ring-red-500'
+        : 'border-gray-300 focus:ring-green-500'
+    }`;
+
+  const setFieldError = useCallback((field: string, message?: string) => {
+    setFormErrors((prev) => {
+      if (message) {
+        if (prev[field] === message) return prev;
+        return { ...prev, [field]: message };
+      }
+      if (!(field in prev)) {
+        return prev;
+      }
+      const { [field]: _, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  const personalFields: PersonalField[] = ["nome", "email", "cpf", "telefone"];
+
+  const getPersonalFieldError = (field: PersonalField) => {
+    switch (field) {
+      case "nome": {
+        const valor = nome.trim();
+        if (!valor) return "Informe seu nome completo.";
+        if (valor.length < 3) return "Digite um nome válido.";
+        return "";
+      }
+      case "email": {
+        const valor = email.trim();
+        if (!valor) return "Informe seu e-mail.";
+        if (!isValidEmail(valor)) return "Digite um e-mail válido.";
+        return "";
+      }
+      case "cpf": {
+        const valor = cpf.trim();
+        if (!valor) return "Informe seu CPF.";
+        if (!isValidCpf(valor)) return "Digite um CPF válido.";
+        return "";
+      }
+      case "telefone": {
+        const valor = telefone.trim();
+        if (!valor) return "";
+        const digits = onlyNumbers(valor);
+        if (digits.length < 10) return "Digite um telefone válido com DDD.";
+        return "";
+      }
+      default:
+        return "";
+    }
+  };
+
+  const validatePersonalField = (field: PersonalField) => {
+    const message = getPersonalFieldError(field);
+    setFieldError(field, message || undefined);
+    return !message;
+  };
 
   // BUSCA PACOTES E COMBOS VIA FIRESTORE
   useEffect(() => {
@@ -164,6 +292,26 @@ export function BookingSection() {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    const q = query(collection(db, "disponibilidade"), where("fechado", "==", true));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const datas = new Set<string>();
+        snapshot.forEach((docSnap) => {
+          const dados = docSnap.data();
+          const dataStr = typeof dados?.data === "string" ? dados.data : docSnap.id;
+          datas.add(dataStr);
+        });
+        setDiasBloqueados(datas);
+      },
+      (error) => {
+        console.error("Erro ao acompanhar dias bloqueados:", error);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
   const selectedPacotes = useMemo(
     () => pacotes.filter((p) => p.id && selectedPackages.includes(p.id)),
     [pacotes, selectedPackages]
@@ -179,15 +327,24 @@ export function BookingSection() {
     );
   }, [combos, selectedPackages]);
 
+  const temPacoteFaixa = useMemo(
+    () =>
+      selectedPacotes.some(
+        (p) => p.modoHorario === "intervalo" || (p.horarios && p.horarios.length === 0)
+      ),
+    [selectedPacotes]
+  );
+
   useEffect(() => {
     if (!selectedDay) {
       setDisponibilidadeHorarios({});
+      setDiaSelecionadoFechado(false);
       return;
     }
     let ativo = true;
+    const dataStr = selectedDay.toISOString().slice(0, 10);
     const carregarDisponibilidade = async () => {
       try {
-        const dataStr = selectedDay.toISOString().slice(0, 10);
         const ref = doc(db, "disponibilidade", dataStr);
         const snap = await getDoc(ref);
         if (!ativo) return;
@@ -197,10 +354,12 @@ export function BookingSection() {
         } else {
           setDisponibilidadeHorarios({});
         }
+        setDiaSelecionadoFechado(Boolean(dados?.fechado) || diasBloqueados.has(dataStr));
       } catch (error) {
         console.error("Erro ao carregar disponibilidade:", error);
         if (ativo) {
           setDisponibilidadeHorarios({});
+          setDiaSelecionadoFechado(diasBloqueados.has(dataStr));
         }
       }
     };
@@ -208,7 +367,7 @@ export function BookingSection() {
     return () => {
       ativo = false;
     };
-  }, [selectedDay]);
+  }, [selectedDay, diasBloqueados]);
 
   useEffect(() => {
     if (selectedPacotes.length === 0) {
@@ -237,6 +396,7 @@ export function BookingSection() {
     if (selectedPacotes.length === 0) return [];
     const horariosUnicos = [...new Set(selectedPacotes.flatMap((p) => p.horarios || []))];
     if (!selectedDay) return horariosUnicos;
+    if (diaSelecionadoFechado) return [];
     const dataStr = selectedDay.toISOString().slice(0, 10);
     return horariosUnicos.filter((horarioLista) =>
       selectedPacotes.every((pacote) => {
@@ -245,7 +405,7 @@ export function BookingSection() {
         return disponibilidadeHorarios[chave] !== false;
       })
     );
-  }, [selectedDay, selectedPacotes, disponibilidadeHorarios]);
+  }, [selectedDay, selectedPacotes, disponibilidadeHorarios, diaSelecionadoFechado]);
 
   useEffect(() => {
     if (!horario) return;
@@ -304,6 +464,7 @@ export function BookingSection() {
   const hasDisponibilidadeNoDia = (day: Date) => {
     if (selectedPacotes.length === 0) return false;
     const dayStr = day.toISOString().slice(0, 10);
+    if (diasBloqueados.has(dayStr)) return false;
 
     return selectedPacotes.some((pacote) => {
       const datasBloqueadas = pacote.datasBloqueadas ?? [];
@@ -314,6 +475,7 @@ export function BookingSection() {
   const isBlockedDay = (day: Date) => {
     if (selectedPacotes.length === 0) return false;
     const dayStr = day.toISOString().slice(0, 10);
+    if (diasBloqueados.has(dayStr)) return true;
     return selectedPacotes.every((pacote) =>
       (pacote.datasBloqueadas ?? []).includes(dayStr)
     );
@@ -339,9 +501,12 @@ export function BookingSection() {
     return null;
   };
 
-  const temPacoteFaixa = selectedPacotes.some(p => 
-    p.modoHorario === 'intervalo' || (p.horarios && p.horarios.length === 0)
-  );
+  const handleDaySelect = (day?: Date) => {
+    setSelectedDay(day);
+    setHorario("");
+    setFieldError("data");
+    setFieldError("horario");
+  };
 
   const handlePackageToggle = (packageId: string) => {
     setSelectedPackages(prev => 
@@ -350,7 +515,8 @@ export function BookingSection() {
         : [...prev, packageId]
     );
     setHorario("");
-
+    setFieldError("pacotes");
+    setFieldError("horario");
   };
 
   const atualizarRespostaBase = (
@@ -506,18 +672,63 @@ export function BookingSection() {
     return { respostas };
   };
 
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
+
+    personalFields.forEach((field) => {
+      const fieldError = getPersonalFieldError(field);
+      if (fieldError) {
+        errors[field] = fieldError;
+      }
+    });
+
+    if (selectedPackages.length === 0) {
+      errors.pacotes = "Selecione pelo menos um pacote.";
+    }
+
+    if (selectedPackages.length > 0) {
+      if (!selectedDay) {
+        errors.data = "Selecione uma data disponível.";
+      } else if (diaSelecionadoFechado) {
+        errors.data = "Esta data está indisponível. Escolha outra.";
+      }
+    }
+
+    const possuiHorariosNosPacotes = selectedPacotes.some(
+      (p) => (p.horarios?.length ?? 0) > 0
+    );
+
+    if (selectedDay && horariosDisponiveis.length > 0 && !horario) {
+      errors.horario = "Escolha um horário disponível.";
+    }
+
+    if (
+      selectedDay &&
+      horariosDisponiveis.length === 0 &&
+      !temPacoteFaixa &&
+      possuiHorariosNosPacotes
+    ) {
+      errors.horario = "Não há horários disponíveis para os pacotes selecionados nesta data.";
+    }
+
+    if (temPet === null) {
+      errors.pet = "Informe se vai levar pet.";
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (selectedPackages.length === 0) return alert("Selecione pelo menos um pacote!");
-    if (!selectedDay) return alert("Selecione uma data válida!");
-    if (horariosDisponiveis.length > 0 && !horario) return alert("Selecione o horário!");
-    if (horariosDisponiveis.length === 0 && !temPacoteFaixa && selectedPacotes.some(p => (p.horarios?.length ?? 0) > 0)) {
-      alert("Não há horários disponíveis para os pacotes selecionados nesta data.");
+    if (!validateForm()) {
       return;
     }
-    if (!nome || !email || !cpf) return alert("Preencha todos os campos obrigatórios!");
-    if (temPet === null) return alert("Informe se vai levar um pet!");
+
+    if (!selectedDay || selectedPackages.length === 0 || temPet === null) {
+      return;
+    }
 
     const { respostas, erro } = montarRespostasPersonalizadas();
     if (erro) {
@@ -531,6 +742,10 @@ export function BookingSection() {
       const dataStr = selectedDay.toISOString().slice(0, 10);
       const totalParticipantes = adultos + criancas + bariatrica + naoPagante;
       const total = calcularTotal();
+      const horarioSelecionado =
+        horariosDisponiveis.length > 0 && horario
+          ? horario
+          : "Sem horário específico";
 
       const atividades = selectedPacotes.map(p => p.nome).join(" + ");
       const comboInfo = comboAtivo ? ` (Combo: ${comboAtivo.nome} - ${comboAtivo.desconto}% desconto)` : "";
@@ -549,7 +764,7 @@ export function BookingSection() {
         criancas,
         naoPagante,
         billingType: formaPagamento,
-        horario: horariosDisponiveis.length > 0 ? horario : "Sem horário específico",
+        horario: horarioSelecionado,
         temPet,
         pacoteIds: selectedPackages,
         comboId: comboAtivo?.id || null,
@@ -629,7 +844,7 @@ export function BookingSection() {
         </div>
         
         <div className="max-w-3xl mx-auto">
-          <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
+          <form onSubmit={handleSubmit} noValidate className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
             
             {/* Seleção Múltipla de Pacotes */}
             <div className="mb-6">
@@ -680,6 +895,10 @@ export function BookingSection() {
                   </p>
                 </div>
               )}
+
+              {formErrors.pacotes && (
+                <p className="mt-2 text-sm text-red-600">{formErrors.pacotes}</p>
+              )}
             </div>
 
             {/* Dados Pessoais */}
@@ -691,10 +910,18 @@ export function BookingSection() {
                 <input
                   type="text"
                   value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  onChange={(e) => {
+                    setNome(e.target.value);
+                    setFieldError("nome");
+                  }}
+                  onBlur={() => validatePersonalField("nome")}
+                  className={getInputClasses("nome")}
+                  autoComplete="name"
                   required
                 />
+                {formErrors.nome && (
+                  <p className="mt-1 text-sm text-red-600">{formErrors.nome}</p>
+                )}
               </div>
               
               <div>
@@ -704,10 +931,18 @@ export function BookingSection() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setFieldError("email");
+                  }}
+                  onBlur={() => validatePersonalField("email")}
+                  className={getInputClasses("email")}
+                  autoComplete="email"
                   required
                 />
+                {formErrors.email && (
+                  <p className="mt-1 text-sm text-red-600">{formErrors.email}</p>
+                )}
               </div>
               
               <div>
@@ -717,11 +952,21 @@ export function BookingSection() {
                 <input
                   type="text"
                   value={cpf}
-                  onChange={(e) => setCpf(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  onChange={(e) => {
+                    setCpf(formatCpf(e.target.value));
+                    setFieldError("cpf");
+                  }}
+                  onBlur={() => validatePersonalField("cpf")}
+                  className={getInputClasses("cpf")}
                   placeholder="000.000.000-00"
+                  inputMode="numeric"
+                  maxLength={14}
+                  autoComplete="off"
                   required
                 />
+                {formErrors.cpf && (
+                  <p className="mt-1 text-sm text-red-600">{formErrors.cpf}</p>
+                )}
               </div>
               
               <div>
@@ -731,10 +976,20 @@ export function BookingSection() {
                 <input
                   type="tel"
                   value={telefone}
-                  onChange={(e) => setTelefone(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                  onChange={(e) => {
+                    setTelefone(formatPhone(e.target.value));
+                    setFieldError("telefone");
+                  }}
+                  onBlur={() => validatePersonalField("telefone")}
+                  className={getInputClasses("telefone")}
                   placeholder="(11) 99999-9999"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  maxLength={15}
                 />
+                {formErrors.telefone && (
+                  <p className="mt-1 text-sm text-red-600">{formErrors.telefone}</p>
+                )}
               </div>
             </div>
 
@@ -751,7 +1006,7 @@ export function BookingSection() {
                   <DayPicker
                     mode="single"
                     selected={selectedDay}
-                    onSelect={setSelectedDay}
+                    onSelect={handleDaySelect}
                     disabled={[{ before: todayStart }, (day) => !hasDisponibilidadeNoDia(day)]}
                     locale={ptBR}
                     className="border border-gray-300 rounded-lg p-4"
@@ -767,21 +1022,33 @@ export function BookingSection() {
                     }}
                   />
                 </div>
+                {formErrors.data && (
+                  <p className="mt-2 text-sm text-red-600">{formErrors.data}</p>
+                )}
               </div>
             )}
 
             {/* Seleção de Horário */}
             {selectedDay && selectedPacotes.length > 0 && (
               <div className="mb-6">
-                {horariosDisponiveis.length > 0 ? (
+                {diaSelecionadoFechado ? (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700">
+                      Este dia está fechado para todos os pacotes. Escolha outra data para continuar.
+                    </p>
+                  </div>
+                ) : horariosDisponiveis.length > 0 ? (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Horário *
                     </label>
                     <select
                       value={horario}
-                      onChange={(e) => setHorario(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      onChange={(e) => {
+                        setHorario(e.target.value);
+                        setFieldError("horario");
+                      }}
+                      className={getInputClasses("horario")}
                       required
                     >
                       <option value="">Selecione um horário</option>
@@ -795,12 +1062,36 @@ export function BookingSection() {
                           .filter(p => p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim)
                           .map(p => (
                             <p key={p.id} className="text-sm text-blue-700 mb-1 last:mb-0">
-                              ℹ️ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
+                              ⚠️ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
                             </p>
                           ))
                         }
                       </div>
                     )}
+                  </>
+                ) : temPacoteFaixa ? (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    {selectedPacotes
+                      .filter(p => p.modoHorario === 'intervalo' && p.horarioInicio && p.horarioFim)
+                      .map(p => (
+                        <p key={p.id} className="text-sm font-medium text-green-700 mb-1 last:mb-0">
+                          ⏱️ A atividade {p.nome} funciona em faixa de horário, ocorre das {p.horarioInicio} até {p.horarioFim}
+                        </p>
+                      ))
+                    }
+                  </div>
+                ) : (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700">
+                      Nenhum horário disponível para os pacotes selecionados nesta data. Escolha outra data ou ajuste os pacotes.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            {formErrors.horario && !diaSelecionadoFechado && (
+              <p className="mt-2 text-sm text-red-600">{formErrors.horario}</p>
+            )}
                   </>
                 ) : temPacoteFaixa ? (
                   <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
@@ -898,7 +1189,10 @@ export function BookingSection() {
                     type="radio"
                     name="pet"
                     checked={temPet === true}
-                    onChange={() => setTemPet(true)}
+                    onChange={() => {
+                      setTemPet(true);
+                      setFieldError("pet");
+                    }}
                     className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
                   />
                   <span className="text-sm font-medium text-gray-700">Sim</span>
@@ -908,7 +1202,10 @@ export function BookingSection() {
                     type="radio"
                     name="pet"
                     checked={temPet === false}
-                    onChange={() => setTemPet(false)}
+                    onChange={() => {
+                      setTemPet(false);
+                      setFieldError("pet");
+                    }}
                     className="mr-3 w-4 h-4 text-green-600 focus:ring-green-500"
                   />
                   <span className="text-sm font-medium text-gray-700">Não</span>
@@ -921,6 +1218,9 @@ export function BookingSection() {
                   ⚠️ {getPetMessage()}
                 </p>
               </div>
+            )}
+            {formErrors.pet && (
+              <p className="mt-2 text-sm text-red-600">{formErrors.pet}</p>
             )}
           </div>
 
@@ -1135,22 +1435,30 @@ export function BookingSection() {
                 ✨ Finalize seu Pagamento
               </h3>
               
-              {formaPagamento === "CREDIT_CARD" && checkoutUrl && (
+              {checkoutUrl && (
                 <div className="text-center">
-                  <p className="mb-6 text-lg text-white/90 text-center">Clique no botão abaixo para finalizar o pagamento:</p>
+                  <p className="mb-6 text-lg text-white/90 text-center">
+                    {formaPagamento === "CREDIT_CARD" 
+                      ? "Clique no botão abaixo para finalizar o pagamento:" 
+                      : "Clique no botão abaixo para acessar a página de pagamento:"}
+                  </p>
                   <a
                     href={checkoutUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-block bg-green-600 text-white py-4 px-8 rounded-lg font-bold text-lg hover:bg-green-700 transition-colors shadow-lg transform hover:scale-105"
                   >
-                    💳 Realizar Pagamento
+                    {formaPagamento === "CREDIT_CARD" ? "💳 Realizar Pagamento" : "📱 Realizar Pagamento PIX"}
                   </a>
-                  <p className="mt-4 text-sm text-white/80 text-center">Você será redirecionado para a página segura de pagamento</p>
+                  <p className="mt-4 text-sm text-white/80 text-center">
+                    {formaPagamento === "CREDIT_CARD" 
+                      ? "Você será redirecionado para a página segura de pagamento"
+                      : "Você será redirecionado para a página de pagamento PIX"}
+                  </p>
                 </div>
               )}
               
-              {formaPagamento === "CREDIT_CARD" && !checkoutUrl && (
+              {!checkoutUrl && (
                 <div className="text-center p-4 bg-white/20 backdrop-blur-sm border border-white/30 rounded-lg">
                   <p className="text-white">⚠️ Link de pagamento não disponível. Verifique o console para mais detalhes.</p>
                 </div>

@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { criarReserva } from "./reservas";
-import { getDocs, collection, query, where } from "firebase/firestore";
+import { getDocs, collection, query, where, doc, getDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
@@ -115,6 +115,18 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   }
 
   try {
+    const disponibilidadeRef = doc(db, "disponibilidade", data);
+    const disponibilidadeSnap = await getDoc(disponibilidadeRef);
+    if (disponibilidadeSnap.exists()) {
+      const disponibilidadeDados = disponibilidadeSnap.data();
+      if (disponibilidadeDados?.fechado) {
+        res.status(400).json({
+          status: "erro",
+          error: "Este dia não está aceitando reservas no momento. Escolha outra data.",
+        });
+        return;
+      }
+    }
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = query(
       collection(db, "reservas"),
