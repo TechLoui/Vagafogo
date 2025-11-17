@@ -3250,7 +3250,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
 
                   <div className="flex flex-col gap-2 sm:flex-row">
 
@@ -3314,7 +3314,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
               {/* Desktop Table */}
 
-              <div className="hidden lg:block">
+              <div className="hidden lg:block overflow-x-auto">
 
                 <table className="w-full divide-y divide-slate-100 text-sm">
 

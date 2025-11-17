@@ -1062,6 +1062,7 @@ export function BookingSection() {
                         type="checkbox"
                         checked={selectedPackages.includes(pacote.id!)}
                         onChange={() => handlePackageToggle(pacote.id!)}
+                        onClick={(e) => e.stopPropagation()}
                         className="w-5 h-5 text-green-600"
                       />
                     </div>
