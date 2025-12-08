@@ -319,7 +319,7 @@ const obterBadgeStatus = (reserva: Reserva) => {
 
     return {
 
-      label: 'Pago (Asaas)',
+      label: 'Pago',
 
       classes: 'border-blue-200 bg-blue-50 text-blue-700',
 
@@ -1323,6 +1323,20 @@ const totalReservasConfirmadas = useMemo(() => {
 
 
   const formatarPacote = (reserva: Reserva) => {
+
+    const atividade = reserva.atividade ?? '';
+
+    const comboMatch = atividade.match(/\(Combo:\s*([^)]+)\)/i);
+
+    if (comboMatch && comboMatch[1]) {
+
+      const textoCombo = comboMatch[1].trim();
+
+      const nomeCombo = textoCombo.split(' - ')[0].trim();
+
+      return `Combo: ${nomeCombo || textoCombo}`;
+
+    }
 
     const nomes = obterPacoteNomes(reserva);
 
@@ -3218,13 +3232,13 @@ const totalReservasConfirmadas = useMemo(() => {
 
                   onClick={handleAddReserva}
 
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
 
                 >
 
                   <FaPlus className="h-4 w-4" />
 
-                  Pré-reserva manual
+                  Reserva manual
 
                 </button>
 
@@ -3250,9 +3264,9 @@ const totalReservasConfirmadas = useMemo(() => {
 
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
 
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
 
                     <select
 
@@ -3298,13 +3312,13 @@ const totalReservasConfirmadas = useMemo(() => {
 
                     onClick={handleAddReserva}
 
-                    className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 whitespace-nowrap"
+                    className="flex items-center gap-2 self-start rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 whitespace-nowrap sm:self-auto sm:ml-2"
 
                   >
 
                     <FaPlus className="h-4 w-4" />
 
-                    Pré-reserva manual
+                    Reserva manual
 
                   </button>
 
@@ -4281,7 +4295,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                   <h4 className="text-lg font-semibold text-slate-900">
 
-                    {isEditingReserva ? 'Editar reserva' : 'Nova pré-reserva manual'}
+                    {isEditingReserva ? 'Editar reserva' : 'Nova reserva manual'}
 
                   </h4>
 

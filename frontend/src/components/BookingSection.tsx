@@ -325,6 +325,9 @@ export function BookingSection() {
               nome: data.nome || '',
               pacoteIds: Array.isArray(data.pacoteIds) ? data.pacoteIds.map((id: unknown) => (id ?? '').toString()).filter(Boolean) : [],
               preco: Number(data.preco ?? 0),
+              precoAdulto: Number(data.precoAdulto ?? 0),
+              precoCrianca: Number(data.precoCrianca ?? 0),
+              precoBariatrica: Number(data.precoBariatrica ?? 0),
               desconto: Number(data.desconto ?? 0),
               ativo: data.ativo !== false,
             } as Combo;
