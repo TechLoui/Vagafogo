@@ -1019,9 +1019,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
       temPet: false,
 
-      confirmada: false,
+      confirmada: true,
 
-      status: 'pre_reserva',
+      status: 'confirmado',
 
       areaMesa: '',
 
@@ -1452,10 +1452,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
       const statusAtual = isEditingReserva
-
         ? editReserva.status ?? 'pre_reserva'
-
-        : 'pre_reserva';
+        : 'confirmado';
+      const statusAtualNormalizado = normalizarStatus(statusAtual);
 
 
 
@@ -1468,6 +1467,10 @@ const totalParticipantesDoDia = useMemo(() => {
         participantes,
 
         status: statusAtual,
+        confirmada:
+          statusAtualNormalizado === 'confirmado' || statusAtualNormalizado === 'pago'
+            ? true
+            : Boolean(editReserva.confirmada),
 
         areaMesa,
 
