@@ -155,6 +155,15 @@ const isValidCpf = (value: string): boolean => {
   return secondDigit === Number(cpf[10]);
 };
 
+const parseHorarioParaMinutos = (valor: string) => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(valor.trim());
+  if (!match) return null;
+  const horas = Number(match[1]);
+  const minutos = Number(match[2]);
+  if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
+  return horas * 60 + minutos;
+};
+
 export function BookingSection() {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
@@ -499,13 +508,29 @@ export function BookingSection() {
     if (!selectedDay) return horariosUnicos;
     if (diaSelecionadoFechado) return [];
     const dataStr = selectedDay.toISOString().slice(0, 10);
-    return horariosUnicos.filter((horarioLista) =>
+    let filtrados = horariosUnicos.filter((horarioLista) =>
       selectedPacotes.every((pacote) => {
         if (!pacote.id) return true;
         const chave = `${dataStr}-${pacote.id}-${horarioLista}`;
         return disponibilidadeHorarios[chave] !== false;
       })
     );
+    const hoje = new Date();
+    const mesmoDia =
+      selectedDay.getFullYear() === hoje.getFullYear() &&
+      selectedDay.getMonth() === hoje.getMonth() &&
+      selectedDay.getDate() === hoje.getDate();
+
+    if (mesmoDia) {
+      const minutosAgora = hoje.getHours() * 60 + hoje.getMinutes();
+      filtrados = filtrados.filter((h) => {
+        const minutos = parseHorarioParaMinutos(h);
+        if (minutos === null) return true;
+        return minutos >= minutosAgora;
+      });
+    }
+
+    return filtrados;
   }, [selectedDay, selectedPacotes, disponibilidadeHorarios, diaSelecionadoFechado]);
 
   useEffect(() => {

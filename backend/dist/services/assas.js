@@ -66,6 +66,34 @@ async function criarCobrancaHandler(req, res) {
         });
         return;
     }
+    // Impedir reservas em horários que já passaram no dia atual (horário de São Paulo)
+    const horarioMatch = /^(\d{1,2}):(\d{2})$/.exec(horarioFormatado ?? "");
+    if (horarioMatch) {
+        const [_, horaStr, minutoStr] = horarioMatch;
+        const minutosSelecionados = Number(horaStr) * 60 + Number(minutoStr);
+        const hojeSp = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/Sao_Paulo",
+        }).format(new Date());
+        if (data === hojeSp) {
+            const horarioAtualSp = new Intl.DateTimeFormat("en-GB", {
+                timeZone: "America/Sao_Paulo",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+            }).format(new Date());
+            const [horaAtualStr, minutoAtualStr] = horarioAtualSp.split(":");
+            const minutosAtual = Number(horaAtualStr) * 60 + Number(minutoAtualStr);
+            if (Number.isFinite(minutosSelecionados) &&
+                Number.isFinite(minutosAtual) &&
+                minutosSelecionados < minutosAtual) {
+                res.status(400).json({
+                    status: "erro",
+                    error: "O horário selecionado já passou para hoje. Escolha outro horário.",
+                });
+                return;
+            }
+        }
+    }
     try {
         const disponibilidadeRef = (0, firestore_1.doc)(firebase_1.db, "disponibilidade", data);
         const disponibilidadeSnap = await (0, firestore_1.getDoc)(disponibilidadeRef);

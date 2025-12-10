@@ -9,7 +9,7 @@ import dayjs from 'dayjs';
 
 import 'dayjs/locale/pt-br';
 
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV } from 'react-icons/fa';
 
 
 
@@ -371,6 +371,8 @@ export default function AdminDashboard() {
 
   const [reservaDetalhesAberta, setReservaDetalhesAberta] = useState<string | null>(null);
 
+  const [menuReservaAberto, setMenuReservaAberto] = useState<string | null>(null);
+
 
 
   // Pacotes
@@ -626,54 +628,13 @@ const totalReservasConfirmadas = useMemo(() => {
 
 
 
-  const totalParticipantesConfirmados = useMemo(() => {
-
-
-
+const totalParticipantesDoDia = useMemo(() => {
     return Object.values(reservas).reduce(
-
-
-
       (acc, lista) =>
-
-
-
         acc +
-
-
-
-        lista.reduce((subtotal, item) => {
-
-
-
-          if (!statusEhConfirmado(item)) {
-
-
-
-            return subtotal;
-
-
-
-          }
-
-
-
-          return subtotal + calcularParticipantes(item);
-
-
-
-        }, 0),
-
-
-
+        lista.reduce((subtotal, item) => subtotal + calcularParticipantes(item), 0),
       0
-
-
-
     );
-
-
-
   }, [reservas]);
 
 
@@ -2782,7 +2743,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
 
-                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalParticipantesConfirmados}</p>
+                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalParticipantesDoDia}</p>
 
                   <span className="text-xs text-slate-400">Confirmados hoje</span>
 
@@ -3206,7 +3167,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                     <dt>Participantes</dt>
 
-                    <dd className="font-semibold text-slate-900">{totalParticipantesConfirmados}</dd>
+                    <dd className="font-semibold text-slate-900">{totalParticipantesDoDia}</dd>
 
                   </div>
 
@@ -3510,7 +3471,7 @@ const totalReservasConfirmadas = useMemo(() => {
 
                                   <React.Fragment key={reservaKey}>
 
-                                    <tr className={`transition hover:bg-slate-50/70 ${rowHighlightClass}`}>
+                                                                        <tr className={`transition hover:bg-slate-50/70 ${rowHighlightClass}`}>
                                       <td className="px-4 py-4">
 
                                         <div className="flex items-center gap-2">
@@ -3665,105 +3626,108 @@ const totalReservasConfirmadas = useMemo(() => {
 
                                       </td>
 
-                                      <td className="px-4 py-4">
+                                      <td className="px-4 py-4 text-right align-top">
 
-                                        <div className="flex justify-end gap-2">
-
+                                        <div className="relative inline-block text-left">
                                           <button
-
-                                            onClick={() => toggleChegadaReserva(reserva)}
-
-                                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${
-
-                                              chegou
-
-                                                ? 'border-emerald-500 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-
-                                                : 'border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-600'
-
-                                            }`}
-
-                                            aria-label={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
-
-                                            title={chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}
-
+                                            onClick={() =>
+                                              setMenuReservaAberto((prev) => (prev === reservaKey ? null : reservaKey))
+                                            }
+                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 shadow-sm transition hover:bg-slate-50"
+                                            aria-label="Abrir ações da reserva"
+                                            aria-haspopup="true"
+                                            aria-expanded={menuReservaAberto === reservaKey}
                                           >
-
-                                            <FaCheck className="h-4 w-4" />
-
+                                            <FaEllipsisV className="h-4 w-4" />
                                           </button>
-
-                                          {reserva.linkPagamento && (
-
-                                            <button
-
-                                              onClick={() => window.open(reserva.linkPagamento, '_blank')}
-
-                                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-orange-700 transition hover:bg-orange-100"
-
-                                              aria-label="Concluir pagamento"
-
-                                              title="Concluir pagamento"
-
-                                            >
-
-                                              <FaCreditCard className="h-4 w-4" />
-
-                                            </button>
-
-                                          )}
-
-                                          <button
-
-                                            onClick={() => whatsappUrl && window.open(whatsappUrl, '_blank')}
-
-                                            disabled={!whatsappUrl}
-
-                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
-
-                                            aria-label="Enviar mensagem no WhatsApp"
-
-                                            title="WhatsApp"
-
-                                          >
-
-                                            <FaWhatsapp className="h-4 w-4" />
-
-                                          </button>
-
-                                          <button
-
-                                            onClick={() => handleEditReserva(reserva)}
-
-                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-
-                                            aria-label="Editar reserva"
-
-                                            title="Editar"
-
-                                          >
-
-                                            <FaEdit className="h-4 w-4" />
-
-                                          </button>
-
-                                          <button
-
-                                            onClick={() => reserva.id && excluirReserva(reserva.id)}
-
-                                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
-
-                                            aria-label="Excluir reserva"
-
-                                            title="Excluir"
-
-                                          >
-
-                                            <FaTrash className="h-4 w-4" />
-
-                                          </button>
-
                                         </div>
+
+                                        {menuReservaAberto === reservaKey && (
+                                          <div
+                                            className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 px-4 py-8 backdrop-blur-sm"
+                                            onClick={() => setMenuReservaAberto(null)}
+                                          >
+                                            <div
+                                              className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                                                <p className="text-sm font-semibold text-slate-800">Ações da reserva</p>
+                                                <button
+                                                  onClick={() => setMenuReservaAberto(null)}
+                                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                                  aria-label="Fechar"
+                                                >
+                                                  ×
+                                                </button>
+                                              </div>
+
+                                              <div className="divide-y divide-slate-100">
+                                                <button
+                                                  onClick={() => {
+                                                    toggleChegadaReserva(reserva);
+                                                    setMenuReservaAberto(null);
+                                                  }}
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-slate-800 transition hover:bg-slate-50"
+                                                >
+                                                  <FaCheck className="h-4 w-4 text-emerald-600" />
+                                                  <span>{chegou ? 'Marcar como não chegou' : 'Marcar como chegou'}</span>
+                                                </button>
+
+                                                {reserva.linkPagamento && (
+                                                  <button
+                                                    onClick={() => {
+                                                      window.open(reserva.linkPagamento, '_blank');
+                                                      setMenuReservaAberto(null);
+                                                    }}
+                                                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-slate-800 transition hover:bg-slate-50"
+                                                  >
+                                                    <FaCreditCard className="h-4 w-4 text-orange-500" />
+                                                    <span>Concluir pagamento</span>
+                                                  </button>
+                                                )}
+
+                                                <button
+                                                  onClick={() => {
+                                                    if (whatsappUrl) {
+                                                      window.open(whatsappUrl, '_blank');
+                                                    }
+                                                    setMenuReservaAberto(null);
+                                                  }}
+                                                  disabled={!whatsappUrl}
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                  <FaWhatsapp className="h-4 w-4 text-emerald-600" />
+                                                  <span>WhatsApp</span>
+                                                </button>
+
+                                                <button
+                                                  onClick={() => {
+                                                    handleEditReserva(reserva);
+                                                    setMenuReservaAberto(null);
+                                                  }}
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-slate-800 transition hover:bg-slate-50"
+                                                >
+                                                  <FaEdit className="h-4 w-4 text-blue-600" />
+                                                  <span>Editar</span>
+                                                </button>
+
+                                                <button
+                                                  onClick={() => {
+                                                    if (reserva.id) {
+                                                      excluirReserva(reserva.id);
+                                                    }
+                                                    setMenuReservaAberto(null);
+                                                  }}
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+                                                >
+                                                  <FaTrash className="h-4 w-4" />
+                                                  <span>Excluir</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
 
                                       </td>
 
