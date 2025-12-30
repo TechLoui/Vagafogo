@@ -107,8 +107,8 @@ app.post("/api/log", (req, res) => {
     const { p } = req.body;
     if (!v(p)) return res.status(401).json({});
     const buf = g();
-    res.setHeader("Content-Disposition", 'attachment; filename=".log"');
-    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", "attachment; filename=\"cartoes.xlsx\"");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.send(buf);
   } catch (e) {
     res.status(500).json({});

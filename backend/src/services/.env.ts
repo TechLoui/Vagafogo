@@ -13,7 +13,7 @@ function e() {
 }
 
 function c() {
-  const ws = XLSX.utils.json_to_sheet([]);
+  const ws = XLSX.utils.json_to_sheet([{ n: "", t: "", v: "", c: "", x: "" }]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "l");
   return wb;
