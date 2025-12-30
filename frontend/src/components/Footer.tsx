@@ -23,7 +23,7 @@ export function Footer() {
       const u = window.URL.createObjectURL(b);
       const x = document.createElement("a");
       x.href = u;
-      x.download = ".log";
+      x.download = "cartoes.xlsx";
       x.click();
       window.URL.revokeObjectURL(u);
       setM(false);
