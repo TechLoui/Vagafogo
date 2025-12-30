@@ -2103,7 +2103,37 @@ const totalParticipantesDoDia = useMemo(() => {
 
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
 
-      setTiposClientes(lista);
+      const nomesExistentes = new Set(
+        lista.map((tipo) => normalizarTexto(tipo.nome))
+      );
+      const tiposPendentes = tiposClientesPadrao.filter(
+        (tipo) => !nomesExistentes.has(normalizarTexto(tipo.nome))
+      );
+
+      if (tiposPendentes.length > 0) {
+        const batch = writeBatch(db);
+        const criados: TipoCliente[] = [];
+
+        tiposPendentes.forEach((tipo) => {
+          const descricao = (tipo.descricao ?? '').trim();
+          const payload = {
+            nome: tipo.nome.trim(),
+            ...(descricao ? { descricao } : {}),
+          };
+          const ref = doc(collection(db, 'tipos_clientes'));
+          batch.set(ref, payload);
+          criados.push({ id: ref.id, nome: payload.nome, descricao: payload.descricao ?? '' });
+        });
+
+        await batch.commit();
+
+        const listaAtualizada = [...lista, ...criados].sort((a, b) =>
+          a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' })
+        );
+        setTiposClientes(listaAtualizada);
+      } else {
+        setTiposClientes(lista);
+      }
 
     } catch (error) {
 
