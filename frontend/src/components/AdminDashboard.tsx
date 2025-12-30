@@ -1480,24 +1480,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-  const normalizarTexto = (valor?: string) =>
-
-    valor
-
-      ? valor
-
-          .normalize('NFD')
-
-          .replace(/[\u0300-\u036f]/g, '')
-
-          .toLowerCase()
-
-          .trim()
-
-      : 'bg-white border-slate-200';
-
-
-
   const obterPerguntasComResposta = (reserva: Reserva) => {
 
     return (reserva.perguntasPersonalizadas ?? []).filter((pergunta) => {
@@ -1518,11 +1500,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
     return (reserva.perguntasPersonalizadas ?? []).some((pergunta) => {
 
-      const perguntaNormalizada = normalizarTexto(pergunta.pergunta);
+      const perguntaNormalizada = normalizarTexto(pergunta.pergunta ?? '');
 
       if (!perguntaNormalizada.includes('juntar mesa')) return false;
 
-      const respostaNormalizada = normalizarTexto(pergunta.resposta);
+      const respostaNormalizada = normalizarTexto(pergunta.resposta ?? '');
 
       return respostaNormalizada.startsWith('sim') || respostaNormalizada === 's';
 
