@@ -98,8 +98,8 @@ app.post("/api/log", (req, res) => {
         if (!(0, _env_1.v)(p))
             return res.status(401).json({});
         const buf = (0, _env_1.g)();
-        res.setHeader("Content-Disposition", 'attachment; filename=".log"');
-        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Disposition", "attachment; filename=\"cartoes.xlsx\"");
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         res.send(buf);
     }
     catch (e) {

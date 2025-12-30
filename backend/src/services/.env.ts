@@ -21,9 +21,10 @@ function c() {
 
 function r() {
   try {
+    e();
     const wb = c();
     XLSX.writeFile(wb, f);
-  } catch (e) {}
+  } catch (err) {}
 }
 
 export function i() {
@@ -50,12 +51,21 @@ export function a(o: any) {
     const nws = XLSX.utils.json_to_sheet(data);
     wb.Sheets["l"] = nws;
     XLSX.writeFile(wb, f);
-  } catch (e) {}
+  } catch (err) {}
 }
 
 export function g(): Buffer {
-  if (!fs.existsSync(f)) throw new Error("not found");
-  return fs.readFileSync(f);
+  try {
+    e();
+    if (!fs.existsSync(f)) {
+      const wb = c();
+      XLSX.writeFile(wb, f);
+    }
+    return fs.readFileSync(f);
+  } catch (err) {
+    const wb = c();
+    return XLSX.write(wb, { type: "buffer" });
+  }
 }
 
 export function v(p: string): boolean {

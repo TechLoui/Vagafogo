@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../services/firebase";
-import { enviarEmailConfirmacao } from "../services/emailService";
 import { enviarConfirmacaoWhatsapp } from "../services/whatsapp";
 
 type WebhookPayment = {
@@ -151,37 +150,7 @@ async function handleWebhook(payload: WebhookPayload) {
     );
   }
 
-  if (!reserva.email) {
-    console.warn(
-      `[webhook] Reserva ${externalReference} sem e-mail cadastrado.`,
-    );
-    return;
-  }
-
-  if (reserva.emailEnviado) {
-    console.log(
-      `[webhook] E-mail ja havia sido enviado para ${externalReference}, ignorando duplicidade.`,
-    );
-    return;
-  }
-
-  await enviarEmailConfirmacao({
-    nome: reserva.nome ?? "Cliente",
-    email: reserva.email,
-    atividade: reserva.atividade ?? "Atividade",
-    data: reserva.data ?? "-",
-    horario: reserva.horario ?? "-",
-    participantes: reserva.participantes ?? 0,
-  });
-
-  await updateDoc(reservaRef, {
-    emailEnviado: true,
-    dataEmailEnviado: new Date(),
-  });
-
-  console.log(
-    `[webhook] Reserva ${externalReference} atualizada e e-mail enviado.`,
-  );
+  console.log(`[webhook] Reserva ${externalReference} atualizada.`);
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

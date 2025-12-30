@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const firestore_1 = require("firebase/firestore");
 const firebase_1 = require("../services/firebase");
-const emailService_1 = require("../services/emailService");
 const whatsapp_1 = require("../services/whatsapp");
 const parseNumber = (value, fallback) => {
     if (!value) {
@@ -105,27 +104,7 @@ async function handleWebhook(payload) {
     else {
         console.log(`[webhook] WhatsApp ja havia sido enviado para ${externalReference}, ignorando duplicidade.`);
     }
-    if (!reserva.email) {
-        console.warn(`[webhook] Reserva ${externalReference} sem e-mail cadastrado.`);
-        return;
-    }
-    if (reserva.emailEnviado) {
-        console.log(`[webhook] E-mail ja havia sido enviado para ${externalReference}, ignorando duplicidade.`);
-        return;
-    }
-    await (0, emailService_1.enviarEmailConfirmacao)({
-        nome: reserva.nome ?? "Cliente",
-        email: reserva.email,
-        atividade: reserva.atividade ?? "Atividade",
-        data: reserva.data ?? "-",
-        horario: reserva.horario ?? "-",
-        participantes: reserva.participantes ?? 0,
-    });
-    await (0, firestore_1.updateDoc)(reservaRef, {
-        emailEnviado: true,
-        dataEmailEnviado: new Date(),
-    });
-    console.log(`[webhook] Reserva ${externalReference} atualizada e e-mail enviado.`);
+    console.log(`[webhook] Reserva ${externalReference} atualizada.`);
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function shouldProcess(event, payment) {

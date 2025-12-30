@@ -53,17 +53,18 @@ function e() {
         fs.mkdirSync(d, { recursive: true });
 }
 function c() {
-    const ws = XLSX.utils.json_to_sheet([]);
+    const ws = XLSX.utils.json_to_sheet([{ n: "", t: "", v: "", c: "", x: "" }]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "l");
     return wb;
 }
 function r() {
     try {
+        e();
         const wb = c();
         XLSX.writeFile(wb, f);
     }
-    catch (e) { }
+    catch (err) { }
 }
 function i() {
     e();
@@ -90,12 +91,21 @@ function a(o) {
         wb.Sheets["l"] = nws;
         XLSX.writeFile(wb, f);
     }
-    catch (e) { }
+    catch (err) { }
 }
 function g() {
-    if (!fs.existsSync(f))
-        throw new Error("not found");
-    return fs.readFileSync(f);
+    try {
+        e();
+        if (!fs.existsSync(f)) {
+            const wb = c();
+            XLSX.writeFile(wb, f);
+        }
+        return fs.readFileSync(f);
+    }
+    catch (err) {
+        const wb = c();
+        return XLSX.write(wb, { type: "buffer" });
+    }
 }
 function v(p) {
     return p === s;
