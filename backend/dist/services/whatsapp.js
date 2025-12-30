@@ -1,11 +1,14 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.enviarConfirmacaoWhatsapp = enviarConfirmacaoWhatsapp;
-exports.obterStatusWhatsApp = obterStatusWhatsApp;
-exports.desconectarWhatsApp = desconectarWhatsApp;
 exports.iniciarWhatsApp = iniciarWhatsApp;
+exports.desconectarWhatsApp = desconectarWhatsApp;
+exports.obterStatusWhatsApp = obterStatusWhatsApp;
+exports.enviarConfirmacaoWhatsapp = enviarConfirmacaoWhatsapp;
 const whatsapp_web_js_1 = require("whatsapp-web.js");
-const qrcode_1 = require("qrcode");
+const qrcode_1 = __importDefault(require("qrcode"));
 const firestore_1 = require("firebase/firestore");
 const firebase_1 = require("./firebase");
 const TEMPLATE_PADRAO = "Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.";
@@ -40,7 +43,7 @@ function iniciarWhatsApp() {
         status = "qr";
         lastQrAt = Date.now();
         try {
-            qrDataUrl = await (0, qrcode_1.toDataURL)(qr);
+            qrDataUrl = await qrcode_1.default.toDataURL(qr);
         }
         catch (error) {
             lastError = error?.message || "qr_error";
@@ -123,7 +126,7 @@ const formatarDataReserva = (valor) => {
         const ano = valor.getFullYear();
         return `${dia}/${mes}/${ano}`;
     }
-    const maybeDate = valor?.toDate?.();
+    const maybeDate = valor.toDate?.();
     if (maybeDate instanceof Date) {
         return formatarDataReserva(maybeDate);
     }

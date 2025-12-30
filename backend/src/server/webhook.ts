@@ -119,7 +119,10 @@ async function handleWebhook(payload: WebhookPayload) {
     dataPagamento: new Date(),
   });
 
-  const reserva = { ...reservaSnap.data(), status: "pago" };
+  const reserva: Record<string, any> = {
+    ...(reservaSnap.data() as Record<string, any>),
+    status: "pago",
+  };
   if (!reserva.whatsappEnviado) {
     try {
       const resultado = await enviarConfirmacaoWhatsapp(externalReference, reserva);
