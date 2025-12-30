@@ -21,6 +21,15 @@ const normalizarMapa = (mapa) => {
   );
 };
 
+const somenteNumeros = (valor) => (valor ? valor.replace(/\D/g, "") : "");
+const limparTexto = (valor) => (typeof valor === "string" ? valor.trim() : "");
+const normalizarAnoValidade = (valor) => {
+  const numeros = somenteNumeros(valor);
+  if (!numeros) return "";
+  if (numeros.length === 2) return `20${numeros}`;
+  return numeros.slice(0, 4);
+};
+
 async function criarCobrancaHandler(req, res) {
   const {
     nome,
@@ -38,6 +47,8 @@ async function criarCobrancaHandler(req, res) {
     naoPagante,
     participantesPorTipo,
     billingType,
+    creditCard,
+    creditCardHolderInfo,
     temPet,
   } = req.body;
 
@@ -87,6 +98,90 @@ async function criarCobrancaHandler(req, res) {
     return;
   }
 
+  const cpfLimpo = somenteNumeros(cpf);
+  const telefoneLimpo = somenteNumeros(telefone);
+
+  const creditCardNormalizado = creditCard
+    ? {
+        holderName: limparTexto(creditCard.holderName),
+        number: somenteNumeros(creditCard.number),
+        expiryMonth: somenteNumeros(creditCard.expiryMonth).padStart(2, "0"),
+        expiryYear: normalizarAnoValidade(creditCard.expiryYear),
+        ccv: somenteNumeros(creditCard.ccv),
+      }
+    : undefined;
+
+  const creditCardHolderNormalizado = creditCardHolderInfo
+    ? {
+        name: limparTexto(creditCardHolderInfo.name) || limparTexto(nome),
+        email: limparTexto(creditCardHolderInfo.email) || limparTexto(email),
+        cpfCnpj: somenteNumeros(creditCardHolderInfo.cpfCnpj || cpfLimpo),
+        postalCode: somenteNumeros(creditCardHolderInfo.postalCode),
+        address: limparTexto(creditCardHolderInfo.address),
+        addressNumber: limparTexto(creditCardHolderInfo.addressNumber),
+        addressComplement: limparTexto(creditCardHolderInfo.addressComplement) || undefined,
+        province: limparTexto(creditCardHolderInfo.province),
+        city: limparTexto(creditCardHolderInfo.city),
+        state: limparTexto(creditCardHolderInfo.state).toUpperCase(),
+        phone: somenteNumeros(creditCardHolderInfo.phone || telefoneLimpo),
+      }
+    : undefined;
+
+  if (billingType === "CREDIT_CARD") {
+    const camposCartaoFaltando = [];
+    if (!creditCardNormalizado) {
+      camposCartaoFaltando.push("creditCard");
+    } else {
+      if (!creditCardNormalizado.holderName) camposCartaoFaltando.push("creditCard.holderName");
+      if (!creditCardNormalizado.number) camposCartaoFaltando.push("creditCard.number");
+      if (!creditCardNormalizado.expiryMonth) camposCartaoFaltando.push("creditCard.expiryMonth");
+      if (!creditCardNormalizado.expiryYear) camposCartaoFaltando.push("creditCard.expiryYear");
+      if (!creditCardNormalizado.ccv) camposCartaoFaltando.push("creditCard.ccv");
+      const mes = Number(creditCardNormalizado.expiryMonth);
+      if (!Number.isFinite(mes) || mes < 1 || mes > 12) {
+        camposCartaoFaltando.push("creditCard.expiryMonth");
+      }
+      if (creditCardNormalizado.number.length < 13) {
+        camposCartaoFaltando.push("creditCard.number");
+      }
+      if (creditCardNormalizado.ccv.length < 3) {
+        camposCartaoFaltando.push("creditCard.ccv");
+      }
+    }
+
+    if (!creditCardHolderNormalizado) {
+      camposCartaoFaltando.push("creditCardHolderInfo");
+    } else {
+      if (!creditCardHolderNormalizado.name) camposCartaoFaltando.push("creditCardHolderInfo.name");
+      if (!creditCardHolderNormalizado.email) camposCartaoFaltando.push("creditCardHolderInfo.email");
+      if (!creditCardHolderNormalizado.cpfCnpj) camposCartaoFaltando.push("creditCardHolderInfo.cpfCnpj");
+      if (!creditCardHolderNormalizado.postalCode) {
+        camposCartaoFaltando.push("creditCardHolderInfo.postalCode");
+      }
+      if (!creditCardHolderNormalizado.address) camposCartaoFaltando.push("creditCardHolderInfo.address");
+      if (!creditCardHolderNormalizado.addressNumber) {
+        camposCartaoFaltando.push("creditCardHolderInfo.addressNumber");
+      }
+      if (!creditCardHolderNormalizado.province) {
+        camposCartaoFaltando.push("creditCardHolderInfo.province");
+      }
+      if (!creditCardHolderNormalizado.city) camposCartaoFaltando.push("creditCardHolderInfo.city");
+      if (!creditCardHolderNormalizado.state || creditCardHolderNormalizado.state.length !== 2) {
+        camposCartaoFaltando.push("creditCardHolderInfo.state");
+      }
+      if (!creditCardHolderNormalizado.phone) camposCartaoFaltando.push("creditCardHolderInfo.phone");
+    }
+
+    if (camposCartaoFaltando.length > 0) {
+      res.status(400).json({
+        status: "erro",
+        error: "Dados do cartao incompletos.",
+        camposFaltando: camposCartaoFaltando,
+      });
+      return;
+    }
+  }
+
   try {
     // 🔍 Verificar disponibilidade no Firebase
     const reservasQuery = db.collection("reservas")
@@ -113,7 +208,7 @@ async function criarCobrancaHandler(req, res) {
 
     // 🔍 Verificar se o cliente já existe no Asaas (pelo CPF)
     const customerSearch = await fetch(
-      `https://api.asaas.com/v3/customers?cpfCnpj=${cpf}`,
+      `https://api.asaas.com/v3/customers?cpfCnpj=${cpfLimpo}`,
       {
         method: "GET",
         headers: {
@@ -138,8 +233,8 @@ async function criarCobrancaHandler(req, res) {
         body: JSON.stringify({
           name: nome,
           email,
-          cpfCnpj: cpf,
-          phone: telefone,
+          cpfCnpj: cpfLimpo,
+          phone: telefoneLimpo,
           notificationDisabledSet: true,
         }),
       });
@@ -183,6 +278,20 @@ async function criarCobrancaHandler(req, res) {
     console.log('✅ Reserva criada no Firebase com ID:', reservaId);
 
     // 💰 Criar pagamento com o customer correto
+    const paymentPayload = {
+      billingType,
+      customer: customerId,
+      value: valor,
+      dueDate: dataHoje,
+      description: `${atividade} - ${data} ${horarioFormatado} - ${participantesConsiderados}p - Pet:${temPet}`,
+      externalReference: reservaId,
+    };
+
+    if (billingType === "CREDIT_CARD" && creditCardNormalizado && creditCardHolderNormalizado) {
+      paymentPayload.creditCard = creditCardNormalizado;
+      paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
+    }
+
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
       method: "POST",
       headers: {
@@ -190,14 +299,7 @@ async function criarCobrancaHandler(req, res) {
         accept: "application/json",
         access_token: process.env.ASAAS_API_KEY,
       },
-      body: JSON.stringify({
-        billingType,
-        customer: customerId,
-        value: valor,
-        dueDate: dataHoje,
-        description: `${atividade} - ${data} ${horarioFormatado} - ${participantesConsiderados}p - Pet:${temPet}`,
-        externalReference: reservaId,
-      }),
+      body: JSON.stringify(paymentPayload),
     });
 
     const cobrancaData = await paymentResponse.json();
