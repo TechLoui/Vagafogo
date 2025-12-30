@@ -4,6 +4,23 @@ import { getDocs, collection, query, where, doc, getDoc } from "firebase/firesto
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
+const normalizarNumero = (valor: unknown) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+
+const somarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return 0;
+  return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
+};
+
+const normalizarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return undefined;
+  return Object.fromEntries(
+    Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)])
+  );
+};
+
 export type CriarCobrancaPayload = {
   nome: string;
   email: string;
@@ -18,6 +35,7 @@ export type CriarCobrancaPayload = {
   bariatrica: number;
   criancas: number;
   naoPagante: number;
+  participantesPorTipo?: Record<string, number>;
   billingType: "PIX" | "CREDIT_CARD";
   temPet?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
@@ -48,16 +66,23 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     bariatrica,
     criancas,
     naoPagante,
+    participantesPorTipo,
     billingType,
-  temPet,
-  perguntasPersonalizadas,
+    temPet,
+    perguntasPersonalizadas,
 } = req.body as CriarCobrancaPayload;
 
   console.log("📥 Dados recebidos:", req.body);
 
   const horarioFormatado = horario?.toString().trim();
-  const participantesCalculados =
-    (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0) + (naoPagante ?? 0);
+  const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+  const mapaAtivo =
+    participantesPorTipoNormalizado &&
+    Object.keys(participantesPorTipoNormalizado).length > 0;
+  const participantesCalculadosBase = mapaAtivo
+    ? somarMapa(participantesPorTipoNormalizado)
+    : (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
   const participantesConsiderados = Math.max(
     participantesCalculados,
     Number.isFinite(participantes) ? participantes : 0
@@ -204,6 +229,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       bariatrica,
       criancas,
       naoPagante,
+      participantesPorTipo: participantesPorTipoNormalizado,
       observacao: "",
       horario: horarioFormatado,
       status: "aguardando",

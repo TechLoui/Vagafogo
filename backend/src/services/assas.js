@@ -4,6 +4,23 @@ const fetch = require('node-fetch');
 // Usar a mesma instância do Firestore do test-api.js
 const db = admin.firestore();
 
+const normalizarNumero = (valor) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+
+const somarMapa = (mapa) => {
+  if (!mapa) return 0;
+  return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
+};
+
+const normalizarMapa = (mapa) => {
+  if (!mapa) return undefined;
+  return Object.fromEntries(
+    Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)])
+  );
+};
+
 async function criarCobrancaHandler(req, res) {
   const {
     nome,
@@ -19,6 +36,7 @@ async function criarCobrancaHandler(req, res) {
     bariatrica,
     criancas,
     naoPagante,
+    participantesPorTipo,
     billingType,
     temPet,
   } = req.body;
@@ -26,6 +44,18 @@ async function criarCobrancaHandler(req, res) {
   console.log("📥 Nova reserva:", nome, "-", atividade);
 
   const horarioFormatado = horario?.toString().trim();
+  const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+  const mapaAtivo =
+    participantesPorTipoNormalizado &&
+    Object.keys(participantesPorTipoNormalizado).length > 0;
+  const participantesCalculadosBase = mapaAtivo
+    ? somarMapa(participantesPorTipoNormalizado)
+    : (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
+  const participantesConsiderados = Math.max(
+    participantesCalculados,
+    Number.isFinite(participantes) ? participantes : 0
+  );
 
   // Debug detalhado dos campos
   const camposFaltando = [];
@@ -37,7 +67,7 @@ async function criarCobrancaHandler(req, res) {
   if (!atividade) camposFaltando.push('atividade');
   if (!data) camposFaltando.push('data');
   if (!horarioFormatado) camposFaltando.push('horario');
-  if (!participantes) camposFaltando.push('participantes');
+  if (participantesConsiderados <= 0) camposFaltando.push('participantes');
   if (!billingType) camposFaltando.push('billingType');
 
   if (camposFaltando.length > 0) {
@@ -71,7 +101,7 @@ async function criarCobrancaHandler(req, res) {
       totalReservados += dados.participantes || 0;
     });
 
-    if (totalReservados + participantes > 30) {
+    if (totalReservados + participantesConsiderados > 30) {
       res.status(400).json({
         status: "erro",
         error: "Limite de 30 pessoas por horário atingido. Escolha outro horário.",
@@ -134,11 +164,12 @@ async function criarCobrancaHandler(req, res) {
       atividade,
       valor,
       data,
-      participantes,
+      participantes: participantesConsiderados,
       adultos,
       bariatrica,
       criancas,
       naoPagante,
+      ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
       observacao: "",
       horario: horarioFormatado,
       temPet,
@@ -164,7 +195,7 @@ async function criarCobrancaHandler(req, res) {
         customer: customerId,
         value: valor,
         dueDate: dataHoje,
-        description: `${atividade} - ${data} ${horarioFormatado} - ${participantes}p - Pet:${temPet}`,
+        description: `${atividade} - ${data} ${horarioFormatado} - ${participantesConsiderados}p - Pet:${temPet}`,
         externalReference: reservaId,
       }),
     });

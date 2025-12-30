@@ -38,6 +38,16 @@ type PerguntaPersonalizadaRespostaPayload = {
   perguntaCondicional?: PerguntaCondicionalRespostaPayload;
 };
 
+type TipoCliente = {
+  id?: string;
+  nome: string;
+  descricao?: string;
+};
+
+type TipoClienteQuantidade = Record<string, number>;
+
+type TipoClientePreco = Record<string, number>;
+
 type Pacote = {
   id?: string;
   nome: string;
@@ -46,6 +56,7 @@ type Pacote = {
   precoAdulto: number;
   precoCrianca: number;
   precoBariatrica: number;
+  precosPorTipo?: TipoClientePreco;
   horarios?: string[];
   dias: number[];
   limite?: number;
@@ -65,6 +76,7 @@ type Combo = {
   precoAdulto?: number;
   precoCrianca?: number;
   precoBariatrica?: number;
+  precosPorTipo?: TipoClientePreco;
   desconto?: number;
   ativo: boolean;
 };
@@ -77,18 +89,74 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
-const hasCustomComboPricing = (combo?: Combo | null) => {
-  if (!combo) return false;
-  const valores = [combo.precoAdulto, combo.precoCrianca, combo.precoBariatrica];
-  return valores.some((valor) => (valor ?? 0) > 0);
+const tiposClientesPadrao: TipoCliente[] = [
+  { id: "adulto", nome: "Adulto" },
+  { id: "crianca", nome: "Criança" },
+  { id: "bariatrico", nome: "Bariátrico" },
+];
+
+const normalizarTexto = (valor: string) =>
+  valor
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const obterChaveTipo = (tipo: TipoCliente) => tipo.id ?? normalizarTexto(tipo.nome);
+
+const obterValorMapa = (
+  mapa: Record<string, number> | undefined,
+  tipo: TipoCliente
+) => {
+  if (!mapa) return undefined;
+  if (tipo.id && tipo.id in mapa) return Number(mapa[tipo.id]);
+  if (tipo.nome in mapa) return Number(mapa[tipo.nome]);
+  const nomeNormalizado = normalizarTexto(tipo.nome);
+  for (const [chave, valor] of Object.entries(mapa)) {
+    if (normalizarTexto(chave) === nomeNormalizado) {
+      return Number(valor);
+    }
+  }
+  return undefined;
 };
 
-const describeComboValores = (combo: Combo) => {
-  const partes: string[] = [];
-  if ((combo.precoAdulto ?? 0) > 0) partes.push(`Adulto ${formatCurrency(combo.precoAdulto ?? 0)}`);
-  if ((combo.precoCrianca ?? 0) > 0) partes.push(`Criança ${formatCurrency(combo.precoCrianca ?? 0)}`);
-  if ((combo.precoBariatrica ?? 0) > 0) partes.push(`Bariátrica ${formatCurrency(combo.precoBariatrica ?? 0)}`);
-  return partes.join(" • ");
+const obterValorPorTipoNome = (
+  mapa: Record<string, number> | undefined,
+  tipos: TipoCliente[],
+  termo: string
+) => {
+  const tipo = tipos.find((item) => normalizarTexto(item.nome).includes(termo));
+  if (!tipo) return undefined;
+  const valor = obterValorMapa(mapa, tipo);
+  return Number.isFinite(valor) ? Number(valor) : undefined;
+};
+
+const obterPrecoLegado = (
+  tipo: TipoCliente,
+  legado?: { precoAdulto?: number; precoCrianca?: number; precoBariatrica?: number }
+) => {
+  if (!legado) return 0;
+  const nome = normalizarTexto(tipo.nome);
+  if (nome.includes("adult")) return Number(legado.precoAdulto ?? 0);
+  if (nome.includes("crian")) return Number(legado.precoCrianca ?? 0);
+  if (nome.includes("bariat")) return Number(legado.precoBariatrica ?? 0);
+  return 0;
+};
+
+const obterPrecoPorTipo = (
+  mapa: Record<string, number> | undefined,
+  tipo: TipoCliente,
+  legado?: { precoAdulto?: number; precoCrianca?: number; precoBariatrica?: number }
+) => {
+  const valor = obterValorMapa(mapa, tipo);
+  if (Number.isFinite(valor)) return Number(valor);
+  return obterPrecoLegado(tipo, legado);
+};
+
+const somarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return 0;
+  return Object.values(mapa).reduce((total, valor) => total + (Number(valor) || 0), 0);
 };
 
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
@@ -167,6 +235,7 @@ const parseHorarioParaMinutos = (valor: string) => {
 export function BookingSection() {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
+  const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
   const [loadingPacotes, setLoadingPacotes] = useState(true);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
 
@@ -179,9 +248,7 @@ export function BookingSection() {
   const [horario, setHorario] = useState<string>("");
   const [diasBloqueados, setDiasBloqueados] = useState<Set<string>>(new Set());
   const [diaSelecionadoFechado, setDiaSelecionadoFechado] = useState(false);
-  const [adultos, setAdultos] = useState<number>(1);
-  const [bariatrica, setBariatica] = useState<number>(0);
-  const [criancas, setCriancas] = useState<number>(0);
+  const [participantesPorTipo, setParticipantesPorTipo] = useState<TipoClienteQuantidade>({});
   const [naoPagante, setPagante] = useState<number>(0);
   const [temPet, setTemPet] = useState<boolean | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -197,6 +264,7 @@ export function BookingSection() {
   const telefoneRef = useRef<HTMLInputElement | null>(null);
   const dataRef = useRef<HTMLDivElement | null>(null);
   const horarioRef = useRef<HTMLDivElement | null>(null);
+  const participantesRef = useRef<HTMLDivElement | null>(null);
   const petRef = useRef<HTMLDivElement | null>(null);
 
 
@@ -268,7 +336,7 @@ export function BookingSection() {
   };
 
   const scrollToErrorField = useCallback((errors: Record<string, string>) => {
-    const order = ["pacotes", "nome", "email", "cpf", "telefone", "data", "horario", "pet"] as const;
+    const order = ["pacotes", "nome", "email", "cpf", "telefone", "data", "horario", "participantes", "pet"] as const;
     const getTarget = (key: (typeof order)[number]): HTMLElement | null => {
       switch (key) {
         case "pacotes":
@@ -285,6 +353,8 @@ export function BookingSection() {
           return dataRef.current;
         case "horario":
           return horarioRef.current;
+        case "participantes":
+          return participantesRef.current;
         case "pet":
           return petRef.current;
         default:
@@ -317,6 +387,19 @@ export function BookingSection() {
   useEffect(() => {
     async function fetchData() {
       try {
+        const tiposSnapshot = await getDocs(collection(db, "tipos_clientes"));
+        const tiposData = tiposSnapshot.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as Partial<TipoCliente>;
+            return {
+              id: docSnap.id,
+              nome: data.nome ?? "",
+              descricao: data.descricao ?? "",
+            } as TipoCliente;
+          })
+          .filter((tipo) => tipo.nome.trim().length > 0)
+          .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+
         // Buscar pacotes do Firestore
         const pacotesSnapshot = await getDocs(collection(db, 'pacotes'));
         const pacotesData = pacotesSnapshot.docs.map(doc => ({
@@ -329,6 +412,12 @@ export function BookingSection() {
         const combosData = combosSnapshot.docs
           .map((docSnap) => {
             const data = docSnap.data() as any;
+            const precosPorTipo =
+              data.precosPorTipo && typeof data.precosPorTipo === "object"
+                ? Object.fromEntries(
+                    Object.entries(data.precosPorTipo).map(([chave, valor]) => [chave, Number(valor) || 0])
+                  )
+                : undefined;
             return {
               id: docSnap.id,
               nome: data.nome || '',
@@ -337,6 +426,7 @@ export function BookingSection() {
               precoAdulto: Number(data.precoAdulto ?? 0),
               precoCrianca: Number(data.precoCrianca ?? 0),
               precoBariatrica: Number(data.precoBariatrica ?? 0),
+              precosPorTipo,
               desconto: Number(data.desconto ?? 0),
               ativo: data.ativo !== false,
             } as Combo;
@@ -351,6 +441,12 @@ export function BookingSection() {
           precoAdulto: Number(d.precoAdulto),
           precoCrianca: Number(d.precoCrianca),
           precoBariatrica: Number(d.precoBariatrica),
+          precosPorTipo:
+            d.precosPorTipo && typeof d.precosPorTipo === "object"
+              ? Object.fromEntries(
+                  Object.entries(d.precosPorTipo).map(([chave, valor]) => [chave, Number(valor) || 0])
+                )
+              : undefined,
           horarios: d.horarios ?? [],
           dias: Array.isArray(d.dias) ? d.dias : [],
           limite: d.limite !== undefined ? Number(d.limite) : undefined,
@@ -362,6 +458,7 @@ export function BookingSection() {
           perguntasPersonalizadas: Array.isArray(d.perguntasPersonalizadas) ? d.perguntasPersonalizadas : [],
       }));
         
+        setTiposClientes(tiposData);
         setPacotes(arr);
         setCombos(combosData);
         
@@ -374,12 +471,61 @@ export function BookingSection() {
         console.error('Erro ao buscar dados:', err);
         setPacotes([]);
         setCombos([]);
+        setTiposClientes([]);
       } finally {
         setLoadingPacotes(false);
       }
     }
     fetchData();
   }, []);
+
+  const tiposClientesAtivos = useMemo(() => {
+    if (tiposClientes.length > 0) return tiposClientes;
+    return tiposClientesPadrao;
+  }, [tiposClientes]);
+
+  useEffect(() => {
+    setParticipantesPorTipo((prev) => {
+      const proximo: TipoClienteQuantidade = {};
+      tiposClientesAtivos.forEach((tipo, index) => {
+        const chave = obterChaveTipo(tipo);
+        const existente = obterValorMapa(prev, tipo);
+        if (Number.isFinite(existente)) {
+          proximo[chave] = Number(existente);
+          return;
+        }
+        if (Object.keys(prev).length === 0 && index === 0) {
+          proximo[chave] = 1;
+          return;
+        }
+        proximo[chave] = 0;
+      });
+      return proximo;
+    });
+  }, [tiposClientesAtivos]);
+
+  const hasCustomComboPricing = useCallback(
+    (combo?: Combo | null) => {
+      if (!combo) return false;
+      return tiposClientesAtivos.some(
+        (tipo) => obterPrecoPorTipo(combo.precosPorTipo, tipo, combo) > 0
+      );
+    },
+    [tiposClientesAtivos]
+  );
+
+  const describeComboValores = useCallback(
+    (combo: Combo) => {
+      const partes = tiposClientesAtivos
+        .map((tipo) => {
+          const valor = obterPrecoPorTipo(combo.precosPorTipo, tipo, combo);
+          return valor > 0 ? `${tipo.nome} ${formatCurrency(valor)}` : "";
+        })
+        .filter((valor) => valor.length > 0);
+      return partes.join(" • ");
+    },
+    [tiposClientesAtivos]
+  );
 
   useEffect(() => {
     const q = query(collection(db, "disponibilidade"), where("fechado", "==", true));
@@ -576,16 +722,22 @@ export function BookingSection() {
 
   const calcularTotal = () => {
     let total = 0;
-    selectedPacotes.forEach((p) => {
-      total += adultos * p.precoAdulto + criancas * p.precoCrianca + bariatrica * p.precoBariatrica;
+    selectedPacotes.forEach((pacote) => {
+      const subtotal = tiposClientesAtivos.reduce((acc, tipo) => {
+        const quantidade = Number(obterValorMapa(participantesPorTipo, tipo) ?? 0);
+        const preco = obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote);
+        return acc + quantidade * preco;
+      }, 0);
+      total += subtotal;
     });
 
     if (comboAtivo) {
       if (hasCustomComboPricing(comboAtivo)) {
-        total =
-          adultos * Number(comboAtivo.precoAdulto ?? 0) +
-          criancas * Number(comboAtivo.precoCrianca ?? 0) +
-          bariatrica * Number(comboAtivo.precoBariatrica ?? 0);
+        total = tiposClientesAtivos.reduce((acc, tipo) => {
+          const quantidade = Number(obterValorMapa(participantesPorTipo, tipo) ?? 0);
+          const preco = obterPrecoPorTipo(comboAtivo.precosPorTipo, tipo, comboAtivo);
+          return acc + quantidade * preco;
+        }, 0);
       } else {
         const valorCombo = Number(comboAtivo.preco);
         if (Number.isFinite(valorCombo) && valorCombo > 0) {
@@ -849,6 +1001,11 @@ export function BookingSection() {
       errors.horario = "Não há horários disponíveis para os pacotes selecionados nesta data.";
     }
 
+    const totalParticipantes = somarMapa(participantesPorTipo) + naoPagante;
+    if (totalParticipantes <= 0) {
+      errors.participantes = "Informe a quantidade de participantes.";
+    }
+
     if (temPet === null) {
       errors.pet = "Informe se vai levar pet.";
     }
@@ -882,7 +1039,7 @@ export function BookingSection() {
 
     try {
       const dataStr = selectedDay.toISOString().slice(0, 10);
-      const totalParticipantes = adultos + criancas + bariatrica + naoPagante;
+      const totalParticipantes = somarMapa(participantesPorTipo) + naoPagante;
       const total = calcularTotal();
       const horarioSelecionado =
         horariosDisponiveis.length > 0 && horario
@@ -900,6 +1057,10 @@ export function BookingSection() {
               : ` (Combo: ${comboAtivo.nome})`
         : "";
 
+      const adultos = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "adult") ?? 0;
+      const criancas = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "crian") ?? 0;
+      const bariatrica = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "bariat") ?? 0;
+
       const payload: any = {
         nome,
         email,
@@ -909,6 +1070,7 @@ export function BookingSection() {
         atividade: atividades + comboInfo,
         data: dataStr,
         participantes: totalParticipantes,
+        participantesPorTipo,
         adultos,
         bariatrica,
         criancas,
@@ -1076,15 +1238,11 @@ export function BookingSection() {
                         <h3 className="font-semibold text-gray-800">
                           {pacote.emoji} {pacote.nome}
                         </h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Adulto: R$ {pacote.precoAdulto.toFixed(2)}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Criança: R$ {pacote.precoCrianca.toFixed(2)}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Bariátrica: R$ {pacote.precoBariatrica.toFixed(2)}
-                        </p>
+                        {tiposClientesAtivos.map((tipo) => (
+                          <p key={obterChaveTipo(tipo)} className="text-sm text-gray-600">
+                            {tipo.nome}: {formatCurrency(obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote))}
+                          </p>
+                        ))}
                       </div>
                       <input
                         type="checkbox"
@@ -1315,62 +1473,57 @@ export function BookingSection() {
             )}
 
             {/* Número de Participantes */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Adultos *
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={adultos}
-                  onChange={(e) => setAdultos(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
-                  required
-                />
+            <div ref={participantesRef} className="mb-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {tiposClientesAtivos.map((tipo) => {
+                  const chave = obterChaveTipo(tipo);
+                  const valor = Number(obterValorMapa(participantesPorTipo, tipo) ?? 0);
+                  return (
+                    <div key={chave}>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {tipo.nome}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={valor}
+                        onChange={(e) => {
+                          const valor = Number(e.target.value);
+                          setParticipantesPorTipo((prev) => ({
+                            ...prev,
+                            [chave]: valor,
+                          }));
+                          setFieldError("participantes");
+                        }}
+                        className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
+                      />
+                    </div>
+                  );
+                })}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Não Pagante
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={naoPagante}
+                    onChange={(e) => {
+                      setPagante(Number(e.target.value));
+                      setFieldError("participantes");
+                    }}
+                    className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
+                  />
+                </div>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Crianças
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={criancas}
-                  onChange={(e) => setCriancas(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Bariátrica
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={bariatrica}
-                  onChange={(e) => setBariatica(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Não Pagante
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={naoPagante}
-                  onChange={(e) => setPagante(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
-                />
-              </div>
+
+              {formErrors.participantes && (
+                <p className="mt-2 text-sm text-red-600">{formErrors.participantes}</p>
+              )}
             </div>
-            
-            {bariatrica > 0 && (
+
+            {((obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "bariat") ?? 0) > 0) && (
               <div className="mb-6 p-3 bg-orange-50 border border-orange-200 rounded-lg">
                 <p className="text-sm text-orange-700">
                   ⚠️ <strong>Importante:</strong> É obrigatório apresentar a carteirinha bariátrica via WhatsApp após a reserva para validação.

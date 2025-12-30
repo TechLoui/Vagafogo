@@ -3,6 +3,23 @@ import { doc, setDoc, Timestamp } from "firebase/firestore";
 import { v4 as uuidv4 } from "uuid";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
+const normalizarNumero = (valor: unknown) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+
+const somarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return 0;
+  return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
+};
+
+const normalizarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return undefined;
+  return Object.fromEntries(
+    Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)])
+  );
+};
+
 export type CriarReservaPayload = {
   nome: string;
   cpf: string;
@@ -16,6 +33,7 @@ export type CriarReservaPayload = {
   criancas: number;
   naoPagante: number;
   participantes: number;
+  participantesPorTipo?: Record<string, number>;
   horario: string | null;
   status?: string;
   observacao?: string;
@@ -36,6 +54,8 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     bariatrica,
     criancas,
     naoPagante,
+    participantes,
+    participantesPorTipo,
     horario,
     status = "aguardando",
     observacao = "",
@@ -43,8 +63,18 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     perguntasPersonalizadas,
   } = payload;
 
-  const totalParticipantes =
-    (adultos ?? 0) + (bariatrica ?? 0) + (criancas ?? 0) + (naoPagante ?? 0);
+  const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+  const mapaAtivo =
+    participantesPorTipoNormalizado &&
+    Object.keys(participantesPorTipoNormalizado).length > 0;
+  const participantesCalculadosBase = mapaAtivo
+    ? somarMapa(participantesPorTipoNormalizado)
+    : (adultos ?? 0) + (bariatrica ?? 0) + (criancas ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
+  const participantesConsiderados = Math.max(
+    participantesCalculados,
+    Number.isFinite(participantes) ? participantes : 0
+  );
 
   const reservaId = uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
@@ -57,11 +87,12 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     telefone,
     atividade,
     data,
-    participantes: totalParticipantes,
+    participantes: participantesConsiderados,
     adultos,
     bariatrica,
     criancas,
     naoPagante,
+    ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
     horario,
     status,
     observacao,

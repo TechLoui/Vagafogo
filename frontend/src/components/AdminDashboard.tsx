@@ -26,6 +26,25 @@ const moedaFormatter = new Intl.NumberFormat('pt-BR', {
 
 const formatCurrency = (valor: number) => moedaFormatter.format(Number.isFinite(valor) ? valor : 0);
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
+
+const whatsappTemplatePadrao =
+  'Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
+
+const whatsappPlaceholders = ['{nome}', '{datareserva}', '{horario}', '{atividade}', '{participantes}', '{telefone}', '{valor}'];
+
+const formatarDataReserva = (data?: string) => {
+  if (!data) return '';
+  const parsed = dayjs(data);
+  if (!parsed.isValid()) return data;
+  return parsed.format('DD/MM/YYYY');
+};
+
+const montarMensagemWhatsApp = (template: string, dados: Record<string, string>) =>
+  template.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, chave) => {
+    const valor = dados[chave];
+    return valor !== undefined ? valor : match;
+  });
 
 
 
@@ -103,6 +122,8 @@ interface Pacote {
 
   precoBariatrica: number;
 
+  precosPorTipo?: Record<string, number>;
+
   horarios: string[];
 
   dias: number[];
@@ -141,6 +162,8 @@ interface Combo {
 
   precoBariatrica: number;
 
+  precosPorTipo?: Record<string, number>;
+
   ativo: boolean;
 
 }
@@ -175,7 +198,43 @@ interface MesaSelecionada {
 
 }
 
+interface WhatsappConfig {
 
+  ativo: boolean;
+
+  mensagemConfirmacao: string;
+
+}
+
+interface WhatsappStatus {
+
+  status: string;
+
+  qr?: string | null;
+
+  lastError?: string | null;
+
+  info?: {
+
+    wid?: string;
+
+    pushname?: string;
+
+  };
+
+}
+
+
+
+interface TipoCliente {
+
+  id?: string;
+
+  nome: string;
+
+  descricao?: string;
+
+}
 
 interface Reserva {
 
@@ -194,6 +253,8 @@ interface Reserva {
   naoPagante?: number;
 
   bariatrica?: number;
+
+  participantesPorTipo?: Record<string, number>;
 
   data: string;
 
@@ -244,6 +305,218 @@ const horariosDisponiveis = [
 ];
 
 
+
+const tiposClientesPadrao: Array<Omit<TipoCliente, 'id'>> = [
+
+  { nome: 'Adulto', descricao: '' },
+
+  { nome: 'Criança', descricao: '' },
+
+  { nome: 'Bariátrico', descricao: '' },
+
+];
+
+const criarTipoClienteVazio = (): TipoCliente => ({
+
+  nome: '',
+
+  descricao: '',
+
+});
+
+const normalizarTexto = (valor: string) =>
+
+  valor
+
+    .toString()
+
+    .trim()
+
+    .toLowerCase()
+
+    .normalize('NFD')
+
+    .replace(/[\u0300-\u036f]/g, '');
+
+const obterChaveTipo = (tipo: TipoCliente) => tipo.id ?? normalizarTexto(tipo.nome);
+
+const obterValorMapa = (
+
+  mapa: Record<string, number> | undefined,
+
+  tipo: TipoCliente
+
+) => {
+
+  if (!mapa) return undefined;
+
+  if (tipo.id && tipo.id in mapa) return Number(mapa[tipo.id]);
+
+  if (tipo.nome in mapa) return Number(mapa[tipo.nome]);
+
+  const nomeNormalizado = normalizarTexto(tipo.nome);
+
+  for (const [chave, valor] of Object.entries(mapa)) {
+
+    if (normalizarTexto(chave) === nomeNormalizado) {
+
+      return Number(valor);
+
+    }
+
+  }
+
+  return undefined;
+
+};
+
+const obterValorPorTipoNome = (
+
+  mapa: Record<string, number> | undefined,
+
+  tipos: TipoCliente[],
+
+  termo: string
+
+) => {
+
+  const tipo = tipos.find((item) => normalizarTexto(item.nome).includes(termo));
+
+  if (!tipo) return undefined;
+
+  const valor = obterValorMapa(mapa, tipo);
+
+  return Number.isFinite(valor) ? Number(valor) : undefined;
+
+};
+
+const obterPrecoLegado = (
+
+  tipo: TipoCliente,
+
+  legado?: { precoAdulto?: number; precoCrianca?: number; precoBariatrica?: number }
+
+) => {
+
+  if (!legado) return 0;
+
+  const nome = normalizarTexto(tipo.nome);
+
+  if (nome.includes('adult')) return Number(legado.precoAdulto ?? 0);
+
+  if (nome.includes('crian')) return Number(legado.precoCrianca ?? 0);
+
+  if (nome.includes('bariat')) return Number(legado.precoBariatrica ?? 0);
+
+  return 0;
+
+};
+
+const obterQuantidadeLegada = (
+
+  tipo: TipoCliente,
+
+  reserva: Pick<Reserva, 'adultos' | 'criancas' | 'bariatrica'>
+
+) => {
+
+  const nome = normalizarTexto(tipo.nome);
+
+  if (nome.includes('adult')) return Number(reserva.adultos ?? 0);
+
+  if (nome.includes('crian')) return Number(reserva.criancas ?? 0);
+
+  if (nome.includes('bariat')) return Number(reserva.bariatrica ?? 0);
+
+  return 0;
+
+};
+
+const montarPrecosPorTipo = (
+
+  tipos: TipoCliente[],
+
+  mapaAtual: Record<string, number> | undefined,
+
+  legado?: { precoAdulto?: number; precoCrianca?: number; precoBariatrica?: number }
+
+) => {
+
+  const resultado: Record<string, number> = { ...(mapaAtual ?? {}) };
+
+  tipos.forEach((tipo) => {
+
+    const chave = obterChaveTipo(tipo);
+
+    const existente = obterValorMapa(mapaAtual, tipo);
+
+    const legadoValor = obterPrecoLegado(tipo, legado);
+
+    const valor = Number.isFinite(existente) ? Number(existente) : legadoValor;
+
+    resultado[chave] = Number.isFinite(valor) ? Number(valor) : 0;
+
+  });
+
+  return resultado;
+
+};
+
+const obterPrecoPorTipo = (
+
+  mapa: Record<string, number> | undefined,
+
+  tipo: TipoCliente,
+
+  legado?: { precoAdulto?: number; precoCrianca?: number; precoBariatrica?: number }
+
+) => {
+
+  const valor = obterValorMapa(mapa, tipo);
+
+  if (Number.isFinite(valor)) return Number(valor);
+
+  return obterPrecoLegado(tipo, legado);
+
+};
+
+const montarParticipantesPorTipo = (
+
+  tipos: TipoCliente[],
+
+  reserva: Pick<Reserva, 'participantesPorTipo' | 'adultos' | 'criancas' | 'bariatrica'>
+
+) => {
+
+  const mapaAtual = reserva.participantesPorTipo ?? {};
+
+  const resultado: Record<string, number> = { ...mapaAtual };
+
+  tipos.forEach((tipo) => {
+
+    const chave = obterChaveTipo(tipo);
+
+    const existente = obterValorMapa(mapaAtual, tipo);
+
+    const legado = obterQuantidadeLegada(tipo, reserva);
+
+    const valor = Number.isFinite(existente) ? Number(existente) : legado;
+
+    resultado[chave] = Number.isFinite(valor) ? Number(valor) : 0;
+
+  });
+
+  return resultado;
+
+};
+
+const somarMapa = (mapa?: Record<string, number>) => {
+
+  if (!mapa) return 0;
+
+  return Object.values(mapa).reduce((total, valor) => total + (Number(valor) || 0), 0);
+
+};
 
 const ordenarHorarios = (lista: string[]) => (
 
@@ -341,7 +614,7 @@ const obterBadgeStatus = (reserva: Reserva) => {
 
 export default function AdminDashboard() {
 
-  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa'>('reservas');
+  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'>('reservas');
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -418,6 +691,36 @@ export default function AdminDashboard() {
   const [processandoFechamentoDia, setProcessandoFechamentoDia] = useState(false);
 
   const [processandoFechamentoPeriodo, setProcessandoFechamentoPeriodo] = useState(false);
+
+  // Tipos de clientes
+
+  const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
+
+  const [editTipoCliente, setEditTipoCliente] = useState<TipoCliente>(criarTipoClienteVazio);
+
+  const [isEditingTipoCliente, setIsEditingTipoCliente] = useState(false);
+
+  const [carregandoTiposClientes, setCarregandoTiposClientes] = useState(false);
+
+  const [salvandoTipoCliente, setSalvandoTipoCliente] = useState(false);
+
+  // WhatsApp
+
+  const [whatsappConfig, setWhatsappConfig] = useState<WhatsappConfig>({
+
+    ativo: false,
+
+    mensagemConfirmacao: whatsappTemplatePadrao,
+
+  });
+
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsappStatus | null>(null);
+
+  const [whatsappCarregando, setWhatsappCarregando] = useState(false);
+
+  const [whatsappSalvando, setWhatsappSalvando] = useState(false);
+
+  const [whatsappErro, setWhatsappErro] = useState<string | null>(null);
 
 
   const faixaHorarioDescricao = editPacote?.modoHorario === 'intervalo'
@@ -763,15 +1066,101 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, [pacotes]);
 
-  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
+  const nomesTiposClientesPadrao = useMemo(
+
+    () => new Set(tiposClientesPadrao.map((tipo) => tipo.nome.toLowerCase())),
+
+    []
+
+  );
+
+  const tiposClientesAtivos = useMemo(() => {
+
+    if (tiposClientes.length > 0) return tiposClientes;
+
+    return tiposClientesPadrao.map((tipo) => ({
+
+      ...tipo,
+
+      id: normalizarTexto(tipo.nome),
+
+    }));
+
+  }, [tiposClientes]);
+
+  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
     { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
 
     { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
 
-    { id: 'pesquisa', label: 'Clientes', description: 'Histórico de reservas', icon: FaSearch },
+    { id: 'tipos_clientes', label: 'Clientes', description: 'Tipos de clientes', icon: FaUsers },
+
+    { id: 'whatsapp', label: 'WhatsApp', description: 'Confirmacoes automaticas', icon: FaWhatsapp },
+
+    { id: 'pesquisa', label: 'Pesquisa', description: 'Histórico de reservas', icon: FaSearch },
 
   ];
+
+  const mensagemPreviewWhatsapp = useMemo(() => {
+
+    const dadosExemplo = {
+
+      nome: 'Cliente',
+
+      datareserva: formatarDataReserva(dayjs().add(1, 'day').format('YYYY-MM-DD')),
+
+      horario: '10:00',
+
+      atividade: 'Atividade',
+
+      participantes: '2',
+
+      telefone: '(00) 00000-0000',
+
+      valor: formatCurrency(120),
+
+    };
+
+    const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+
+    return montarMensagemWhatsApp(template, dadosExemplo);
+
+  }, [whatsappConfig.mensagemConfirmacao]);
+
+  const statusResumoWhatsapp = useMemo(() => {
+
+    const statusAtual = whatsappStatus?.status ?? 'idle';
+
+    switch (statusAtual) {
+
+      case 'ready':
+
+        return { label: 'Conectado', classes: 'bg-emerald-100 text-emerald-700' };
+
+      case 'qr':
+
+        return { label: 'Aguardando QR', classes: 'bg-amber-100 text-amber-700' };
+
+      case 'initializing':
+
+        return { label: 'Conectando', classes: 'bg-blue-100 text-blue-700' };
+
+      case 'auth_failure':
+
+        return { label: 'Falha de login', classes: 'bg-rose-100 text-rose-700' };
+
+      case 'disconnected':
+
+        return { label: 'Desconectado', classes: 'bg-slate-100 text-slate-600' };
+
+      default:
+
+        return { label: 'Indisponivel', classes: 'bg-slate-100 text-slate-600' };
+
+    }
+
+  }, [whatsappStatus?.status]);
 
 
 
@@ -965,6 +1354,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
       mesasRegistradas.reduce((acc, mesa) => acc + (Number(mesa?.capacidade) || 0), 0);
 
+    const participantesPorTipo = montarParticipantesPorTipo(tiposClientesAtivos, reserva);
+
 
 
     setEditReserva({
@@ -972,6 +1363,8 @@ const totalParticipantesDoDia = useMemo(() => {
       ...reserva,
 
       status: reserva.status ?? (reserva.confirmada ? 'confirmado' : 'pre_reserva'),
+
+      participantesPorTipo,
 
       mesasSelecionadas: mesasRegistradas,
 
@@ -995,6 +1388,18 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const handleAddReserva = () => {
 
+    const participantesPorTipo = montarParticipantesPorTipo(tiposClientesAtivos, {
+
+      participantesPorTipo: {},
+
+      adultos: 0,
+
+      criancas: 0,
+
+      bariatrica: 0,
+
+    });
+
     setEditReserva({
 
       nome: '',
@@ -1010,6 +1415,8 @@ const totalParticipantesDoDia = useMemo(() => {
       naoPagante: 0,
 
       bariatrica: 0,
+
+      participantesPorTipo,
 
       data: dayjs(selectedDate).format('YYYY-MM-DD'),
 
@@ -1189,6 +1596,16 @@ const totalParticipantesDoDia = useMemo(() => {
 
   function calcularParticipantes(reserva: Reserva) {
 
+    const mapa = reserva.participantesPorTipo ?? {};
+
+    const totalMapa = somarMapa(mapa);
+
+    if (totalMapa > 0) {
+
+      return totalMapa + (Number(reserva.naoPagante ?? 0) || 0);
+
+    }
+
     return (
 
       (reserva.adultos ?? 0) +
@@ -1202,6 +1619,80 @@ const totalParticipantesDoDia = useMemo(() => {
     );
 
   }
+
+  const montarResumoParticipantes = useCallback(
+
+    (reserva: Reserva) => {
+
+      const mapa = reserva.participantesPorTipo ?? {};
+
+      const listaBase = tiposClientesAtivos.map((tipo) => {
+
+        const quantidade =
+
+          obterValorMapa(mapa, tipo) ?? obterQuantidadeLegada(tipo, reserva);
+
+        return {
+
+          key: obterChaveTipo(tipo),
+
+          label: tipo.nome,
+
+          quantidade: Number(quantidade) || 0,
+
+        };
+
+      });
+
+      const extras = Object.entries(mapa)
+
+        .filter(([chave]) =>
+
+          !tiposClientesAtivos.some(
+
+            (tipo) =>
+
+              tipo.id === chave ||
+
+              normalizarTexto(tipo.nome) === normalizarTexto(chave)
+
+          )
+
+        )
+
+        .map(([chave, quantidade]) => ({
+
+          key: chave,
+
+          label: chave,
+
+          quantidade: Number(quantidade) || 0,
+
+        }));
+
+      const naoPagante = Number(reserva.naoPagante ?? 0);
+
+      if (naoPagante > 0) {
+
+        extras.push({
+
+          key: 'nao-pagante',
+
+          label: 'Não pagante',
+
+          quantidade: naoPagante,
+
+        });
+
+      }
+
+      return [...listaBase, ...extras].filter((item) => item.quantidade > 0);
+
+    },
+
+    [tiposClientesAtivos]
+
+  );
 
 
 
@@ -1458,11 +1949,27 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+      const participantesPorTipo = montarParticipantesPorTipo(tiposClientesAtivos, editReserva);
+
+      const adultos = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'adult') ?? 0;
+
+      const criancas = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'crian') ?? 0;
+
+      const bariatrica = obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'bariat') ?? 0;
+
       const { id, ...restante } = editReserva;
 
       const payload = {
 
         ...restante,
+
+        adultos,
+
+        criancas,
+
+        bariatrica,
+
+        participantesPorTipo,
 
         participantes,
 
@@ -1530,6 +2037,18 @@ const totalParticipantesDoDia = useMemo(() => {
 
       const modoHorario = data.modoHorario === 'intervalo' ? 'intervalo' : 'lista';
 
+      const precosPorTipo =
+
+        data.precosPorTipo && typeof data.precosPorTipo === 'object'
+
+          ? Object.fromEntries(
+
+              Object.entries(data.precosPorTipo).map(([chave, valor]) => [chave, Number(valor) || 0])
+
+            )
+
+          : undefined;
+
       return {
 
         id: docSnap.id,
@@ -1543,6 +2062,8 @@ const totalParticipantesDoDia = useMemo(() => {
         precoCrianca: Number(data.precoCrianca ?? 0),
 
         precoBariatrica: Number(data.precoBariatrica ?? 0),
+
+        precosPorTipo,
 
         limite: Number(data.limite ?? 0),
 
@@ -1570,6 +2091,242 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, []);
 
+  const fetchTiposClientes = useCallback(async () => {
+
+    setCarregandoTiposClientes(true);
+
+    try {
+
+      const snap = await getDocs(collection(db, 'tipos_clientes'));
+
+      const lista = snap.docs
+
+        .map((docSnap) => {
+
+          const data = docSnap.data() as Partial<TipoCliente>;
+
+          return {
+
+            id: docSnap.id,
+
+            nome: data.nome ?? '',
+
+            descricao: data.descricao ?? '',
+
+          } as TipoCliente;
+
+        })
+
+        .filter((tipo) => tipo.nome.trim().length > 0)
+
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+
+      setTiposClientes(lista);
+
+    } catch (error) {
+
+      console.error('Erro ao carregar tipos de clientes:', error);
+
+      setTiposClientes([]);
+
+    } finally {
+
+      setCarregandoTiposClientes(false);
+
+    }
+
+  }, []);
+
+  const fetchWhatsappConfig = useCallback(async () => {
+
+    setWhatsappCarregando(true);
+
+    try {
+
+      const snap = await getDoc(doc(db, 'configuracoes', 'whatsapp'));
+
+      if (snap.exists()) {
+
+        const data = snap.data() as Partial<WhatsappConfig>;
+
+        setWhatsappConfig({
+
+          ativo: data.ativo === true,
+
+          mensagemConfirmacao:
+
+            typeof data.mensagemConfirmacao === 'string' && data.mensagemConfirmacao.trim()
+
+              ? data.mensagemConfirmacao
+
+              : whatsappTemplatePadrao,
+
+        });
+
+      } else {
+
+        setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
+
+      }
+
+      setWhatsappErro(null);
+
+    } catch (error) {
+
+      console.error('Erro ao carregar configuracoes do WhatsApp:', error);
+
+      setWhatsappErro('Erro ao carregar configuracoes.');
+
+      setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
+
+    } finally {
+
+      setWhatsappCarregando(false);
+
+    }
+
+  }, []);
+
+  const salvarWhatsappConfig = async () => {
+
+    const mensagem = whatsappConfig.mensagemConfirmacao.trim();
+
+    if (!mensagem) {
+
+      setFeedback({ type: 'error', message: 'Informe a mensagem de confirmacao.' });
+
+      return;
+
+    }
+
+    setWhatsappSalvando(true);
+
+    try {
+
+      const payload = {
+
+        ativo: whatsappConfig.ativo,
+
+        mensagemConfirmacao: mensagem,
+
+        atualizadoEm: new Date(),
+
+      };
+
+      await setDoc(doc(db, 'configuracoes', 'whatsapp'), payload, { merge: true });
+
+      setFeedback({ type: 'success', message: 'Configuracoes do WhatsApp salvas.' });
+
+    } catch (error) {
+
+      console.error('Erro ao salvar configuracoes do WhatsApp:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao salvar configuracoes do WhatsApp.' });
+
+    } finally {
+
+      setWhatsappSalvando(false);
+
+    }
+
+  };
+
+  const atualizarStatusWhatsapp = useCallback(async () => {
+
+    try {
+
+      const response = await fetch(`${API_BASE}/whatsapp/status`);
+
+      if (!response.ok) {
+
+        throw new Error(`Status ${response.status}`);
+
+      }
+
+      const data = (await response.json()) as WhatsappStatus;
+
+      setWhatsappStatus(data);
+
+      setWhatsappErro(null);
+
+    } catch (error) {
+
+      console.error('Erro ao consultar status do WhatsApp:', error);
+
+      setWhatsappErro('Erro ao consultar status.');
+
+    }
+
+  }, []);
+
+  const iniciarConexaoWhatsapp = async () => {
+
+    setWhatsappCarregando(true);
+
+    try {
+
+      const response = await fetch(`${API_BASE}/whatsapp/start`, { method: 'POST' });
+
+      const data = (await response.json()) as WhatsappStatus;
+
+      setWhatsappStatus(data);
+
+      setWhatsappErro(null);
+
+    } catch (error) {
+
+      console.error('Erro ao iniciar WhatsApp:', error);
+
+      setWhatsappErro('Erro ao iniciar WhatsApp.');
+
+    } finally {
+
+      setWhatsappCarregando(false);
+
+    }
+
+  };
+
+  const desconectarWhatsapp = async () => {
+
+    setWhatsappCarregando(true);
+
+    try {
+
+      const response = await fetch(`${API_BASE}/whatsapp/logout`, { method: 'POST' });
+
+      const data = (await response.json()) as WhatsappStatus;
+
+      setWhatsappStatus(data);
+
+      setWhatsappErro(null);
+
+    } catch (error) {
+
+      console.error('Erro ao desconectar WhatsApp:', error);
+
+      setWhatsappErro('Erro ao desconectar WhatsApp.');
+
+    } finally {
+
+      setWhatsappCarregando(false);
+
+    }
+
+  };
+
+  const inserirPlaceholderWhatsapp = (placeholder: string) => {
+
+    setWhatsappConfig((prev) => ({
+
+      ...prev,
+
+      mensagemConfirmacao: `${prev.mensagemConfirmacao}${prev.mensagemConfirmacao ? ' ' : ''}${placeholder}`,
+
+    }));
+
+  };
+
 
 
   const fetchCombos = useCallback(async () => {
@@ -1588,7 +2345,21 @@ const totalParticipantesDoDia = useMemo(() => {
 
           precoBariatrica?: number;
 
+          precosPorTipo?: Record<string, number>;
+
         };
+
+        const precosPorTipo =
+
+          data.precosPorTipo && typeof data.precosPorTipo === 'object'
+
+            ? Object.fromEntries(
+
+                Object.entries(data.precosPorTipo).map(([chave, valor]) => [chave, Number(valor) || 0])
+
+              )
+
+            : undefined;
 
         return {
 
@@ -1605,6 +2376,8 @@ const totalParticipantesDoDia = useMemo(() => {
           precoCrianca: Number(data.precoCrianca ?? data.preco ?? 0),
 
           precoBariatrica: Number(data.precoBariatrica ?? data.preco ?? 0),
+
+          precosPorTipo,
 
           ativo: data.ativo !== false,
 
@@ -1634,7 +2407,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
     fetchCombos();
 
-  }, [fetchPacotes, fetchCombos]);
+    fetchTiposClientes();
+
+  }, [fetchPacotes, fetchCombos, fetchTiposClientes]);
 
 
 
@@ -1708,6 +2483,260 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, [aba, fetchPacotes, fetchCombos]);
 
+  useEffect(() => {
+
+    if (!editReserva) return;
+
+    setEditReserva((prev) => {
+
+      if (!prev) return prev;
+
+      return {
+
+        ...prev,
+
+        participantesPorTipo: montarParticipantesPorTipo(tiposClientesAtivos, prev),
+
+      };
+
+    });
+
+  }, [tiposClientesAtivos]);
+
+  useEffect(() => {
+
+    if (aba === 'tipos_clientes') {
+
+      fetchTiposClientes();
+
+    }
+
+  }, [aba, fetchTiposClientes]);
+
+  useEffect(() => {
+
+    if (aba === 'whatsapp') {
+
+      void fetchWhatsappConfig();
+
+    }
+
+  }, [aba, fetchWhatsappConfig]);
+
+  useEffect(() => {
+
+    if (aba !== 'whatsapp') return;
+
+    void atualizarStatusWhatsapp();
+
+    const timer = setInterval(() => {
+
+      void atualizarStatusWhatsapp();
+
+    }, 5000);
+
+    return () => clearInterval(timer);
+
+  }, [aba, atualizarStatusWhatsapp]);
+
+  const iniciarNovoTipoCliente = () => {
+
+    setEditTipoCliente(criarTipoClienteVazio());
+
+    setIsEditingTipoCliente(false);
+
+  };
+
+  const handleEditTipoCliente = (tipo: TipoCliente) => {
+
+    setEditTipoCliente({
+
+      id: tipo.id,
+
+      nome: tipo.nome ?? '',
+
+      descricao: tipo.descricao ?? '',
+
+    });
+
+    setIsEditingTipoCliente(true);
+
+  };
+
+  const handleSalvarTipoCliente = async () => {
+
+    const nome = editTipoCliente.nome.trim();
+
+    if (!nome) {
+
+      setFeedback({ type: 'error', message: 'Informe o nome do tipo.' });
+
+      return;
+
+    }
+
+    const nomeNormalizado = nome.toLowerCase();
+
+    const existeDuplicado = tiposClientes.some(
+
+      (tipo) => tipo.nome.trim().toLowerCase() === nomeNormalizado && tipo.id !== editTipoCliente.id
+
+    );
+
+    if (existeDuplicado) {
+
+      setFeedback({ type: 'error', message: 'Já existe um tipo com esse nome.' });
+
+      return;
+
+    }
+
+    const descricao = (editTipoCliente.descricao ?? '').trim();
+
+    const payload = {
+
+      nome,
+
+      ...(descricao ? { descricao } : {}),
+
+    };
+
+    setSalvandoTipoCliente(true);
+
+    try {
+
+      if (isEditingTipoCliente && editTipoCliente.id) {
+
+        await updateDoc(doc(db, 'tipos_clientes', editTipoCliente.id), payload);
+
+        setFeedback({ type: 'success', message: 'Tipo atualizado com sucesso!' });
+
+      } else {
+
+        await addDoc(collection(db, 'tipos_clientes'), payload);
+
+        setFeedback({ type: 'success', message: 'Tipo cadastrado com sucesso!' });
+
+      }
+
+      iniciarNovoTipoCliente();
+
+      await fetchTiposClientes();
+
+    } catch (error) {
+
+      console.error('Erro ao salvar tipo de cliente:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao salvar tipo de cliente.' });
+
+    } finally {
+
+      setSalvandoTipoCliente(false);
+
+    }
+
+  };
+
+  const handleExcluirTipoCliente = async (tipo: TipoCliente) => {
+
+    if (!tipo.id) return;
+
+    if (!confirm(`Tem certeza que deseja excluir o tipo "${tipo.nome}"?`)) return;
+
+    setSalvandoTipoCliente(true);
+
+    try {
+
+      await deleteDoc(doc(db, 'tipos_clientes', tipo.id));
+
+      if (editTipoCliente.id === tipo.id) {
+
+        iniciarNovoTipoCliente();
+
+      }
+
+      setFeedback({ type: 'success', message: 'Tipo removido.' });
+
+      await fetchTiposClientes();
+
+    } catch (error) {
+
+      console.error('Erro ao excluir tipo de cliente:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao excluir tipo de cliente.' });
+
+    } finally {
+
+      setSalvandoTipoCliente(false);
+
+    }
+
+  };
+
+  const handleAdicionarTiposPadrao = async () => {
+
+    const nomesExistentes = new Set(
+
+      tiposClientes.map((tipo) => tipo.nome.trim().toLowerCase())
+
+    );
+
+    const tiposPendentes = tiposClientesPadrao.filter(
+
+      (tipo) => !nomesExistentes.has(tipo.nome.trim().toLowerCase())
+
+    );
+
+    if (tiposPendentes.length === 0) {
+
+      setFeedback({ type: 'success', message: 'Tipos padrão já cadastrados.' });
+
+      return;
+
+    }
+
+    setSalvandoTipoCliente(true);
+
+    try {
+
+      const batch = writeBatch(db);
+
+      tiposPendentes.forEach((tipo) => {
+
+        const descricao = (tipo.descricao ?? '').trim();
+
+        const payload = {
+
+          nome: tipo.nome.trim(),
+
+          ...(descricao ? { descricao } : {}),
+
+        };
+
+        batch.set(doc(collection(db, 'tipos_clientes')), payload);
+
+      });
+
+      await batch.commit();
+
+      setFeedback({ type: 'success', message: 'Tipos padrão adicionados.' });
+
+      await fetchTiposClientes();
+
+    } catch (error) {
+
+      console.error('Erro ao adicionar tipos padrão:', error);
+
+      setFeedback({ type: 'error', message: 'Erro ao adicionar tipos padrão.' });
+
+    } finally {
+
+      setSalvandoTipoCliente(false);
+
+    }
+
+  };
+
 
 
   const handleEditPacote = (pacote: Pacote) => {
@@ -1729,6 +2758,8 @@ const totalParticipantesDoDia = useMemo(() => {
       horarioFim: pacote.horarioFim ?? '',
 
       aceitaPet: pacote.aceitaPet ?? true,
+
+      precosPorTipo: montarPrecosPorTipo(tiposClientesAtivos, pacote.precosPorTipo, pacote),
 
       perguntasPersonalizadas: pacote.perguntasPersonalizadas ?? [],
 
@@ -1759,6 +2790,16 @@ const totalParticipantesDoDia = useMemo(() => {
       precoCrianca: 0,
 
       precoBariatrica: 0,
+
+      precosPorTipo: montarPrecosPorTipo(tiposClientesAtivos, undefined, {
+
+        precoAdulto: 0,
+
+        precoCrianca: 0,
+
+        precoBariatrica: 0,
+
+      }),
 
       horarios: [],
 
@@ -1844,11 +2885,27 @@ const totalParticipantesDoDia = useMemo(() => {
 
     }
 
+    const precosPorTipo = montarPrecosPorTipo(tiposClientesAtivos, editPacote.precosPorTipo, editPacote);
+
+    const precoAdulto = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'adult') ?? 0;
+
+    const precoCrianca = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'crian') ?? 0;
+
+    const precoBariatrica = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'bariat') ?? 0;
+
 
 
     const pacoteNormalizado: Pacote = {
 
       ...editPacote,
+
+      precoAdulto,
+
+      precoCrianca,
+
+      precoBariatrica,
+
+      precosPorTipo,
 
       modoHorario,
 
@@ -2038,6 +3095,16 @@ const totalParticipantesDoDia = useMemo(() => {
 
       precoBariatrica: 0,
 
+      precosPorTipo: montarPrecosPorTipo(tiposClientesAtivos, undefined, {
+
+        precoAdulto: 0,
+
+        precoCrianca: 0,
+
+        precoBariatrica: 0,
+
+      }),
+
       ativo: true,
 
     });
@@ -2065,6 +3132,8 @@ const totalParticipantesDoDia = useMemo(() => {
       precoCrianca: Number(combo.precoCrianca ?? combo.preco ?? 0),
 
       precoBariatrica: Number(combo.precoBariatrica ?? combo.preco ?? 0),
+
+      precosPorTipo: montarPrecosPorTipo(tiposClientesAtivos, combo.precosPorTipo, combo),
 
       ativo: combo.ativo !== false,
 
@@ -2164,13 +3233,19 @@ const totalParticipantesDoDia = useMemo(() => {
 
     const precoTotal = Number(editCombo.preco ?? 0);
 
-    const precoAdulto = Number(editCombo.precoAdulto ?? 0);
+    const precosPorTipo = montarPrecosPorTipo(tiposClientesAtivos, editCombo.precosPorTipo, editCombo);
 
-    const precoCrianca = Number(editCombo.precoCrianca ?? 0);
+    const precoAdulto = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'adult') ?? 0;
 
-    const precoBariatrica = Number(editCombo.precoBariatrica ?? 0);
+    const precoCrianca = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'crian') ?? 0;
 
-    const possuiValoresPersonalizados = [precoAdulto, precoCrianca, precoBariatrica].some((valor) => Number.isFinite(valor) && valor > 0);
+    const precoBariatrica = obterValorPorTipoNome(precosPorTipo, tiposClientesAtivos, 'bariat') ?? 0;
+
+    const possuiValoresPersonalizados = Object.values(precosPorTipo).some(
+
+      (valor) => Number.isFinite(valor) && valor > 0
+
+    );
 
     if (!possuiValoresPersonalizados) {
 
@@ -2197,6 +3272,8 @@ const totalParticipantesDoDia = useMemo(() => {
         precoCrianca: precoCrianca > 0 ? precoCrianca : 0,
 
         precoBariatrica: precoBariatrica > 0 ? precoBariatrica : 0,
+
+        precosPorTipo,
 
         ativo: editCombo.ativo !== false,
 
@@ -3420,6 +4497,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                 const participantes = calcularParticipantes(reserva);
 
+                                const resumoParticipantes = montarResumoParticipantes(reserva);
+
                                 const confirmada = statusEhConfirmado(reserva);
 
                                 const statusBadge = obterBadgeStatus(reserva);
@@ -3575,13 +4654,23 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                         <div className="text-xs space-y-0.5">
 
-                                          <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
+                                          {resumoParticipantes.length > 0 ? (
 
-                                          <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                            resumoParticipantes.map((item) => (
 
-                                          <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                              <div key={item.key}>
 
-                                          <div>Não pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
+                                                {item.label}: <span className="font-medium">{item.quantidade}</span>
+
+                                              </div>
+
+                                            ))
+
+                                          ) : (
+
+                                            <div className="text-slate-400">Sem participantes.</div>
+
+                                          )}
 
                                           <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
 
@@ -3896,6 +4985,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const participantes = calcularParticipantes(reserva);
 
+                            const resumoParticipantes = montarResumoParticipantes(reserva);
+
                             const confirmada = statusEhConfirmado(reserva);
 
                             const statusBadge = obterBadgeStatus(reserva);
@@ -4044,13 +5135,23 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                   <div className="text-right text-xs space-y-0.5">
 
-                                    <div>Adulto: <span className="font-medium">{reserva.adultos ?? 0}</span></div>
+                                    {resumoParticipantes.length > 0 ? (
 
-                                    <div>Criança: <span className="font-medium">{reserva.criancas ?? 0}</span></div>
+                                      resumoParticipantes.map((item) => (
 
-                                    <div>Bariátrico: <span className="font-medium">{reserva.bariatrica ?? 0}</span></div>
+                                        <div key={item.key}>
 
-                                    <div>Não pagante: <span className="font-medium">{reserva.naoPagante ?? 0}</span></div>
+                                          {item.label}: <span className="font-medium">{item.quantidade}</span>
+
+                                        </div>
+
+                                      ))
+
+                                    ) : (
+
+                                      <div className="text-slate-400">Sem participantes.</div>
+
+                                    )}
 
                                     <div className="border-t pt-0.5 mt-1 font-semibold text-slate-900">Total: {participantes}</div>
 
@@ -4354,85 +5455,89 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   </label>
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                  <div className="md:col-span-2">
 
-                    Adultos
+                    <p className="text-xs font-semibold uppercase text-slate-500">Participantes</p>
 
-                    <input
+                    <div className="mt-2 grid gap-3 sm:grid-cols-3">
 
-                      type="number"
+                      {tiposClientesAtivos.map((tipo) => {
 
-                      min={0}
+                        const chave = obterChaveTipo(tipo);
 
-                      value={editReserva.adultos ?? 0}
+                        const valor = obterValorMapa(editReserva.participantesPorTipo, tipo) ?? 0;
 
-                      onChange={(e) => setEditReserva({ ...editReserva, adultos: Number(e.target.value) })}
+                        return (
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          <label key={chave} className="text-xs font-semibold uppercase text-slate-500">
 
-                    />
+                            {tipo.nome}
 
-                  </label>
+                            <input
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                              type="number"
 
-                    Crianças
+                              min={0}
 
-                    <input
+                              value={valor}
 
-                      type="number"
+                              onChange={(e) =>
 
-                      min={0}
+                                setEditReserva((prev) => {
 
-                      value={editReserva.criancas ?? 0}
+                                  if (!prev) return prev;
 
-                      onChange={(e) => setEditReserva({ ...editReserva, criancas: Number(e.target.value) })}
+                                  const participantesPorTipo = {
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                    ...(prev.participantesPorTipo ?? {}),
 
-                    />
+                                    [chave]: Number(e.target.value),
 
-                  </label>
+                                  };
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                                  return { ...prev, participantesPorTipo };
 
-                    Não pagante
+                                })
 
-                    <input
+                              }
 
-                      type="number"
+                              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
 
-                      min={0}
+                            />
 
-                      value={editReserva.naoPagante ?? 0}
+                          </label>
 
-                      onChange={(e) => setEditReserva({ ...editReserva, naoPagante: Number(e.target.value) })}
+                        );
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      })}
 
-                    />
+                      <label className="text-xs font-semibold uppercase text-slate-500">
 
-                  </label>
+                        Não pagante
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                        <input
 
-                    Bariátrica
+                          type="number"
 
-                    <input
+                          min={0}
 
-                      type="number"
+                          value={editReserva.naoPagante ?? 0}
 
-                      min={0}
+                          onChange={(e) =>
 
-                      value={editReserva.bariatrica ?? 0}
+                            setEditReserva((prev) => (prev ? { ...prev, naoPagante: Number(e.target.value) } : prev))
 
-                      onChange={(e) => setEditReserva({ ...editReserva, bariatrica: Number(e.target.value) })}
+                          }
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
 
-                    />
+                        />
 
-                  </label>
+                      </label>
+
+                    </div>
+
+                  </div>
 
                   <label className="text-xs font-semibold uppercase text-slate-500">
 
@@ -4828,6 +5933,16 @@ const totalParticipantesDoDia = useMemo(() => {
 
                     : pacote.horarios.join(', ') || 'Sob consulta';
 
+                const precosResumo = tiposClientesAtivos.map((tipo) => ({
+
+                  key: obterChaveTipo(tipo),
+
+                  nome: tipo.nome,
+
+                  valor: obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote),
+
+                }));
+
                 return (
 
                   <article key={pacote.id} className="flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
@@ -4876,11 +5991,15 @@ const totalParticipantesDoDia = useMemo(() => {
 
                           <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-600">
 
-                            <span className="rounded-full bg-slate-100 px-2 py-1">Adulto R$ {Number(pacote.precoAdulto).toLocaleString('pt-BR')}</span>
+                            {precosResumo.map((item) => (
 
-                            <span className="rounded-full bg-slate-100 px-2 py-1">Criança R$ {Number(pacote.precoCrianca).toLocaleString('pt-BR')}</span>
+                              <span key={item.key} className="rounded-full bg-slate-100 px-2 py-1">
 
-                            <span className="rounded-full bg-slate-100 px-2 py-1">Bariátrica R$ {Number(pacote.precoBariatrica).toLocaleString('pt-BR')}</span>
+                                {item.nome} {formatCurrency(item.valor)}
+
+                              </span>
+
+                            ))}
 
                           </div>
 
@@ -4988,6 +6107,15 @@ const totalParticipantesDoDia = useMemo(() => {
                   const pacoteNomes = combo.pacoteIds
                     .map((id) => (id ? pacotesPorId.get(id)?.nome ?? 'Pacote removido' : ''))
                     .filter((nome) => nome && nome.length > 0);
+                  const precosResumo = tiposClientesAtivos.map((tipo) => ({
+
+                    key: obterChaveTipo(tipo),
+
+                    nome: tipo.nome,
+
+                    valor: obterPrecoPorTipo(combo.precosPorTipo, tipo, combo),
+
+                  }));
                   return (
                     <article key={combo.id ?? combo.nome} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -5003,15 +6131,11 @@ const totalParticipantesDoDia = useMemo(() => {
                             </span>
                           </div>
                           <div className="space-y-1 text-sm text-slate-600">
-                            <p>
-                              <span className="font-semibold text-slate-700">Adulto:</span> {formatCurrency(combo.precoAdulto)}
-                            </p>
-                            <p>
-                              <span className="font-semibold text-slate-700">Criança:</span> {formatCurrency(combo.precoCrianca)}
-                            </p>
-                            <p>
-                              <span className="font-semibold text-slate-700">Bariátrica:</span> {formatCurrency(combo.precoBariatrica)}
-                            </p>
+                            {precosResumo.map((item) => (
+                              <p key={item.key}>
+                                <span className="font-semibold text-slate-700">{item.nome}:</span> {formatCurrency(item.valor)}
+                              </p>
+                            ))}
                           </div>
                           <p className="text-xs text-slate-500">
                             Inclui: {pacoteNomes.length > 0 ? pacoteNomes.join(', ') : 'Pacotes removidos'}
@@ -5123,59 +6247,63 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   </label>
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                  <div className="md:col-span-2">
 
-                    Preço adulto
+                    <p className="text-xs font-semibold uppercase text-slate-500">Preços por tipo</p>
 
-                    <input
+                    <div className="mt-2 grid gap-3 sm:grid-cols-3">
 
-                      type="number"
+                      {tiposClientesAtivos.map((tipo) => {
 
-                      value={editPacote.precoAdulto}
+                        const chave = obterChaveTipo(tipo);
 
-                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoAdulto: Number(e.target.value) }))}
+                        const valor = obterPrecoPorTipo(editPacote.precosPorTipo, tipo, editPacote);
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        return (
 
-                    />
+                          <label key={chave} className="text-xs font-semibold uppercase text-slate-500">
 
-                  </label>
+                            {tipo.nome}
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                            <input
 
-                    Preço criança
+                              type="number"
 
-                    <input
+                              value={valor}
 
-                      type="number"
+                              onChange={(e) =>
 
-                      value={editPacote.precoCrianca}
+                                setEditPacote((prev) => {
 
-                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoCrianca: Number(e.target.value) }))}
+                                  if (!prev) return prev;
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                  const precosPorTipo = {
 
-                    />
+                                    ...(prev.precosPorTipo ?? {}),
 
-                  </label>
+                                    [chave]: Number(e.target.value),
 
-                  <label className="text-xs font-semibold uppercase text-slate-500">
+                                  };
 
-                    Preço bariátrica
+                                  return { ...prev, precosPorTipo };
 
-                    <input
+                                })
 
-                      type="number"
+                              }
 
-                      value={editPacote.precoBariatrica}
+                              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
 
-                      onChange={(e) => setEditPacote((f) => ({ ...f!, precoBariatrica: Number(e.target.value) }))}
+                            />
 
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          </label>
 
-                    />
+                        );
 
-                  </label>
+                      })}
+
+                    </div>
+
+                  </div>
 
                   <label className="text-xs font-semibold uppercase text-slate-500">
 
@@ -5717,67 +6845,63 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   </label>
 
-                  <div className="grid gap-3 sm:grid-cols-3 text-xs font-semibold uppercase text-slate-500">
+                  <div className="space-y-2">
 
-                    <label>
+                    <p className="text-xs font-semibold uppercase text-slate-500">Preços por tipo (R$)</p>
 
-                      Preço adulto (R$)
+                    <div className="grid gap-3 sm:grid-cols-3 text-xs font-semibold uppercase text-slate-500">
 
-                      <input
+                      {tiposClientesAtivos.map((tipo) => {
 
-                        type="number"
+                        const chave = obterChaveTipo(tipo);
 
-                        min="0"
+                        const valor = obterPrecoPorTipo(editCombo.precosPorTipo, tipo, editCombo);
 
-                        value={editCombo.precoAdulto}
+                        return (
 
-                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoAdulto: Number(e.target.value) } : prev))}
+                          <label key={chave}>
 
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            {tipo.nome}
 
-                      />
+                            <input
 
-                    </label>
+                              type="number"
 
-                    <label>
+                              min="0"
 
-                      Preço criança (R$)
+                              value={valor}
 
-                      <input
+                              onChange={(e) =>
 
-                        type="number"
+                                setEditCombo((prev) => {
 
-                        min="0"
+                                  if (!prev) return prev;
 
-                        value={editCombo.precoCrianca}
+                                  const precosPorTipo = {
 
-                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoCrianca: Number(e.target.value) } : prev))}
+                                    ...(prev.precosPorTipo ?? {}),
 
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                    [chave]: Number(e.target.value),
 
-                      />
+                                  };
 
-                    </label>
+                                  return { ...prev, precosPorTipo };
 
-                    <label>
+                                })
 
-                      Preço bariátrica (R$)
+                              }
 
-                      <input
+                              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
 
-                        type="number"
+                            />
 
-                        min="0"
+                          </label>
 
-                        value={editCombo.precoBariatrica}
+                        );
 
-                        onChange={(e) => setEditCombo((prev) => (prev ? { ...prev, precoBariatrica: Number(e.target.value) } : prev))}
+                      })}
 
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-
-                      />
-
-                    </label>
+                    </div>
 
                   </div>
 
@@ -5928,6 +7052,10 @@ const totalParticipantesDoDia = useMemo(() => {
           )}
 
           
+
+        </section>
+
+      )}
 
           {/* Modal Editar Disponibilidade */}
 
@@ -6340,6 +7468,622 @@ const totalParticipantesDoDia = useMemo(() => {
             </div>
 
           )}
+
+      {/* ========== Tipos de Clientes ========== */}
+
+      {aba === 'tipos_clientes' && (
+
+        <section className="space-y-6">
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <h2 className="text-xl font-semibold text-slate-900">Tipos de clientes</h2>
+
+              <p className="text-sm text-slate-500">Crie, edite ou exclua categorias de clientes.</p>
+
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+
+              <button
+
+                onClick={iniciarNovoTipoCliente}
+
+                disabled={salvandoTipoCliente}
+
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+
+                  salvandoTipoCliente ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+
+                }`}
+
+              >
+
+                <FaPlus className="h-4 w-4" />
+
+                Novo tipo
+
+              </button>
+
+              <button
+
+                onClick={handleAdicionarTiposPadrao}
+
+                disabled={salvandoTipoCliente}
+
+                className={`inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition ${
+
+                  salvandoTipoCliente ? 'cursor-not-allowed opacity-60' : 'hover:border-blue-300 hover:text-blue-600'
+
+                }`}
+
+              >
+
+                <FaCheck className="h-4 w-4" />
+
+                Adicionar padrões
+
+              </button>
+
+            </div>
+
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+              <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+
+                <div>
+
+                  <h3 className="text-lg font-semibold text-slate-900">
+
+                    {isEditingTipoCliente ? 'Editar tipo' : 'Novo tipo'}
+
+                  </h3>
+
+                  <p className="text-sm text-slate-500">Defina o nome e, se quiser, uma descrição.</p>
+
+                </div>
+
+                {isEditingTipoCliente && (
+
+                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+
+                    Edição
+
+                  </span>
+
+                )}
+
+              </div>
+
+              <form
+
+                onSubmit={(e) => {
+
+                  e.preventDefault();
+
+                  void handleSalvarTipoCliente();
+
+                }}
+
+                className="mt-4 space-y-4"
+
+              >
+
+                <label className="text-xs font-semibold uppercase text-slate-500">
+
+                  Nome do tipo
+
+                  <input
+
+                    type="text"
+
+                    value={editTipoCliente.nome}
+
+                    onChange={(e) => setEditTipoCliente((prev) => ({ ...prev, nome: e.target.value }))}
+
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+
+                    placeholder="Ex: Adulto, Criança"
+
+                  />
+
+                </label>
+
+                <label className="text-xs font-semibold uppercase text-slate-500">
+
+                  Descrição (opcional)
+
+                  <textarea
+
+                    value={editTipoCliente.descricao ?? ''}
+
+                    onChange={(e) => setEditTipoCliente((prev) => ({ ...prev, descricao: e.target.value }))}
+
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+
+                    rows={3}
+
+                    placeholder="Detalhe quando este tipo deve ser usado."
+
+                  />
+
+                </label>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+
+                  <button
+
+                    type="submit"
+
+                    disabled={salvandoTipoCliente}
+
+                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+
+                      salvandoTipoCliente ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
+
+                    }`}
+
+                  >
+
+                    {salvandoTipoCliente ? 'Salvando...' : isEditingTipoCliente ? 'Salvar alterações' : 'Cadastrar tipo'}
+
+                  </button>
+
+                  {isEditingTipoCliente && (
+
+                    <button
+
+                      type="button"
+
+                      onClick={iniciarNovoTipoCliente}
+
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+
+                    >
+
+                      Cancelar edição
+
+                    </button>
+
+                  )}
+
+                </div>
+
+              </form>
+
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+              <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+
+                <div>
+
+                  <h3 className="text-lg font-semibold text-slate-900">Tipos cadastrados</h3>
+
+                  <p className="text-sm text-slate-500">Gerencie Adulto, Criança, Bariátrico e novos tipos.</p>
+
+                </div>
+
+                <span className="text-xs font-semibold uppercase text-slate-400">{tiposClientes.length} tipo(s)</span>
+
+              </div>
+
+              {carregandoTiposClientes ? (
+
+                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+
+                  Carregando tipos de clientes...
+
+                </div>
+
+              ) : tiposClientes.length === 0 ? (
+
+                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+
+                  Nenhum tipo cadastrado. Use o botão "Adicionar padrões" para começar.
+
+                </div>
+
+              ) : (
+
+                <div className="mt-4 space-y-3">
+
+                  {tiposClientes.map((tipo) => {
+
+                    const nomeNormalizado = tipo.nome.trim().toLowerCase();
+
+                    const ehPadrao = nomesTiposClientesPadrao.has(nomeNormalizado);
+
+                    const emEdicao = isEditingTipoCliente && editTipoCliente.id === tipo.id;
+
+                    return (
+
+                      <div
+
+                        key={tipo.id ?? tipo.nome}
+
+                        className={`rounded-xl border p-4 transition ${
+
+                          emEdicao ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 bg-white'
+
+                        }`}
+
+                      >
+
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+                          <div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+
+                              <h4 className="text-base font-semibold text-slate-900">{tipo.nome}</h4>
+
+                              {ehPadrao && (
+
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+
+                                  Padrão
+
+                                </span>
+
+                              )}
+
+                            </div>
+
+                            {tipo.descricao ? (
+
+                              <p className="text-sm text-slate-500">{tipo.descricao}</p>
+
+                            ) : (
+
+                              <p className="text-xs text-slate-400">Sem descrição.</p>
+
+                            )}
+
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+
+                            <button
+
+                              onClick={() => handleEditTipoCliente(tipo)}
+
+                              className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
+
+                            >
+
+                              <FaEdit className="h-3.5 w-3.5" />
+
+                              Editar
+
+                            </button>
+
+                            <button
+
+                              onClick={() => handleExcluirTipoCliente(tipo)}
+
+                              className="inline-flex items-center gap-2 rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+
+                            >
+
+                              <FaTrash className="h-3.5 w-3.5" />
+
+                              Excluir
+
+                            </button>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    );
+
+                  })}
+
+                </div>
+
+              )}
+
+            </div>
+
+          </div>
+
+        </section>
+
+      )}
+
+      {/* ========== WhatsApp ========== */}
+
+      {aba === 'whatsapp' && (
+
+        <section className="space-y-6">
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <h2 className="text-xl font-semibold text-slate-900">WhatsApp</h2>
+
+              <p className="text-sm text-slate-500">
+
+                Conecte o WhatsApp Web e envie confirmacoes automaticamente.
+
+              </p>
+
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+
+              <button
+
+                onClick={iniciarConexaoWhatsapp}
+
+                disabled={whatsappCarregando}
+
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${whatsappCarregando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+
+              >
+
+                <FaWhatsapp className="h-4 w-4" />
+
+                Conectar
+
+              </button>
+
+              <button
+
+                onClick={desconectarWhatsapp}
+
+                disabled={whatsappCarregando}
+
+                className={`inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition ${whatsappCarregando ? 'cursor-not-allowed opacity-60' : 'hover:border-rose-300 hover:text-rose-600'}`}
+
+              >
+
+                Desconectar
+
+              </button>
+
+            </div>
+
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+              <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+
+                <div>
+
+                  <h3 className="text-lg font-semibold text-slate-900">Conexao</h3>
+
+                  <p className="text-sm text-slate-500">Leia o QR Code com o WhatsApp do celular.</p>
+
+                </div>
+
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusResumoWhatsapp.classes}`}>
+
+                  {statusResumoWhatsapp.label}
+
+                </span>
+
+              </div>
+
+              <div className="mt-4 space-y-4">
+
+                {whatsappStatus?.info?.pushname && (
+
+                  <p className="text-sm text-slate-600">
+
+                    Conectado como <span className="font-semibold text-slate-900">{whatsappStatus.info.pushname}</span>.
+
+                  </p>
+
+                )}
+
+                {whatsappStatus?.qr ? (
+
+                  <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6">
+
+                    <img
+
+                      src={whatsappStatus.qr}
+
+                      alt="QR Code do WhatsApp"
+
+                      className="h-48 w-48 rounded-lg border border-slate-200 bg-white p-2"
+
+                    />
+
+                    <p className="text-xs text-slate-500">
+
+                      Abra o WhatsApp no celular e aponte a camera para conectar.
+
+                    </p>
+
+                  </div>
+
+                ) : (
+
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+
+                    {whatsappCarregando ? 'Carregando QR Code...' : 'Nenhum QR Code disponivel.'}
+
+                  </div>
+
+                )}
+
+                {(whatsappErro || whatsappStatus?.lastError) && (
+
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+
+                    {whatsappErro || whatsappStatus?.lastError}
+
+                  </div>
+
+                )}
+
+              </div>
+
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+              <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+
+                <div>
+
+                  <h3 className="text-lg font-semibold text-slate-900">Mensagem automatica</h3>
+
+                  <p className="text-sm text-slate-500">Personalize o texto enviado ao confirmar reservas.</p>
+
+                </div>
+
+                <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+
+                  <input
+
+                    type="checkbox"
+
+                    checked={whatsappConfig.ativo}
+
+                    onChange={(e) =>
+
+                      setWhatsappConfig((prev) => ({ ...prev, ativo: e.target.checked }))
+
+                    }
+
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+
+                  />
+
+                  Ativar envio automatico
+
+                </label>
+
+              </div>
+
+              <div className="mt-4 space-y-4">
+
+                <label className="text-xs font-semibold uppercase text-slate-500">
+
+                  Texto da confirmacao
+
+                  <textarea
+
+                    value={whatsappConfig.mensagemConfirmacao}
+
+                    onChange={(e) =>
+
+                      setWhatsappConfig((prev) => ({ ...prev, mensagemConfirmacao: e.target.value }))
+
+                    }
+
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                    rows={5}
+
+                    placeholder={whatsappTemplatePadrao}
+
+                  />
+
+                </label>
+
+                <div className="flex flex-wrap gap-2">
+
+                  {whatsappPlaceholders.map((placeholder) => (
+
+                    <button
+
+                      key={placeholder}
+
+                      type="button"
+
+                      onClick={() => inserirPlaceholderWhatsapp(placeholder)}
+
+                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+
+                    >
+
+                      {placeholder}
+
+                    </button>
+
+                  ))}
+
+                </div>
+
+                <div>
+
+                  <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
+
+                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+
+                    {mensagemPreviewWhatsapp || '-'}
+
+                  </div>
+
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+
+                  <button
+
+                    type="button"
+
+                    onClick={() =>
+
+                      setWhatsappConfig((prev) => ({
+
+                        ...prev,
+
+                        mensagemConfirmacao: whatsappTemplatePadrao,
+
+                      }))
+
+                    }
+
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+
+                  >
+
+                    Restaurar padrao
+
+                  </button>
+
+                  <button
+
+                    type="button"
+
+                    onClick={salvarWhatsappConfig}
+
+                    disabled={whatsappSalvando}
+
+                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+
+                  >
+
+                    {whatsappSalvando ? 'Salvando...' : 'Salvar configuracoes'}
+
+                  </button>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
 
         </section>
 

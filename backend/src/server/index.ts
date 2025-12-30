@@ -3,6 +3,7 @@ import cors from "cors";
 import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
 import webhookRouter from "./webhook";
+import { desconectarWhatsApp, iniciarWhatsApp, obterStatusWhatsApp } from "../services/whatsapp";
 
 const app = express();
 
@@ -23,6 +24,21 @@ app.post('/webhook-test', (req, res) => {
 
 app.post("/criar-cobranca", criarCobrancaHandler);
 app.use('/webhook', webhookRouter);
+
+app.get("/whatsapp/status", (_req, res) => {
+  iniciarWhatsApp();
+  res.json(obterStatusWhatsApp());
+});
+
+app.post("/whatsapp/start", (_req, res) => {
+  iniciarWhatsApp();
+  res.json(obterStatusWhatsApp());
+});
+
+app.post("/whatsapp/logout", async (_req, res) => {
+  await desconectarWhatsApp();
+  res.json(obterStatusWhatsApp());
+});
 
 // Endpoint para testar atualização de status (apenas para debug)
 app.post('/test-update-status/:reservaId', async (req, res) => {
@@ -130,4 +146,3 @@ app.listen(port, () => {
   console.log("Token carregado:", process.env.ASAAS_API_KEY);
 
 });
-

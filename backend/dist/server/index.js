@@ -41,6 +41,7 @@ const cors_1 = __importDefault(require("cors"));
 const assas_1 = require("../services/assas");
 require("dotenv/config");
 const webhook_1 = __importDefault(require("./webhook"));
+const whatsapp_1 = require("../services/whatsapp");
 const app = (0, express_1.default)();
 // Permitir requisições do localhost:5173 (seu front-end)
 app.use((0, cors_1.default)());
@@ -55,6 +56,18 @@ app.post('/webhook-test', (req, res) => {
 });
 app.post("/criar-cobranca", assas_1.criarCobrancaHandler);
 app.use('/webhook', webhook_1.default);
+app.get("/whatsapp/status", (_req, res) => {
+    (0, whatsapp_1.iniciarWhatsApp)();
+    res.json((0, whatsapp_1.obterStatusWhatsApp)());
+});
+app.post("/whatsapp/start", (_req, res) => {
+    (0, whatsapp_1.iniciarWhatsApp)();
+    res.json((0, whatsapp_1.obterStatusWhatsApp)());
+});
+app.post("/whatsapp/logout", async (_req, res) => {
+    await (0, whatsapp_1.desconectarWhatsApp)();
+    res.json((0, whatsapp_1.obterStatusWhatsApp)());
+});
 // Endpoint para testar atualização de status (apenas para debug)
 app.post('/test-update-status/:reservaId', async (req, res) => {
     try {

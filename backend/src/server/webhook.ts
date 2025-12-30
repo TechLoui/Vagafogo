@@ -2,6 +2,7 @@ import { Router } from "express";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../services/firebase";
 import { enviarEmailConfirmacao } from "../services/emailService";
+import { enviarConfirmacaoWhatsapp } from "../services/whatsapp";
 
 type WebhookPayment = {
   status?: string;
@@ -118,7 +119,35 @@ async function handleWebhook(payload: WebhookPayload) {
     dataPagamento: new Date(),
   });
 
-  const reserva = reservaSnap.data();
+  const reserva = { ...reservaSnap.data(), status: "pago" };
+  if (!reserva.whatsappEnviado) {
+    try {
+      const resultado = await enviarConfirmacaoWhatsapp(externalReference, reserva);
+      if (resultado.enviado) {
+        await updateDoc(reservaRef, {
+          whatsappEnviado: true,
+          dataWhatsappEnviado: new Date(),
+          whatsappMensagem: resultado.mensagem ?? "",
+          whatsappTelefone: resultado.telefone ?? "",
+        });
+        console.log(`[webhook] WhatsApp enviado para ${externalReference}.`);
+      } else {
+        console.warn(
+          `[webhook] WhatsApp nao enviado para ${externalReference}: ${resultado.motivo}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[webhook] Erro ao enviar WhatsApp para ${externalReference}:`,
+        error,
+      );
+    }
+  } else {
+    console.log(
+      `[webhook] WhatsApp ja havia sido enviado para ${externalReference}, ignorando duplicidade.`,
+    );
+  }
+
   if (!reserva.email) {
     console.warn(
       `[webhook] Reserva ${externalReference} sem e-mail cadastrado.`,

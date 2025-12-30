@@ -4,11 +4,31 @@ exports.criarCobrancaHandler = criarCobrancaHandler;
 const reservas_1 = require("./reservas");
 const firestore_1 = require("firebase/firestore");
 const firebase_1 = require("./firebase");
+const normalizarNumero = (valor) => {
+    const numero = Number(valor);
+    return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+const somarMapa = (mapa) => {
+    if (!mapa)
+        return 0;
+    return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
+};
+const normalizarMapa = (mapa) => {
+    if (!mapa)
+        return undefined;
+    return Object.fromEntries(Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)]));
+};
 async function criarCobrancaHandler(req, res) {
-    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, billingType, temPet, perguntasPersonalizadas, } = req.body;
+    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, participantesPorTipo, billingType, temPet, perguntasPersonalizadas, } = req.body;
     console.log("📥 Dados recebidos:", req.body);
     const horarioFormatado = horario?.toString().trim();
-    const participantesCalculados = (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0) + (naoPagante ?? 0);
+    const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+    const mapaAtivo = participantesPorTipoNormalizado &&
+        Object.keys(participantesPorTipoNormalizado).length > 0;
+    const participantesCalculadosBase = mapaAtivo
+        ? somarMapa(participantesPorTipoNormalizado)
+        : (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0);
+    const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
     const participantesConsiderados = Math.max(participantesCalculados, Number.isFinite(participantes) ? participantes : 0);
     // Debug detalhado dos campos
     const camposFaltando = [];
@@ -133,16 +153,17 @@ async function criarCobrancaHandler(req, res) {
             email,
             telefone,
             atividade,
-            valor,
-            data,
-            participantes: participantesConsiderados,
-            adultos,
-            bariatrica,
-            criancas,
-            naoPagante,
-            observacao: "",
-            horario: horarioFormatado,
-            status: "aguardando",
+        valor,
+        data,
+        participantes: participantesConsiderados,
+        adultos,
+        bariatrica,
+        criancas,
+        naoPagante,
+        participantesPorTipo: participantesPorTipoNormalizado,
+        observacao: "",
+        horario: horarioFormatado,
+        status: "aguardando",
             temPet,
             perguntasPersonalizadas,
         });
