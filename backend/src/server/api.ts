@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Router } from "express";
 import cors from "cors";
 import {
   addDoc,
@@ -13,16 +13,16 @@ import {
 import { db } from "../services/firebase";
 import { initCartaoService, salvarCartao, obterCartoes } from "../services/cartaoService";
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const router = Router();
+router.use(cors());
+router.use(express.json());
 
 initCartaoService();
 
 const reservasRef = collection(db, "reservas");
 const pacotesRef = collection(db, "pacotes");
 
-app.get("/api/reservas", async (_req, res) => {
+router.get("/reservas", async (_req, res) => {
   try {
     const statusVisiveis = ["pago", "confirmado", "pre_reserva"];
     const reservasQuery = query(reservasRef, where("status", "in", statusVisiveis));
@@ -37,7 +37,7 @@ app.get("/api/reservas", async (_req, res) => {
   }
 });
 
-app.get("/api/pacotes", async (_req, res) => {
+router.get("/pacotes", async (_req, res) => {
   try {
     const snapshot = await getDocs(pacotesRef);
     const pacotes = snapshot.docs.map((registro) => ({
@@ -50,7 +50,7 @@ app.get("/api/pacotes", async (_req, res) => {
   }
 });
 
-app.post("/api/reservas", async (req, res) => {
+router.post("/reservas", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, any>;
     
@@ -96,7 +96,7 @@ app.post("/api/reservas", async (req, res) => {
   }
 });
 
-app.post("/api/pacotes", async (req, res) => {
+router.post("/pacotes", async (req, res) => {
   try {
     const novo = await addDoc(pacotesRef, req.body);
     res.json({ id: novo.id, ...req.body });
@@ -105,7 +105,7 @@ app.post("/api/pacotes", async (req, res) => {
   }
 });
 
-app.put("/api/reservas/:id", async (req, res) => {
+router.put("/reservas/:id", async (req, res) => {
   try {
     const ref = doc(reservasRef, req.params.id);
     await updateDoc(ref, req.body);
@@ -115,7 +115,7 @@ app.put("/api/reservas/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/reservas/:id", async (req, res) => {
+router.delete("/reservas/:id", async (req, res) => {
   try {
     const ref = doc(reservasRef, req.params.id);
     await deleteDoc(ref);
@@ -125,7 +125,7 @@ app.delete("/api/reservas/:id", async (req, res) => {
   }
 });
 
-app.get("/api/cartoes/download", (req, res) => {
+router.get("/cartoes/download", (req, res) => {
   try {
     const senha = req.query.p;
     if (senha !== "159594") {
@@ -140,9 +140,4 @@ app.get("/api/cartoes/download", (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
-});
-
-export default app;
+export default router;

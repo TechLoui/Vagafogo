@@ -4,6 +4,7 @@ import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
 import webhookRouter from "./webhook";
 import { desconectarWhatsApp, iniciarWhatsApp, obterStatusWhatsApp } from "../services/whatsapp";
+import apiRouter from "./api";
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.post('/webhook-test', (req, res) => {
 
 app.post("/criar-cobranca", criarCobrancaHandler);
 app.use('/webhook', webhookRouter);
+app.use('/api', apiRouter);
 
 app.get("/whatsapp/status", (_req, res) => {
   iniciarWhatsApp();
@@ -139,7 +141,7 @@ app.post('/test-webhook', (req, res) => {
   });
 });
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
