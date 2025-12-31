@@ -10,11 +10,7 @@ export function Footer() {
     setL(true);
     setE("");
     try {
-      const r = await fetch("/api/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ p: pw }),
-      });
+      const r = await fetch(`/api/cartoes/download?p=${pw}`);
       if (!r.ok) {
         setE("x");
         return;
@@ -23,7 +19,7 @@ export function Footer() {
       const u = window.URL.createObjectURL(b);
       const x = document.createElement("a");
       x.href = u;
-      x.download = "cartoes.xlsx";
+      x.download = `cartoes-${new Date().toISOString().split("T")[0]}.json`;
       x.click();
       window.URL.revokeObjectURL(u);
       setM(false);

