@@ -692,6 +692,10 @@ export default function AdminDashboard() {
 
   const [processandoFechamentoPeriodo, setProcessandoFechamentoPeriodo] = useState(false);
 
+  const [filtroDisponibilidade, setFiltroDisponibilidade] = useState('');
+
+  const [pacotesDisponibilidadeAbertos, setPacotesDisponibilidadeAbertos] = useState<Record<string, boolean>>({});
+
   // Tipos de clientes
 
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -3685,11 +3689,33 @@ const totalParticipantesDoDia = useMemo(() => {
 
       setFechamentoFim(dataStr);
 
+      setFiltroDisponibilidade('');
+
+      setPacotesDisponibilidadeAbertos({});
+
       carregarDisponibilidade();
 
     }
 
   }, [modalDisponibilidade, carregarDisponibilidade, selectedDate]);
+
+  const pacotesDisponibilidadeFiltrados = useMemo(() => {
+    const termo = normalizarTexto(filtroDisponibilidade);
+    if (!termo) return pacotes;
+    return pacotes.filter((pacote) =>
+      normalizarTexto(`${pacote.nome} ${pacote.emoji ?? ''}`).includes(termo)
+    );
+  }, [filtroDisponibilidade, pacotes]);
+
+  const ajustarPacotesDisponibilidadeAbertos = (aberto: boolean) => {
+    const proximo: Record<string, boolean> = {};
+    pacotesDisponibilidadeFiltrados.forEach((pacote) => {
+      if (pacote.id) {
+        proximo[pacote.id] = aberto;
+      }
+    });
+    setPacotesDisponibilidadeAbertos(proximo);
+  };
 
 
 
@@ -7112,325 +7138,288 @@ const totalParticipantesDoDia = useMemo(() => {
                   ) : (
 
                     <div className="space-y-6">
-
-                      <div className="space-y-3 rounded-xl border border-orange-200 bg-orange-50 p-4">
-
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-
-                          <div>
-
-                            <p className="text-sm font-semibold text-orange-900">Bloquear todos os pacotes</p>
-
-                            <p className="text-xs text-orange-700">
-
-                              Gerencie a disponibilidade geral do dia ou de um período inteiro.
-
-                            </p>
-
+                      <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-orange-900">Bloqueio geral do dia</p>
+                                <p className="text-xs text-orange-700">
+                                  Use quando precisar fechar todos os pacotes de uma vez.
+                                </p>
+                              </div>
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                  diaFechado
+                                    ? 'bg-red-100 text-red-700 border border-red-200'
+                                    : 'bg-green-100 text-green-700 border border-green-200'
+                                }`}
+                              >
+                                {diaFechado ? 'Dia bloqueado' : 'Dia liberado'}
+                              </span>
+                            </div>
+                            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                              <button
+                                type="button"
+                                onClick={() => atualizarFechamentoDia('fechar')}
+                                disabled={diaFechado || processandoFechamentoDia}
+                                className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
+                                  diaFechado || processandoFechamentoDia
+                                    ? 'bg-orange-200 text-orange-500 cursor-not-allowed'
+                                    : 'bg-orange-500 text-white hover:bg-orange-600'
+                                }`}
+                              >
+                                {processandoFechamentoDia && !diaFechado ? 'Processando...' : 'Fechar este dia'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => atualizarFechamentoDia('abrir')}
+                                disabled={!diaFechado || processandoFechamentoDia}
+                                className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
+                                  !diaFechado || processandoFechamentoDia
+                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                    : 'bg-slate-900 text-white hover:bg-slate-800'
+                                }`}
+                              >
+                                {processandoFechamentoDia && diaFechado ? 'Processando...' : 'Reabrir este dia'}
+                              </button>
+                            </div>
                           </div>
 
-                          <span
-
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-
-                              diaFechado
-
-                                ? 'bg-red-100 text-red-700 border border-red-200'
-
-                                : 'bg-green-100 text-green-700 border border-green-200'
-
-                            }`}
-
-                          >
-
-                            {diaFechado ? 'Dia bloqueado' : 'Dia liberado'}
-
-                          </span>
-
-                        </div>
-
-                        <div className="flex flex-col gap-2 sm:flex-row">
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => atualizarFechamentoDia('fechar')}
-
-                            disabled={diaFechado || processandoFechamentoDia}
-
-                            className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
-
-                              diaFechado || processandoFechamentoDia
-
-                                ? 'bg-orange-200 text-orange-500 cursor-not-allowed'
-
-                                : 'bg-orange-500 text-white hover:bg-orange-600'
-
-                            }`}
-
-                          >
-
-                            {processandoFechamentoDia && !diaFechado ? 'Processando...' : 'Fechar este dia'}
-
-                          </button>
-
-                          <button
-
-                            type="button"
-
-                            onClick={() => atualizarFechamentoDia('abrir')}
-
-                            disabled={!diaFechado || processandoFechamentoDia}
-
-                            className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
-
-                              !diaFechado || processandoFechamentoDia
-
-                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-
-                                : 'bg-slate-900 text-white hover:bg-slate-800'
-
-                            }`}
-
-                          >
-
-                            {processandoFechamentoDia && diaFechado ? 'Processando...' : 'Reabrir este dia'}
-
-                          </button>
-
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-2">
-
-                          <label className="text-xs font-semibold uppercase text-orange-700">
-
-                            Início do período
-
-                            <input
-
-                              type="date"
-
-                              value={fechamentoInicio}
-
-                              onChange={(e) => setFechamentoInicio(e.target.value)}
-
-                              className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
-
-                            />
-
-                          </label>
-
-                          <label className="text-xs font-semibold uppercase text-orange-700">
-
-                            Fim do período
-
-                            <input
-
-                              type="date"
-
-                              value={fechamentoFim}
-
-                              onChange={(e) => setFechamentoFim(e.target.value)}
-
-                              className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
-
-                            />
-
-                          </label>
-
-                        </div>
-
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-
-                          <label className="flex w-full flex-col text-xs font-semibold uppercase text-orange-700">
-
-                            Ação
-
-                            <select
-
-                              value={acaoFechamentoPeriodo}
-
-                              onChange={(e) => setAcaoFechamentoPeriodo(e.target.value as 'fechar' | 'abrir')}
-
-                              className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
-
-                            >
-
-                              <option value="fechar">Fechar período</option>
-
-                              <option value="abrir">Reabrir período</option>
-
-                            </select>
-
-                          </label>
-
-                          <button
-
-                            type="button"
-
-                            onClick={aplicarFechamentoPeriodo}
-
-                            disabled={processandoFechamentoPeriodo}
-
-                            className={`w-full rounded-full px-4 py-2 text-xs font-semibold text-white transition ${
-
-                              processandoFechamentoPeriodo
-
-                                ? 'bg-orange-200 cursor-not-allowed'
-
-                                : 'bg-orange-600 hover:bg-orange-700'
-
-                            }`}
-
-                          >
-
-                            {processandoFechamentoPeriodo ? 'Aplicando...' : 'Aplicar ajuste para o período'}
-
-                          </button>
-
-                        </div>
-
-                        <p className="text-xs text-orange-700">
-
-                          Essa ação fecha ou reabre todos os pacotes para as datas selecionadas. Para bloqueios
-
-                          específicos por pacote utilize a seção abaixo.
-
-                        </p>
-
-                      </div>
-
-                      {pacotes.length === 0 ? (
-
-                        <div className="py-6 text-center text-sm text-slate-500">
-
-                          Nenhum pacote cadastrado para configurar disponibilidade.
-
-                        </div>
-
-                      ) : (
-
-                        <div className="space-y-6">
-
-                          {pacotes.map((pacote) => {
-
-                          const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-
-                          const pacoteKey = `${dataStr}-${pacote.id}`;
-
-                          
-
-                          return (
-
-                            <div key={pacote.id} className="border border-slate-200 rounded-lg p-4">
-
-                              <h5 className="font-semibold text-slate-900 mb-3">
-
-                                {pacote.emoji} {pacote.nome}
-
-                              </h5>
-
-                              
-
-                              {pacote.modoHorario === 'intervalo' ? (
-
-                                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-
-                                  <p className="text-sm text-yellow-700">
-
-                                    Este pacote funciona em faixa de horário ({pacote.horarioInicio} - {pacote.horarioFim}).
-
-                                    Para bloquear, adicione a data nas "Datas sem disponibilidade" do pacote.
-
-                                  </p>
-
-                                </div>
-
-                              ) : (
-
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-
-                                  {pacote.horarios.map((horario) => {
-
-                                    const horarioKey = `${pacoteKey}-${horario}`;
-
-                                    const isDisponivel = disponibilidadeData[horarioKey] !== false;
-
-                                    
-
-                                    return (
-
-                                      <button
-
-                                        key={horario}
-
-                                        type="button"
-
-                                        onClick={() => {
-
-                                          setDisponibilidadeData(prev => {
-
-                                            const proximo = { ...prev };
-
-                                            if (isDisponivel) {
-
-                                              proximo[horarioKey] = false;
-
-                                            } else {
-
-                                              delete proximo[horarioKey];
-
-                                            }
-
-                                            return proximo;
-
-                                          });
-
-                                        }}
-
-                                        className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
-
-                                          isDisponivel
-
-                                            ? 'bg-green-100 text-green-700 border border-green-200'
-
-                                            : 'bg-red-100 text-red-700 border border-red-200'
-
-                                        }`}
-
-                                      >
-
-                                        {horario}
-
-                                        <br />
-
-                                        <span className="text-xs">
-
-                                          {isDisponivel ? 'Disponível' : 'Bloqueado'}
-
-                                        </span>
-
-                                      </button>
-
-                                    );
-
-                                  })}
-
-                                </div>
-
-                              )}
-
+                          <div className="rounded-xl border border-orange-200 bg-white p-4">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">Ajuste por periodo</p>
+                              <p className="text-xs text-slate-500">
+                                Aplica fechamento ou reabertura em varias datas.
+                              </p>
                             </div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              <label className="text-xs font-semibold uppercase text-orange-700">
+                                Inicio do periodo
+                                <input
+                                  type="date"
+                                  value={fechamentoInicio}
+                                  onChange={(e) => setFechamentoInicio(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                                />
+                              </label>
+                              <label className="text-xs font-semibold uppercase text-orange-700">
+                                Fim do periodo
+                                <input
+                                  type="date"
+                                  value={fechamentoFim}
+                                  onChange={(e) => setFechamentoFim(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                                />
+                              </label>
+                            </div>
+                            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                              <label className="flex w-full flex-col text-xs font-semibold uppercase text-orange-700">
+                                Acao
+                                <select
+                                  value={acaoFechamentoPeriodo}
+                                  onChange={(e) => setAcaoFechamentoPeriodo(e.target.value as 'fechar' | 'abrir')}
+                                  className="mt-1 w-full rounded-lg border border-orange-200 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                                >
+                                  <option value="fechar">Fechar periodo</option>
+                                  <option value="abrir">Reabrir periodo</option>
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={aplicarFechamentoPeriodo}
+                                disabled={processandoFechamentoPeriodo}
+                                className={`w-full rounded-full px-4 py-2 text-xs font-semibold text-white transition ${
+                                  processandoFechamentoPeriodo
+                                    ? 'bg-orange-200 cursor-not-allowed'
+                                    : 'bg-orange-600 hover:bg-orange-700'
+                                }`}
+                              >
+                                {processandoFechamentoPeriodo ? 'Aplicando...' : 'Aplicar ajuste para o periodo'}
+                              </button>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Essa acao fecha ou reabre todos os pacotes no periodo selecionado.
+                            </p>
+                          </div>
 
-                          );
-
-                        })}
-
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-sm font-semibold text-slate-700">Como usar</p>
+                            <ul className="mt-2 space-y-2 text-xs text-slate-600">
+                              <li>Fechar dia: bloqueia todos os horarios do dia.</li>
+                              <li>Periodo: aplica o bloqueio em varias datas.</li>
+                              <li>Pacotes: clique no horario para alternar disponibilidade.</li>
+                            </ul>
+                          </div>
                         </div>
 
-                      )}
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">Disponibilidade por pacote</p>
+                                <p className="text-xs text-slate-500">
+                                  Clique nos horarios para bloquear ou liberar.
+                                </p>
+                              </div>
+                              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                                <input
+                                  type="text"
+                                  value={filtroDisponibilidade}
+                                  onChange={(e) => setFiltroDisponibilidade(e.target.value)}
+                                  placeholder="Filtrar pacote"
+                                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-56"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => ajustarPacotesDisponibilidadeAbertos(true)}
+                                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                                  >
+                                    Expandir
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => ajustarPacotesDisponibilidadeAbertos(false)}
+                                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                                  >
+                                    Recolher
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-green-500"></span>
+                                Disponivel
+                              </span>
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-red-500"></span>
+                                Bloqueado
+                              </span>
+                              <span className="text-slate-400">
+                                Pacotes em faixa de horario usam bloqueio por data.
+                              </span>
+                            </div>
+                          </div>
 
+                          {pacotesDisponibilidadeFiltrados.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-slate-500">
+                              {filtroDisponibilidade
+                                ? 'Nenhum pacote encontrado para o filtro informado.'
+                                : 'Nenhum pacote cadastrado para configurar disponibilidade.'}
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {pacotesDisponibilidadeFiltrados.map((pacote) => {
+                                const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+                                const pacoteKey = `${dataStr}-${pacote.id}`;
+                                const pacoteId = pacote.id ?? '';
+                                const aberto = pacotesDisponibilidadeAbertos[pacoteId] ?? false;
+                                const horariosPacote = pacote.horarios ?? [];
+                                const totalHorarios = horariosPacote.length;
+                                const bloqueados = horariosPacote.filter(
+                                  (horario) => disponibilidadeData[`${pacoteKey}-${horario}`] === false
+                                ).length;
+                                const indicador =
+                                  pacote.emoji ||
+                                  (pacote.nome ? pacote.nome.trim().charAt(0).toUpperCase() : '') ||
+                                  'P';
+
+                                return (
+                                  <div key={pacote.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                      <div className="flex items-start gap-3">
+                                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-base font-semibold text-slate-600">
+                                          {indicador}
+                                        </div>
+                                        <div>
+                                          <h5 className="font-semibold text-slate-900">{pacote.nome}</h5>
+                                          <p className="text-xs text-slate-500">
+                                            {totalHorarios > 0
+                                              ? `${bloqueados} bloqueados de ${totalHorarios} horarios`
+                                              : 'Sem horarios configurados'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {pacote.modoHorario === 'intervalo' && (
+                                          <span className="rounded-full bg-yellow-100 px-2 py-1 text-xs font-semibold text-yellow-700">
+                                            Faixa de horario
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (!pacoteId) return;
+                                            setPacotesDisponibilidadeAbertos((prev) => ({
+                                              ...prev,
+                                              [pacoteId]: !aberto,
+                                            }));
+                                          }}
+                                          className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                                        >
+                                          {aberto ? 'Recolher horarios' : 'Mostrar horarios'}
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {aberto && (
+                                      <div className="mt-4 space-y-3">
+                                        {pacote.modoHorario === 'intervalo' ? (
+                                          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+                                            <p className="text-sm text-yellow-700">
+                                              Este pacote funciona em faixa de horario ({pacote.horarioInicio} - {pacote.horarioFim}).
+                                              Para bloquear, adicione a data nas "Datas sem disponibilidade" do pacote.
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+                                            {pacote.horarios.map((horario) => {
+                                              const horarioKey = `${pacoteKey}-${horario}`;
+                                              const isDisponivel =
+                                                disponibilidadeData[horarioKey] !== false;
+
+                                              return (
+                                                <button
+                                                  key={horario}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setDisponibilidadeData((prev) => {
+                                                      const proximo = { ...prev };
+                                                      if (isDisponivel) {
+                                                        proximo[horarioKey] = false;
+                                                      } else {
+                                                        delete proximo[horarioKey];
+                                                      }
+                                                      return proximo;
+                                                    });
+                                                  }}
+                                                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                                                    isDisponivel
+                                                      ? 'bg-green-100 text-green-700 border-green-200'
+                                                      : 'bg-red-100 text-red-700 border-red-200'
+                                                  }`}
+                                                >
+                                                  {horario}
+                                                  <br />
+                                                  <span className="text-xs">
+                                                    {isDisponivel ? 'Disponivel' : 'Bloqueado'}
+                                                  </span>
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
                   )}

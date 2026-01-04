@@ -931,8 +931,8 @@ export function BookingSection() {
   if (loadingPacotes) {
     return (
       <section id="reservas" className="py-16 bg-[#F7FAEF]">
-        <div className="container mx-auto px-4">
-          <div className="max-w-2xl mx-auto text-center mb-10">
+        <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+          <div className="max-w-4xl mx-auto text-center mb-10">
             <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
               RESERVE SEU PASSEIO
             </span>
@@ -948,8 +948,8 @@ export function BookingSection() {
   if (pacotes.length === 0) {
     return (
       <section id="reservas" className="py-16 bg-[#F7FAEF]">
-        <div className="container mx-auto px-4">
-          <div className="max-w-2xl mx-auto text-center mb-10">
+        <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+          <div className="max-w-4xl mx-auto text-center mb-10">
             <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
               RESERVE SEU PASSEIO
             </span>
@@ -1493,8 +1493,8 @@ export function BookingSection() {
 
   return (
     <section id="reservas" className="py-16 bg-[#F7FAEF]">
-      <div className="container mx-auto px-4">
-        <div className="max-w-2xl mx-auto text-center mb-10">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+        <div className="max-w-4xl mx-auto text-center mb-10">
           <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
             RESERVE SEU PASSEIO
           </span>
@@ -1503,7 +1503,7 @@ export function BookingSection() {
           </h2>
         </div>
         
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <form onSubmit={handleSubmit} noValidate className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
             
             {combos.length > 0 && (

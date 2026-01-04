@@ -8,6 +8,7 @@ export default defineConfig({
     host: true
   },
   build: {
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks: undefined

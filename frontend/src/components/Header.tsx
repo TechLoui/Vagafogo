@@ -6,7 +6,7 @@ export default function Header() {
 
   return (
     <header className="fixed top-0 left-0 w-full bg-white shadow z-50">
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
         {/* Logo + Título */}
         <div className="flex items-center min-w-[180px]">
           <img

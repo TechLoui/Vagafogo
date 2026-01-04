@@ -13,8 +13,8 @@ export function BrunchSection() {
         backgroundSize: "cover"
       }}
     >
-      <div className="container mx-auto px-4">
-        <div className="max-w-4xl mx-auto text-center mb-12">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+        <div className="max-w-5xl mx-auto text-center mb-12">
           <span className="text-white font-semibold uppercase tracking-wider">
             DESCUBRA A GASTRONOMIA
           </span>
@@ -66,7 +66,7 @@ export function BrunchSection() {
         </div>
 
         {/* Botão final */}
-        <div className="text-center mt-12 px-4">
+        <div className="text-center mt-12">
   <a
     href="#reservas"
     className="bg-[#8B4F23] text-white font-semibold px-6 py-3 sm:px-8 sm:py-4 rounded-full shadow-lg hover:bg-[#A05D2B] text-base sm:text-lg transition duration-300 focus:ring-2 focus:ring-offset-2 focus:ring-[#8B4F23] inline-block w-full sm:w-auto max-w-md"

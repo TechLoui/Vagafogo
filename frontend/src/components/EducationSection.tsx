@@ -2,18 +2,18 @@ import educationImg from '../assets/educacaoambiental/educacaoambiental-1.jpg'
 export function EducationSection() {
   return (
     <section id="educacao" className="py-16 bg-[#F7FAEF]">
-      <div className="container mx-auto px-4">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
           <span className="text-green-600 font-semibold uppercase tracking-widest">APRENDIZADO E INTEGRAÇÃO</span>
           <h2 className="font-heading text-4xl md:text-5xl font-bold text-[#8B4F23] mt-2 mb-4">
             Educação Ambiental
           </h2>
-          <p className="max-w-2xl mx-auto text-gray-700 mt-4 text-lg">
+          <p className="max-w-4xl mx-auto text-gray-700 mt-4 text-lg">
             Demonstramos a relação de interdependência do ser humano com a natureza, promovendo proteção e preservação ambiental.
           </p>
         </div>
 
-        <div className="flex flex-col lg:flex-row items-center gap-12 max-w-6xl mx-auto">
+        <div className="flex flex-col lg:flex-row items-center gap-12 max-w-7xl mx-auto">
           {/* Imagem */}
     
           <div className="lg:w-1/2 w-full h-72 object-cover rounded-2xl shadow-lg" style={{backgroundImage: `url(${educationImg})`}}></div>
