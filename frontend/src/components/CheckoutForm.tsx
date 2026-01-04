@@ -10,6 +10,13 @@ export function CheckoutForm() {
     data: "",
     horario: "",
     participantes: 1,
+    enderecoCep: "",
+    enderecoRua: "",
+    enderecoNumero: "",
+    enderecoComplemento: "",
+    enderecoBairro: "",
+    enderecoCidade: "",
+    enderecoEstado: "",
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -36,6 +43,13 @@ export function CheckoutForm() {
           data: "",
           horario: "",
           participantes: 1,
+          enderecoCep: "",
+          enderecoRua: "",
+          enderecoNumero: "",
+          enderecoComplemento: "",
+          enderecoBairro: "",
+          enderecoCidade: "",
+          enderecoEstado: "",
         });
       }
     } catch (error) {
@@ -139,6 +153,89 @@ export function CheckoutForm() {
           min="1"
           required
         />
+      </div>
+
+      <h3>Endereço de Cobrança</h3>
+
+      <div style={{ marginBottom: "15px" }}>
+        <label>CEP</label>
+        <input
+          type="text"
+          name="enderecoCep"
+          value={form.enderecoCep}
+          onChange={handleChange}
+          placeholder="00000-000"
+          required
+        />
+      </div>
+
+      <div style={{ marginBottom: "15px" }}>
+        <label>Rua</label>
+        <input
+          type="text"
+          name="enderecoRua"
+          value={form.enderecoRua}
+          onChange={handleChange}
+          required
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+        <div style={{ flex: 1 }}>
+          <label>Número</label>
+          <input
+            type="text"
+            name="enderecoNumero"
+            value={form.enderecoNumero}
+            onChange={handleChange}
+            required
+          />
+        </div>
+        <div style={{ flex: 2 }}>
+          <label>Complemento</label>
+          <input
+            type="text"
+            name="enderecoComplemento"
+            value={form.enderecoComplemento}
+            onChange={handleChange}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "15px" }}>
+        <label>Bairro</label>
+        <input
+          type="text"
+          name="enderecoBairro"
+          value={form.enderecoBairro}
+          onChange={handleChange}
+          required
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+        <div style={{ flex: 2 }}>
+          <label>Cidade</label>
+          <input
+            type="text"
+            name="enderecoCidade"
+            value={form.enderecoCidade}
+            onChange={handleChange}
+            required
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label>Estado</label>
+          <input
+            type="text"
+            name="enderecoEstado"
+            value={form.enderecoEstado}
+            onChange={handleChange}
+            placeholder="SP"
+            maxLength="2"
+            required
+          />
+        </div>
       </div>
 
       <button type="submit" style={{ width: "100%", padding: "10px" }}>

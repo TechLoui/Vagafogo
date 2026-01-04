@@ -419,11 +419,20 @@ export function BookingSection() {
     setCartaoResultado(null);
   }, [formaPagamento]);
   const cartaoBrand = useMemo(() => detectarBandeiraCartao(cartaoNumero), [cartaoNumero]);
+  const cartaoBrandInfo = useMemo(
+    () => (cartaoBrand ? cardBrandConfigs.find((brand) => brand.id === cartaoBrand) ?? null : null),
+    [cartaoBrand]
+  );
   const cartaoNumeroPlaceholder =
     cartaoBrand === "amex" ? "0000 000000 00000" : "0000 0000 0000 0000";
   const cartaoNumeroMaxLength = cartaoBrand === "amex" ? 17 : 23;
   const cartaoCvvMaxLength = cartaoBrand === "amex" ? 4 : 3;
   const cartaoCvvPlaceholder = cartaoBrand === "amex" ? "1234" : "123";
+  const cartaoNumeroExibicao = cartaoNumero.trim() ? cartaoNumero : cartaoNumeroPlaceholder;
+  const cartaoNomeExibicao = cartaoNome.trim()
+    ? cartaoNome.trim().toUpperCase()
+    : "NOME NO CARTAO";
+  const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
 
   useEffect(() => {
     setCartaoCvv((prev) => prev.slice(0, cartaoCvvMaxLength));
@@ -2147,7 +2156,41 @@ export function BookingSection() {
 
             {formaPagamento === "CREDIT_CARD" && (
               <div ref={cartaoRef} className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="space-y-4">
+                <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
+                  <div className="relative mx-auto w-full max-w-[420px] aspect-[1.586/1] overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-5 text-white sm:p-6 lg:mx-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/70">
+                        Credito
+                      </span>
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                          cartaoBrandInfo ? cartaoBrandInfo.badgeClass : "bg-white/10 text-white/70"
+                        }`}
+                      >
+                        {cartaoBrandInfo ? cartaoBrandInfo.label : "Bandeira"}
+                      </span>
+                    </div>
+
+                    <div className="mt-8 whitespace-nowrap text-[0.95rem] font-semibold tracking-[0.18em] sm:text-lg sm:tracking-[0.25em]">
+                      {cartaoNumeroExibicao}
+                    </div>
+
+                    <div className="mt-6 flex items-end justify-between gap-4 text-xs uppercase tracking-widest text-white/70">
+                      <div>
+                        <span className="block text-[10px] text-white/60">Nome</span>
+                        <span className="text-sm font-semibold text-white">{cartaoNomeExibicao}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[10px] text-white/60">Validade</span>
+                        <span className="text-sm font-semibold text-white">{cartaoValidadeExibicao}</span>
+                      </div>
+                    </div>
+
+                    <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+                    <div className="absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl" />
+                  </div>
+
+                  <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold text-slate-700">Dados do cartao</h3>
@@ -2373,6 +2416,7 @@ export function BookingSection() {
                         )}
                       </label>
                     </div>
+                  </div>
                   </div>
                 </div>
               </div>
