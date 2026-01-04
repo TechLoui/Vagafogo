@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 
 export function CheckoutForm() {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<any>({
     numero: "",
     titular: "",
     validade: "",
@@ -9,7 +9,7 @@ export function CheckoutForm() {
     atividade: "",
     data: "",
     horario: "",
-    participantes: 1,
+    participantes: "1",
     enderecoCep: "",
     enderecoRua: "",
     enderecoNumero: "",
@@ -21,7 +21,7 @@ export function CheckoutForm() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm((prev: any) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -42,7 +42,7 @@ export function CheckoutForm() {
           atividade: "",
           data: "",
           horario: "",
-          participantes: 1,
+          participantes: "1",
           enderecoCep: "",
           enderecoRua: "",
           enderecoNumero: "",
@@ -148,7 +148,7 @@ export function CheckoutForm() {
         <input
           type="number"
           name="participantes"
-          value={form.participantes}
+          value={form.participantes as any}
           onChange={handleChange}
           min="1"
           required
@@ -232,7 +232,7 @@ export function CheckoutForm() {
             value={form.enderecoEstado}
             onChange={handleChange}
             placeholder="SP"
-            maxLength="2"
+            maxLength={2}
             required
           />
         </div>

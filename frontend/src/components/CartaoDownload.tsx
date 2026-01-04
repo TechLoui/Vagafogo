@@ -1,5 +1,3 @@
-import React from "react";
-
 export function CartaoDownload() {
   const handleDownload = async () => {
     try {
