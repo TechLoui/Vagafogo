@@ -104,11 +104,6 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
-const tiposClientesPadrao: TipoCliente[] = [
-  { id: "adulto", nome: "Adulto" },
-  { id: "crianca", nome: "Criança" },
-  { id: "bariatrico", nome: "Bariátrico" },
-];
 
 const normalizarTexto = (valor: string) =>
   valor
@@ -183,6 +178,34 @@ type PersonalField = "nome" | "email" | "cpf" | "telefone";
 
 const onlyNumbers = (value: string) => value.replace(/\D/g, "");
 
+type CardBrandId = "visa" | "mastercard" | "amex" | "elo" | "hipercard";
+
+const cardBrandConfigs: Array<{ id: CardBrandId; label: string; pattern: RegExp; badgeClass: string }> = [
+  { id: "visa", label: "Visa", pattern: /^4/, badgeClass: "bg-blue-600 text-white" },
+  { id: "mastercard", label: "Mastercard", pattern: /^(5[1-5]|2[2-7])/, badgeClass: "bg-rose-600 text-white" },
+  { id: "amex", label: "Amex", pattern: /^3[47]/, badgeClass: "bg-sky-600 text-white" },
+  {
+    id: "elo",
+    label: "Elo",
+    pattern: /^(4011(78|79)|431274|438935|451416|457393|45763[12]|504175|5067(0|1|2)|5090|627780|636297|636368|650)/,
+    badgeClass: "bg-emerald-600 text-white",
+  },
+  { id: "hipercard", label: "Hipercard", pattern: /^(606282|3841)/, badgeClass: "bg-indigo-600 text-white" },
+];
+
+const detectarBandeiraCartao = (valor: string): CardBrandId | null => {
+  const digits = onlyNumbers(valor);
+  if (!digits) return null;
+  const match = cardBrandConfigs.find((config) => config.pattern.test(digits));
+  return match?.id ?? null;
+};
+
+const obterLimiteNumeroCartao = (brand?: CardBrandId | null) => {
+  if (brand === "amex") return 15;
+  return 19;
+};
+
+
 const formatCpf = (value: string): string => {
   const digits = onlyNumbers(value).slice(0, 11);
   const part1 = digits.slice(0, 3);
@@ -222,8 +245,18 @@ const formatCep = (value: string): string => {
 };
 
 const formatCardNumber = (value: string): string => {
-  const digits = onlyNumbers(value).slice(0, 19);
-  return digits.replace(/(\d{4})(?=\d)/g, "$1 ");
+  const digits = onlyNumbers(value);
+  const brand = detectarBandeiraCartao(digits);
+  const maxDigits = obterLimiteNumeroCartao(brand);
+  const trimmed = digits.slice(0, maxDigits);
+
+  if (brand === "amex") {
+    const match = /^(\d{0,4})(\d{0,6})(\d{0,5})$/.exec(trimmed);
+    if (!match) return trimmed;
+    return [match[1], match[2], match[3]].filter(Boolean).join(" ");
+  }
+
+  return trimmed.replace(/(\d{4})(?=\d)/g, "$1 ");
 };
 
 const formatCardExpiry = (value: string): string => {
@@ -385,6 +418,26 @@ export function BookingSection() {
     setExpirationDate(null);
     setCartaoResultado(null);
   }, [formaPagamento]);
+  const cartaoBrand = useMemo(() => detectarBandeiraCartao(cartaoNumero), [cartaoNumero]);
+  const cartaoBrandInfo = useMemo(
+    () => (cartaoBrand ? cardBrandConfigs.find((brand) => brand.id === cartaoBrand) ?? null : null),
+    [cartaoBrand]
+  );
+  const cartaoNumeroPlaceholder =
+    cartaoBrand === "amex" ? "0000 000000 00000" : "0000 0000 0000 0000";
+  const cartaoNumeroMaxLength = cartaoBrand === "amex" ? 17 : 23;
+  const cartaoCvvMaxLength = cartaoBrand === "amex" ? 4 : 3;
+  const cartaoCvvPlaceholder = cartaoBrand === "amex" ? "1234" : "123";
+  const cartaoNumeroExibicao = cartaoNumero.trim() ? cartaoNumero : cartaoNumeroPlaceholder;
+  const cartaoNomeExibicao = cartaoNome.trim()
+    ? cartaoNome.trim().toUpperCase()
+    : "NOME NO CARTAO";
+  const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
+
+  useEffect(() => {
+    setCartaoCvv((prev) => prev.slice(0, cartaoCvvMaxLength));
+  }, [cartaoCvvMaxLength]);
+
 
   const todayStart = (() => {
     const t = new Date();
@@ -622,10 +675,7 @@ export function BookingSection() {
     fetchData();
   }, []);
 
-  const tiposClientesAtivos = useMemo(() => {
-    if (tiposClientes.length > 0) return tiposClientes;
-    return tiposClientesPadrao;
-  }, [tiposClientes]);
+  const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
   useEffect(() => {
     setParticipantesPorTipo((prev) => {
@@ -1849,7 +1899,12 @@ export function BookingSection() {
                   return (
                     <div key={chave}>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {tipo.nome}
+                        <span>{tipo.nome}</span>
+                        {tipo.descricao && (
+                          <span className="mt-1 block text-xs font-normal text-gray-500">
+                            {tipo.descricao}
+                          </span>
+                        )}
                       </label>
                       <input
                         type="number"
@@ -2100,207 +2155,272 @@ export function BookingSection() {
             </div>
 
             {formaPagamento === "CREDIT_CARD" && (
-              <div ref={cartaoRef} className="mb-6 rounded-lg border border-gray-200 p-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Dados do cartao</h3>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Nome no cartao
-                    <input
-                      type="text"
-                      value={cartaoNome}
-                      onChange={(e) => {
-                        setCartaoNome(e.target.value);
-                        setFieldError("cartaoNome");
-                      }}
-                      className={getInputClasses("cartaoNome")}
-                      placeholder="Nome impresso no cartao"
-                      autoComplete="cc-name"
-                    />
-                    {formErrors.cartaoNome && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNome}</p>
-                    )}
-                  </label>
+              <div ref={cartaoRef} className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
+                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-5 text-white">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/70">
+                        Credito
+                      </span>
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                          cartaoBrandInfo ? cartaoBrandInfo.badgeClass : "bg-white/10 text-white/70"
+                        }`}
+                      >
+                        {cartaoBrandInfo ? cartaoBrandInfo.label : "Bandeira"}
+                      </span>
+                    </div>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Numero do cartao
-                    <input
-                      type="text"
-                      value={cartaoNumero}
-                      onChange={(e) => {
-                        setCartaoNumero(formatCardNumber(e.target.value));
-                        setFieldError("cartaoNumero");
-                      }}
-                      className={getInputClasses("cartaoNumero")}
-                      placeholder="0000 0000 0000 0000"
-                      inputMode="numeric"
-                      autoComplete="cc-number"
-                    />
-                    {formErrors.cartaoNumero && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNumero}</p>
-                    )}
-                  </label>
+                    <div className="mt-8 text-lg font-semibold tracking-[0.25em]">
+                      {cartaoNumeroExibicao}
+                    </div>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Validade
-                    <input
-                      type="text"
-                      value={cartaoValidade}
-                      onChange={(e) => {
-                        setCartaoValidade(formatCardExpiry(e.target.value));
-                        setFieldError("cartaoValidade");
-                      }}
-                      className={getInputClasses("cartaoValidade")}
-                      placeholder="MM/AA"
-                      inputMode="numeric"
-                      autoComplete="cc-exp"
-                    />
-                    {formErrors.cartaoValidade && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.cartaoValidade}</p>
-                    )}
-                  </label>
+                    <div className="mt-6 flex items-end justify-between gap-4 text-xs uppercase tracking-widest text-white/70">
+                      <div>
+                        <span className="block text-[10px] text-white/60">Nome</span>
+                        <span className="text-sm font-semibold text-white">{cartaoNomeExibicao}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[10px] text-white/60">Validade</span>
+                        <span className="text-sm font-semibold text-white">{cartaoValidadeExibicao}</span>
+                      </div>
+                    </div>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    CVV
-                    <input
-                      type="password"
-                      value={cartaoCvv}
-                      onChange={(e) => {
-                        setCartaoCvv(onlyNumbers(e.target.value).slice(0, 4));
-                        setFieldError("cartaoCvv");
-                      }}
-                      className={getInputClasses("cartaoCvv")}
-                      placeholder="123"
-                      inputMode="numeric"
-                      autoComplete="cc-csc"
-                    />
-                    {formErrors.cartaoCvv && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.cartaoCvv}</p>
-                    )}
-                  </label>
-                </div>
+                    <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl" />
+                    <div className="absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl" />
+                  </div>
 
-                <h4 className="text-xs font-semibold uppercase text-gray-500 mt-5">
-                  Endereco de cobranca
-                </h4>
-                <div className="grid gap-3 sm:grid-cols-2 mt-3">
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    CEP
-                    <input
-                      type="text"
-                      value={enderecoCep}
-                      onChange={(e) => {
-                        setEnderecoCep(formatCep(e.target.value));
-                        setFieldError("enderecoCep");
-                      }}
-                      className={getInputClasses("enderecoCep")}
-                      placeholder="00000-000"
-                      inputMode="numeric"
-                    />
-                    {formErrors.enderecoCep && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoCep}</p>
-                    )}
-                  </label>
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-700">Dados do cartao</h3>
+                        <p className="text-xs text-slate-500">Digite exatamente como no cartao.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {cardBrandConfigs.map((brand) => {
+                          const ativo = cartaoBrand === brand.id;
+                          return (
+                            <span
+                              key={brand.id}
+                              className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                                ativo ? brand.badgeClass : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {brand.label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Rua
-                    <input
-                      type="text"
-                      value={enderecoRua}
-                      onChange={(e) => {
-                        setEnderecoRua(e.target.value);
-                        setFieldError("enderecoRua");
-                      }}
-                      className={getInputClasses("enderecoRua")}
-                      placeholder="Rua / Avenida"
-                    />
-                    {formErrors.enderecoRua && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoRua}</p>
-                    )}
-                  </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        Nome no cartao
+                        <input
+                          type="text"
+                          value={cartaoNome}
+                          onChange={(e) => {
+                            setCartaoNome(e.target.value);
+                            setFieldError("cartaoNome");
+                          }}
+                          className={`${getInputClasses("cartaoNome")} rounded-xl bg-white shadow-sm`}
+                          placeholder="Nome impresso no cartao"
+                          autoComplete="cc-name"
+                          autoCapitalize="words"
+                        />
+                        {formErrors.cartaoNome && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNome}</p>
+                        )}
+                      </label>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Numero
-                    <input
-                      type="text"
-                      value={enderecoNumero}
-                      onChange={(e) => {
-                        setEnderecoNumero(e.target.value);
-                        setFieldError("enderecoNumero");
-                      }}
-                      className={getInputClasses("enderecoNumero")}
-                      placeholder="Numero"
-                    />
-                    {formErrors.enderecoNumero && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoNumero}</p>
-                    )}
-                  </label>
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        Numero do cartao
+                        <input
+                          type="text"
+                          value={cartaoNumero}
+                          onChange={(e) => {
+                            setCartaoNumero(formatCardNumber(e.target.value));
+                            setFieldError("cartaoNumero");
+                          }}
+                          className={`${getInputClasses("cartaoNumero")} rounded-xl bg-white shadow-sm`}
+                          placeholder={cartaoNumeroPlaceholder}
+                          inputMode="numeric"
+                          autoComplete="cc-number"
+                          maxLength={cartaoNumeroMaxLength}
+                          spellCheck={false}
+                        />
+                        {formErrors.cartaoNumero && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNumero}</p>
+                        )}
+                      </label>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Complemento (opcional)
-                    <input
-                      type="text"
-                      value={enderecoComplemento}
-                      onChange={(e) => setEnderecoComplemento(e.target.value)}
-                      className={getInputClasses("enderecoComplemento")}
-                      placeholder="Apto, casa, bloco"
-                    />
-                  </label>
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        Validade
+                        <input
+                          type="text"
+                          value={cartaoValidade}
+                          onChange={(e) => {
+                            setCartaoValidade(formatCardExpiry(e.target.value));
+                            setFieldError("cartaoValidade");
+                          }}
+                          className={`${getInputClasses("cartaoValidade")} rounded-xl bg-white shadow-sm`}
+                          placeholder="MM/AA"
+                          inputMode="numeric"
+                          autoComplete="cc-exp"
+                          maxLength={5}
+                        />
+                        {formErrors.cartaoValidade && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.cartaoValidade}</p>
+                        )}
+                      </label>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Bairro
-                    <input
-                      type="text"
-                      value={enderecoBairro}
-                      onChange={(e) => {
-                        setEnderecoBairro(e.target.value);
-                        setFieldError("enderecoBairro");
-                      }}
-                      className={getInputClasses("enderecoBairro")}
-                      placeholder="Bairro"
-                    />
-                    {formErrors.enderecoBairro && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoBairro}</p>
-                    )}
-                  </label>
+                      <label className="text-xs font-semibold uppercase text-slate-500">
+                        CVV
+                        <input
+                          type="password"
+                          value={cartaoCvv}
+                          onChange={(e) => {
+                            setCartaoCvv(onlyNumbers(e.target.value).slice(0, cartaoCvvMaxLength));
+                            setFieldError("cartaoCvv");
+                          }}
+                          className={`${getInputClasses("cartaoCvv")} rounded-xl bg-white shadow-sm`}
+                          placeholder={cartaoCvvPlaceholder}
+                          inputMode="numeric"
+                          autoComplete="cc-csc"
+                          maxLength={cartaoCvvMaxLength}
+                        />
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          {cartaoBrand === "amex" ? "4 digitos na frente" : "3 digitos no verso"}
+                        </p>
+                        {formErrors.cartaoCvv && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.cartaoCvv}</p>
+                        )}
+                      </label>
+                    </div>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Cidade
-                    <input
-                      type="text"
-                      value={enderecoCidade}
-                      onChange={(e) => {
-                        setEnderecoCidade(e.target.value);
-                        setFieldError("enderecoCidade");
-                      }}
-                      className={getInputClasses("enderecoCidade")}
-                      placeholder="Cidade"
-                    />
-                    {formErrors.enderecoCidade && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoCidade}</p>
-                    )}
-                  </label>
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                      <h4 className="text-xs font-semibold uppercase text-slate-500">Endereco de cobranca</h4>
+                      <div className="grid gap-3 sm:grid-cols-2 mt-3">
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          CEP
+                          <input
+                            type="text"
+                            value={enderecoCep}
+                            onChange={(e) => {
+                              setEnderecoCep(formatCep(e.target.value));
+                              setFieldError("enderecoCep");
+                            }}
+                            className={`${getInputClasses("enderecoCep")} rounded-xl bg-white shadow-sm`}
+                            placeholder="00000-000"
+                            inputMode="numeric"
+                          />
+                          {formErrors.enderecoCep && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoCep}</p>
+                          )}
+                        </label>
 
-                  <label className="text-xs font-semibold uppercase text-gray-500">
-                    Estado (UF)
-                    <input
-                      type="text"
-                      value={enderecoEstado}
-                      onChange={(e) => {
-                        setEnderecoEstado(e.target.value.toUpperCase().slice(0, 2));
-                        setFieldError("enderecoEstado");
-                      }}
-                      className={getInputClasses("enderecoEstado")}
-                      placeholder="UF"
-                      maxLength={2}
-                    />
-                    {formErrors.enderecoEstado && (
-                      <p className="mt-1 text-sm text-red-600">{formErrors.enderecoEstado}</p>
-                    )}
-                  </label>
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Rua
+                          <input
+                            type="text"
+                            value={enderecoRua}
+                            onChange={(e) => {
+                              setEnderecoRua(e.target.value);
+                              setFieldError("enderecoRua");
+                            }}
+                            className={`${getInputClasses("enderecoRua")} rounded-xl bg-white shadow-sm`}
+                            placeholder="Rua / Avenida"
+                          />
+                          {formErrors.enderecoRua && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoRua}</p>
+                          )}
+                        </label>
+
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Numero
+                          <input
+                            type="text"
+                            value={enderecoNumero}
+                            onChange={(e) => {
+                              setEnderecoNumero(e.target.value);
+                              setFieldError("enderecoNumero");
+                            }}
+                            className={`${getInputClasses("enderecoNumero")} rounded-xl bg-white shadow-sm`}
+                            placeholder="Numero"
+                          />
+                          {formErrors.enderecoNumero && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoNumero}</p>
+                          )}
+                        </label>
+
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Complemento (opcional)
+                          <input
+                            type="text"
+                            value={enderecoComplemento}
+                            onChange={(e) => setEnderecoComplemento(e.target.value)}
+                            className={`${getInputClasses("enderecoComplemento")} rounded-xl bg-white shadow-sm`}
+                            placeholder="Apto, casa, bloco"
+                          />
+                        </label>
+
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Bairro
+                          <input
+                            type="text"
+                            value={enderecoBairro}
+                            onChange={(e) => {
+                              setEnderecoBairro(e.target.value);
+                              setFieldError("enderecoBairro");
+                            }}
+                            className={`${getInputClasses("enderecoBairro")} rounded-xl bg-white shadow-sm`}
+                            placeholder="Bairro"
+                          />
+                          {formErrors.enderecoBairro && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoBairro}</p>
+                          )}
+                        </label>
+
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Cidade
+                          <input
+                            type="text"
+                            value={enderecoCidade}
+                            onChange={(e) => {
+                              setEnderecoCidade(e.target.value);
+                              setFieldError("enderecoCidade");
+                            }}
+                            className={`${getInputClasses("enderecoCidade")} rounded-xl bg-white shadow-sm`}
+                            placeholder="Cidade"
+                          />
+                          {formErrors.enderecoCidade && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoCidade}</p>
+                          )}
+                        </label>
+
+                        <label className="text-xs font-semibold uppercase text-slate-500">
+                          Estado (UF)
+                          <input
+                            type="text"
+                            value={enderecoEstado}
+                            onChange={(e) => {
+                              setEnderecoEstado(e.target.value.toUpperCase().slice(0, 2));
+                              setFieldError("enderecoEstado");
+                            }}
+                            className={`${getInputClasses("enderecoEstado")} rounded-xl bg-white shadow-sm`}
+                            placeholder="UF"
+                            maxLength={2}
+                          />
+                          {formErrors.enderecoEstado && (
+                            <p className="mt-1 text-sm text-red-600">{formErrors.enderecoEstado}</p>
+                          )}
+                        </label>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
-
             {/* Total */}
             {selectedPackages.length > 0 && (
               <div className="mb-6 p-4 bg-gray-50 rounded-lg">

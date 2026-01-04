@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { criarReserva } from "./reservas";
-import { getDocs, collection, query, where, doc, getDoc } from "firebase/firestore";
+import { enviarConfirmacaoWhatsapp } from "./whatsapp";
+import { getDocs, collection, query, where, doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
@@ -28,6 +29,50 @@ const normalizarAnoValidade = (valor?: string) => {
   if (!numeros) return "";
   if (numeros.length === 2) return `20${numeros}`;
   return numeros.slice(0, 4);
+};
+
+const normalizarTexto = (valor: string) =>
+  valor
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const calcularParticipantesReserva = (reserva: Record<string, any>) => {
+  const participantesDeclarados = normalizarNumero(reserva.participantes);
+  const participantesMapa =
+    reserva.participantesPorTipo && Object.keys(reserva.participantesPorTipo).length > 0
+      ? somarMapa(reserva.participantesPorTipo)
+      : 0;
+  const base =
+    participantesMapa > 0
+      ? participantesMapa
+      : normalizarNumero(reserva.adultos) +
+        normalizarNumero(reserva.criancas) +
+        normalizarNumero(reserva.bariatrica);
+  const total = base + normalizarNumero(reserva.naoPagante);
+  return Math.max(total, participantesDeclarados);
+};
+
+const obterPacoteIdsReserva = (
+  reserva: Record<string, any>,
+  pacotesPorNome: Map<string, string>
+) => {
+  if (Array.isArray(reserva.pacoteIds) && reserva.pacoteIds.length > 0) {
+    return reserva.pacoteIds
+      .map((id: unknown) => id?.toString())
+      .filter((id: string | undefined): id is string => Boolean(id));
+  }
+  if (!reserva.atividade) return [];
+  const atividadeNormalizada = normalizarTexto(reserva.atividade);
+  const encontrados: string[] = [];
+  pacotesPorNome.forEach((id, nomeNormalizado) => {
+    if (atividadeNormalizada.includes(nomeNormalizado)) {
+      encontrados.push(id);
+    }
+  });
+  return encontrados;
 };
 
 type CreditCardPayload = {
@@ -320,32 +365,80 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         return;
       }
     }
-    // 🔍 Verificar disponibilidade no Firebase
-    const reservasQuery = query(
-      collection(db, "reservas"),
-      where("Data", "==", data),
-      where("Horario", "==", horarioFormatado)
-    );
+    // Validar limite por pacote e horario
+    const pacotesSnapshot = await getDocs(collection(db, "pacotes"));
+    const pacotesPorId = new Map<string, { nome: string; limite: number }>();
+    const pacotesPorNome = new Map<string, string>();
 
-    const snapshot = await getDocs(reservasQuery);
-
-    let totalReservados = 0;
-    snapshot.forEach((doc) => {
-      const dados = doc.data();
-      const participantesReserva = Number(
-        dados.participantes ?? dados.Participantes ?? 0
-      );
-      totalReservados += Number.isFinite(participantesReserva)
-        ? participantesReserva
-        : 0;
+    pacotesSnapshot.forEach((docSnap) => {
+      const dataPacote = docSnap.data() as Record<string, any>;
+      const limite = Number(dataPacote.limite ?? 0);
+      const nome = dataPacote.nome?.toString() ?? "";
+      pacotesPorId.set(docSnap.id, {
+        nome,
+        limite: Number.isFinite(limite) ? limite : 0,
+      });
+      if (nome) {
+        pacotesPorNome.set(normalizarTexto(nome), docSnap.id);
+      }
     });
 
-    if (totalReservados + participantesConsiderados > 30) {
-      res.status(400).json({
-        status: "erro",
-        error: "Limite de 30 pessoas por horário atingido. Escolha outro horário.",
+    const pacoteIdsSelecionados = Array.from(
+      new Set(
+        pacoteIdsNormalizados.length > 0
+          ? pacoteIdsNormalizados
+          : obterPacoteIdsReserva({ atividade }, pacotesPorNome)
+      )
+    );
+
+    if (pacoteIdsSelecionados.length > 0) {
+      const reservasQuery = query(
+        collection(db, "reservas"),
+        where("data", "==", data)
+      );
+      const snapshot = await getDocs(reservasQuery);
+      const reservasPorPacoteHorario: Record<string, number> = {};
+
+      snapshot.forEach((docSnap) => {
+        const dados = docSnap.data() as Record<string, any>;
+        const horarioReserva = (dados.horario ?? dados.Horario ?? "")
+          .toString()
+          .trim();
+        if (!horarioReserva || horarioReserva !== horarioFormatado) return;
+
+        const participantesReserva = calcularParticipantesReserva(dados);
+        if (participantesReserva <= 0) return;
+
+        const pacoteIdsReserva = obterPacoteIdsReserva(dados, pacotesPorNome);
+        if (pacoteIdsReserva.length === 0) return;
+
+        Array.from(new Set(pacoteIdsReserva)).forEach((pacoteId) => {
+          reservasPorPacoteHorario[pacoteId] =
+            (reservasPorPacoteHorario[pacoteId] ?? 0) + participantesReserva;
+        });
       });
-      return;
+
+      for (const pacoteId of pacoteIdsSelecionados) {
+        const pacoteInfo = pacotesPorId.get(pacoteId);
+        const limite = Number(pacoteInfo?.limite ?? 0);
+        if (!Number.isFinite(limite) || limite <= 0) continue;
+        const reservados = reservasPorPacoteHorario[pacoteId] ?? 0;
+        const restante = limite - reservados;
+        if (participantesConsiderados > restante) {
+          res.status(400).json({
+            status: "erro",
+            error: `Limite do pacote ${pacoteInfo?.nome ?? "selecionado"} atingido para o horario escolhido. Restam apenas ${Math.max(
+              restante,
+              0
+            )} vaga(s).`,
+          });
+          return;
+        }
+      }
+    } else {
+      console.warn(
+        "[limite] Pacotes nao informados para validar limite por horario."
+      );
     }
 
     // ✅ Criar reserva no Firebase
@@ -494,6 +587,41 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
     if (billingType === "CREDIT_CARD" && !cobrancaData.invoiceUrl) {
       console.warn("⚠️ Invoice URL não retornada para cartão de crédito");
+    }
+
+    const statusPagamento = String(cobrancaData.status ?? "").toUpperCase();
+    const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusPagamento);
+
+    if (pagamentoConfirmado) {
+      try {
+        const reservaRef = doc(db, "reservas", reservaId);
+        await updateDoc(reservaRef, {
+          status: "pago",
+          dataPagamento: new Date(),
+        });
+
+        const resultadoWhatsapp = await enviarConfirmacaoWhatsapp(reservaId, {
+          nome,
+          telefone,
+          atividade,
+          data,
+          horario: horarioFormatado,
+          participantes: participantesConsiderados,
+          valor,
+          status: "pago",
+        });
+
+        if (resultadoWhatsapp.enviado) {
+          await updateDoc(reservaRef, {
+            whatsappEnviado: true,
+            dataWhatsappEnviado: new Date(),
+            whatsappMensagem: resultadoWhatsapp.mensagem ?? "",
+            whatsappTelefone: resultadoWhatsapp.telefone ?? "",
+          });
+        }
+      } catch (error) {
+        console.error("Erro ao enviar WhatsApp imediato:", error);
+      }
     }
 
     // ✅ Resposta de sucesso

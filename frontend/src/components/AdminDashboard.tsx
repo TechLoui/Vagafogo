@@ -306,15 +306,6 @@ const horariosDisponiveis = [
 
 
 
-const tiposClientesPadrao: Array<Omit<TipoCliente, 'id'>> = [
-
-  { nome: 'Adulto', descricao: '' },
-
-  { nome: 'Criança', descricao: '' },
-
-  { nome: 'Bariátrico', descricao: '' },
-
-];
 
 const criarTipoClienteVazio = (): TipoCliente => ({
 
@@ -688,11 +679,9 @@ export default function AdminDashboard() {
 
   const [acaoFechamentoPeriodo, setAcaoFechamentoPeriodo] = useState<'fechar' | 'abrir'>('fechar');
 
-  const [processandoFechamentoDia, setProcessandoFechamentoDia] = useState(false);
 
   const [processandoFechamentoPeriodo, setProcessandoFechamentoPeriodo] = useState(false);
 
-  const [filtroDisponibilidade, setFiltroDisponibilidade] = useState('');
 
   const [pacotesDisponibilidadeAbertos, setPacotesDisponibilidadeAbertos] = useState<Record<string, boolean>>({});
 
@@ -1070,27 +1059,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, [pacotes]);
 
-  const nomesTiposClientesPadrao = useMemo(
 
-    () => new Set(tiposClientesPadrao.map((tipo) => tipo.nome.toLowerCase())),
+  const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
-    []
-
-  );
-
-  const tiposClientesAtivos = useMemo(() => {
-
-    if (tiposClientes.length > 0) return tiposClientes;
-
-    return tiposClientesPadrao.map((tipo) => ({
-
-      ...tipo,
-
-      id: normalizarTexto(tipo.nome),
-
-    }));
-
-  }, [tiposClientes]);
 
   const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
@@ -1995,6 +1966,10 @@ const totalParticipantesDoDia = useMemo(() => {
 
       }
 
+      if (['confirmado', 'pago'].includes(statusAtualNormalizado)) {
+        void processarPendenciasWhatsapp();
+      }
+
       setModalReserva(false);
 
       setEditReserva(null);
@@ -2107,37 +2082,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
 
-      const nomesExistentes = new Set(
-        lista.map((tipo) => normalizarTexto(tipo.nome))
-      );
-      const tiposPendentes = tiposClientesPadrao.filter(
-        (tipo) => !nomesExistentes.has(normalizarTexto(tipo.nome))
-      );
+      setTiposClientes(lista);
 
-      if (tiposPendentes.length > 0) {
-        const batch = writeBatch(db);
-        const criados: TipoCliente[] = [];
-
-        tiposPendentes.forEach((tipo) => {
-          const descricao = (tipo.descricao ?? '').trim();
-          const payload = {
-            nome: tipo.nome.trim(),
-            ...(descricao ? { descricao } : {}),
-          };
-          const ref = doc(collection(db, 'tipos_clientes'));
-          batch.set(ref, payload);
-          criados.push({ id: ref.id, nome: payload.nome, descricao: payload.descricao ?? '' });
-        });
-
-        await batch.commit();
-
-        const listaAtualizada = [...lista, ...criados].sort((a, b) =>
-          a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' })
-        );
-        setTiposClientes(listaAtualizada);
-      } else {
-        setTiposClientes(lista);
-      }
 
     } catch (error) {
 
@@ -2329,6 +2275,15 @@ const totalParticipantesDoDia = useMemo(() => {
 
     }
 
+  };
+
+  const processarPendenciasWhatsapp = async () => {
+    if (!whatsappConfig.ativo) return;
+    try {
+      await fetch(`${API_BASE}/whatsapp/process-pending`, { method: 'POST' });
+    } catch (error) {
+      console.error('Erro ao processar pendencias do WhatsApp:', error);
+    }
   };
 
   const inserirPlaceholderWhatsapp = (placeholder: string) => {
@@ -2689,73 +2644,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
   };
 
-  const handleAdicionarTiposPadrao = async () => {
 
-    const nomesExistentes = new Set(
-
-      tiposClientes.map((tipo) => tipo.nome.trim().toLowerCase())
-
-    );
-
-    const tiposPendentes = tiposClientesPadrao.filter(
-
-      (tipo) => !nomesExistentes.has(tipo.nome.trim().toLowerCase())
-
-    );
-
-    if (tiposPendentes.length === 0) {
-
-      setFeedback({ type: 'success', message: 'Tipos padrão já cadastrados.' });
-
-      return;
-
-    }
-
-    setSalvandoTipoCliente(true);
-
-    try {
-
-      const batch = writeBatch(db);
-
-      tiposPendentes.forEach((tipo) => {
-
-        const descricao = (tipo.descricao ?? '').trim();
-
-        const payload = {
-
-          nome: tipo.nome.trim(),
-
-          ...(descricao ? { descricao } : {}),
-
-        };
-
-        batch.set(doc(collection(db, 'tipos_clientes')), payload);
-
-      });
-
-      await batch.commit();
-
-      setFeedback({ type: 'success', message: 'Tipos padrão adicionados.' });
-
-      await fetchTiposClientes();
-
-    } catch (error) {
-
-      console.error('Erro ao adicionar tipos padrão:', error);
-
-      setFeedback({ type: 'error', message: 'Erro ao adicionar tipos padrão.' });
-
-    } finally {
-
-      setSalvandoTipoCliente(false);
-
-    }
-
-  };
-
-
-
-  const handleEditPacote = (pacote: Pacote) => {
+        const handleEditPacote = (pacote: Pacote) => {
 
     setEditPacote({
 
@@ -3527,55 +3417,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-  const atualizarFechamentoDia = async (acao: 'fechar' | 'abrir') => {
-
-    const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
-
-    setProcessandoFechamentoDia(true);
-
-    try {
-
-      const ref = doc(db, 'disponibilidade', dataStr);
-
-      if (acao === 'fechar') {
-
-        await setDoc(ref, { data: dataStr, fechado: true }, { merge: true });
-
-        setDiaFechado(true);
-
-        setFeedback({ type: 'success', message: 'Dia bloqueado para todos os pacotes.' });
-
-      } else {
-
-        if (Object.keys(disponibilidadeData).length > 0) {
-
-          await setDoc(ref, { fechado: deleteField() }, { merge: true });
-
-        } else {
-
-          await deleteDoc(ref);
-
-        }
-
-        setDiaFechado(false);
-
-        setFeedback({ type: 'success', message: 'Dia reaberto nos agendamentos.' });
-
-      }
-
-    } catch (error) {
-
-      console.error('Erro ao atualizar fechamento geral do dia:', error);
-
-      setFeedback({ type: 'error', message: 'Não foi possível atualizar a disponibilidade do dia.' });
-
-    } finally {
-
-      setProcessandoFechamentoDia(false);
-
-    }
-
-  };
 
 
 
@@ -3689,7 +3530,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
       setFechamentoFim(dataStr);
 
-      setFiltroDisponibilidade('');
 
       setPacotesDisponibilidadeAbertos({});
 
@@ -3699,23 +3539,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, [modalDisponibilidade, carregarDisponibilidade, selectedDate]);
 
-  const pacotesDisponibilidadeFiltrados = useMemo(() => {
-    const termo = normalizarTexto(filtroDisponibilidade);
-    if (!termo) return pacotes;
-    return pacotes.filter((pacote) =>
-      normalizarTexto(`${pacote.nome} ${pacote.emoji ?? ''}`).includes(termo)
-    );
-  }, [filtroDisponibilidade, pacotes]);
 
-  const ajustarPacotesDisponibilidadeAbertos = (aberto: boolean) => {
-    const proximo: Record<string, boolean> = {};
-    pacotesDisponibilidadeFiltrados.forEach((pacote) => {
-      if (pacote.id) {
-        proximo[pacote.id] = aberto;
-      }
-    });
-    setPacotesDisponibilidadeAbertos(proximo);
-  };
 
 
 
@@ -7140,51 +6964,6 @@ const totalParticipantesDoDia = useMemo(() => {
                     <div className="space-y-6">
                       <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
                         <div className="space-y-4">
-                          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-orange-900">Bloqueio geral do dia</p>
-                                <p className="text-xs text-orange-700">
-                                  Use quando precisar fechar todos os pacotes de uma vez.
-                                </p>
-                              </div>
-                              <span
-                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                  diaFechado
-                                    ? 'bg-red-100 text-red-700 border border-red-200'
-                                    : 'bg-green-100 text-green-700 border border-green-200'
-                                }`}
-                              >
-                                {diaFechado ? 'Dia bloqueado' : 'Dia liberado'}
-                              </span>
-                            </div>
-                            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                              <button
-                                type="button"
-                                onClick={() => atualizarFechamentoDia('fechar')}
-                                disabled={diaFechado || processandoFechamentoDia}
-                                className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
-                                  diaFechado || processandoFechamentoDia
-                                    ? 'bg-orange-200 text-orange-500 cursor-not-allowed'
-                                    : 'bg-orange-500 text-white hover:bg-orange-600'
-                                }`}
-                              >
-                                {processandoFechamentoDia && !diaFechado ? 'Processando...' : 'Fechar este dia'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => atualizarFechamentoDia('abrir')}
-                                disabled={!diaFechado || processandoFechamentoDia}
-                                className={`w-full rounded-full px-4 py-2 text-xs font-semibold transition ${
-                                  !diaFechado || processandoFechamentoDia
-                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                    : 'bg-slate-900 text-white hover:bg-slate-800'
-                                }`}
-                              >
-                                {processandoFechamentoDia && diaFechado ? 'Processando...' : 'Reabrir este dia'}
-                              </button>
-                            </div>
-                          </div>
 
                           <div className="rounded-xl border border-orange-200 bg-white p-4">
                             <div>
@@ -7243,75 +7022,18 @@ const totalParticipantesDoDia = useMemo(() => {
                             </p>
                           </div>
 
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-sm font-semibold text-slate-700">Como usar</p>
-                            <ul className="mt-2 space-y-2 text-xs text-slate-600">
-                              <li>Fechar dia: bloqueia todos os horarios do dia.</li>
-                              <li>Periodo: aplica o bloqueio em varias datas.</li>
-                              <li>Pacotes: clique no horario para alternar disponibilidade.</li>
-                            </ul>
-                          </div>
                         </div>
 
                         <div className="space-y-4">
-                          <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">Disponibilidade por pacote</p>
-                                <p className="text-xs text-slate-500">
-                                  Clique nos horarios para bloquear ou liberar.
-                                </p>
-                              </div>
-                              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                                <input
-                                  type="text"
-                                  value={filtroDisponibilidade}
-                                  onChange={(e) => setFiltroDisponibilidade(e.target.value)}
-                                  placeholder="Filtrar pacote"
-                                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-56"
-                                />
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => ajustarPacotesDisponibilidadeAbertos(true)}
-                                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                                  >
-                                    Expandir
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => ajustarPacotesDisponibilidadeAbertos(false)}
-                                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                                  >
-                                    Recolher
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                              <span className="inline-flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-green-500"></span>
-                                Disponivel
-                              </span>
-                              <span className="inline-flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-red-500"></span>
-                                Bloqueado
-                              </span>
-                              <span className="text-slate-400">
-                                Pacotes em faixa de horario usam bloqueio por data.
-                              </span>
-                            </div>
-                          </div>
 
-                          {pacotesDisponibilidadeFiltrados.length === 0 ? (
+                          {pacotes.length === 0 ? (
                             <div className="py-6 text-center text-sm text-slate-500">
-                              {filtroDisponibilidade
-                                ? 'Nenhum pacote encontrado para o filtro informado.'
-                                : 'Nenhum pacote cadastrado para configurar disponibilidade.'}
+                              Nenhum pacote cadastrado para configurar disponibilidade.
+
                             </div>
                           ) : (
                             <div className="space-y-4">
-                              {pacotesDisponibilidadeFiltrados.map((pacote) => {
+                              {pacotes.map((pacote) => {
                                 const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
                                 const pacoteKey = `${dataStr}-${pacote.id}`;
                                 const pacoteId = pacote.id ?? '';
@@ -7508,25 +7230,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </button>
 
-              <button
-
-                onClick={handleAdicionarTiposPadrao}
-
-                disabled={salvandoTipoCliente}
-
-                className={`inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition ${
-
-                  salvandoTipoCliente ? 'cursor-not-allowed opacity-60' : 'hover:border-blue-300 hover:text-blue-600'
-
-                }`}
-
-              >
-
-                <FaCheck className="h-4 w-4" />
-
-                Adicionar padrões
-
-              </button>
 
             </div>
 
@@ -7668,7 +7371,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   <h3 className="text-lg font-semibold text-slate-900">Tipos cadastrados</h3>
 
-                  <p className="text-sm text-slate-500">Gerencie Adulto, Criança, Bariátrico e novos tipos.</p>
+                  <p className="text-sm text-slate-500">Gerencie os tipos de clientes cadastrados.</p>
 
                 </div>
 
@@ -7688,7 +7391,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
 
-                  Nenhum tipo cadastrado. Use o botão "Adicionar padrões" para começar.
+                  Nenhum tipo cadastrado. Cadastre um tipo para comecar.
 
                 </div>
 
@@ -7698,9 +7401,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   {tiposClientes.map((tipo) => {
 
-                    const nomeNormalizado = tipo.nome.trim().toLowerCase();
 
-                    const ehPadrao = nomesTiposClientesPadrao.has(nomeNormalizado);
 
                     const emEdicao = isEditingTipoCliente && editTipoCliente.id === tipo.id;
 
@@ -7726,15 +7427,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
                               <h4 className="text-base font-semibold text-slate-900">{tipo.nome}</h4>
 
-                              {ehPadrao && (
-
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
-
-                                  Padrão
-
-                                </span>
-
-                              )}
 
                             </div>
 
