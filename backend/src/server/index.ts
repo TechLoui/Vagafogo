@@ -3,7 +3,12 @@ import cors from "cors";
 import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
 import webhookRouter from "./webhook";
-import { desconectarWhatsApp, iniciarWhatsApp, obterStatusWhatsApp } from "../services/whatsapp";
+import {
+  desconectarWhatsApp,
+  iniciarWhatsApp,
+  obterStatusWhatsApp,
+  processarPendentesWhatsapp,
+} from "../services/whatsapp";
 import apiRouter from "./api";
 
 const app = express();
@@ -40,6 +45,16 @@ app.post("/whatsapp/start", (_req, res) => {
 app.post("/whatsapp/logout", async (_req, res) => {
   await desconectarWhatsApp();
   res.json(obterStatusWhatsApp());
+});
+
+app.post("/whatsapp/process-pending", async (_req, res) => {
+  try {
+    const resultado = await processarPendentesWhatsapp();
+    res.json(resultado);
+  } catch (error) {
+    console.error("Erro ao processar pendencias do WhatsApp:", error);
+    res.status(500).json({ error: "Erro ao processar pendencias do WhatsApp" });
+  }
 });
 
 // Endpoint para testar atualização de status (apenas para debug)

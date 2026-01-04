@@ -34,6 +34,8 @@ export type CriarReservaPayload = {
   naoPagante: number;
   participantes: number;
   participantesPorTipo?: Record<string, number>;
+  pacoteIds?: string[];
+  comboId?: string | null;
   horario: string | null;
   status?: string;
   observacao?: string;
@@ -56,6 +58,8 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     naoPagante,
     participantes,
     participantesPorTipo,
+    pacoteIds,
+    comboId,
     horario,
     status = "aguardando",
     observacao = "",
@@ -75,6 +79,12 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     participantesCalculados,
     Number.isFinite(participantes) ? participantes : 0
   );
+  const pacoteIdsNormalizados = Array.isArray(pacoteIds)
+    ? pacoteIds
+        .map((id) => id?.toString())
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const comboIdNormalizado = comboId ? comboId.toString() : null;
 
   const reservaId = uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
@@ -93,6 +103,8 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     criancas,
     naoPagante,
     ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
+    ...(pacoteIdsNormalizados.length > 0 ? { pacoteIds: pacoteIdsNormalizados } : {}),
+    ...(comboIdNormalizado ? { comboId: comboIdNormalizado } : {}),
     horario,
     status,
     observacao,

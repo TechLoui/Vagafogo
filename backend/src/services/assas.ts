@@ -67,6 +67,8 @@ export type CriarCobrancaPayload = {
   criancas: number;
   naoPagante: number;
   participantesPorTipo?: Record<string, number>;
+  pacoteIds?: string[];
+  comboId?: string | null;
   billingType: "PIX" | "CREDIT_CARD";
   creditCard?: CreditCardPayload;
   creditCardHolderInfo?: CreditCardHolderInfo;
@@ -100,6 +102,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     criancas,
     naoPagante,
     participantesPorTipo,
+    pacoteIds,
+    comboId,
     billingType,
     creditCard,
     creditCardHolderInfo,
@@ -120,6 +124,12 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     participantesCalculados,
     Number.isFinite(participantes) ? participantes : 0
   );
+  const pacoteIdsNormalizados = Array.isArray(pacoteIds)
+    ? pacoteIds
+        .map((id) => id?.toString())
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const comboIdNormalizado = comboId ? comboId.toString() : null;
 
   console.log("INFO Dados recebidos:", {
     nome: limparTexto(nome),
@@ -354,6 +364,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       criancas,
       naoPagante,
       participantesPorTipo: participantesPorTipoNormalizado,
+      pacoteIds: pacoteIdsNormalizados,
+      comboId: comboIdNormalizado,
       observacao: "",
       horario: horarioFormatado,
       status: "aguardando",

@@ -160,16 +160,13 @@ function shouldProcess(event?: string, payment?: WebhookPayment | null) {
     return false;
   }
 
-  const status = payment.status;
-  const method = payment.billingType;
-  const isCardConfirmed =
-    event === "PAYMENT_CONFIRMED" && status === "CONFIRMED";
-  const isPixConfirmed =
-    event === "PAYMENT_RECEIVED" &&
-    method === "PIX" &&
-    status === "RECEIVED";
+  const statusNormalizado = (payment.status ?? "").toString().toUpperCase();
+  const eventNormalizado = event.toString().toUpperCase();
 
-  return isCardConfirmed || isPixConfirmed;
+  const statusPago = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusNormalizado);
+  const eventoPago = ["PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"].includes(eventNormalizado);
+
+  return statusPago && eventoPago;
 }
 
 export default router;

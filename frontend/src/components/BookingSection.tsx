@@ -81,6 +81,21 @@ type Combo = {
   ativo: boolean;
 };
 
+type ReservaResumo = {
+  id?: string;
+  data?: string;
+  horario?: string;
+  participantes?: number;
+  participantesPorTipo?: Record<string, number>;
+  adultos?: number;
+  criancas?: number;
+  bariatrica?: number;
+  naoPagante?: number;
+  pacoteIds?: string[];
+  atividade?: string;
+  status?: string;
+};
+
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -154,9 +169,14 @@ const obterPrecoPorTipo = (
   return obterPrecoLegado(tipo, legado);
 };
 
+const normalizarNumero = (valor: unknown) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+
 const somarMapa = (mapa?: Record<string, number>) => {
   if (!mapa) return 0;
-  return Object.values(mapa).reduce((total, valor) => total + (Number(valor) || 0), 0);
+  return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
 };
 
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
@@ -283,11 +303,28 @@ const parseHorarioParaMinutos = (valor: string) => {
   return horas * 60 + minutos;
 };
 
+const calcularParticipantesReserva = (reserva: ReservaResumo) => {
+  const participantesDeclarados = normalizarNumero(reserva.participantes);
+  const participantesMapa =
+    reserva.participantesPorTipo && Object.keys(reserva.participantesPorTipo).length > 0
+      ? somarMapa(reserva.participantesPorTipo)
+      : 0;
+  const base =
+    participantesMapa > 0
+      ? participantesMapa
+      : normalizarNumero(reserva.adultos) +
+        normalizarNumero(reserva.criancas) +
+        normalizarNumero(reserva.bariatrica);
+  const total = base + normalizarNumero(reserva.naoPagante);
+  return Math.max(total, participantesDeclarados);
+};
+
 export function BookingSection() {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
   const [loadingPacotes, setLoadingPacotes] = useState(true);
+  const [reservasDia, setReservasDia] = useState<ReservaResumo[]>([]);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
 
   // Formulário
@@ -668,6 +705,53 @@ export function BookingSection() {
     return mapa;
   }, [pacotes]);
 
+  const pacotesPorNome = useMemo(() => {
+    const mapa = new Map<string, string>();
+    pacotes.forEach((pacote) => {
+      if (pacote.id) {
+        mapa.set(normalizarTexto(pacote.nome), pacote.id);
+      }
+    });
+    return mapa;
+  }, [pacotes]);
+
+  const obterPacoteIdsReserva = useCallback(
+    (reserva: ReservaResumo) => {
+      if (Array.isArray(reserva.pacoteIds) && reserva.pacoteIds.length > 0) {
+        return reserva.pacoteIds
+          .map((id) => id?.toString())
+          .filter((id): id is string => Boolean(id));
+      }
+      if (!reserva.atividade) return [];
+      const atividadeNormalizada = normalizarTexto(reserva.atividade);
+      const encontrados: string[] = [];
+      pacotesPorNome.forEach((id, nomeNormalizado) => {
+        if (atividadeNormalizada.includes(nomeNormalizado)) {
+          encontrados.push(id);
+        }
+      });
+      return encontrados;
+    },
+    [pacotesPorNome]
+  );
+
+  const reservasPorPacoteHorario = useMemo(() => {
+    const mapa: Record<string, number> = {};
+    reservasDia.forEach((reserva) => {
+      const horarioReserva = (reserva.horario ?? "").toString().trim();
+      if (!horarioReserva) return;
+      const participantes = calcularParticipantesReserva(reserva);
+      if (participantes <= 0) return;
+      const pacoteIds = obterPacoteIdsReserva(reserva);
+      if (pacoteIds.length === 0) return;
+      Array.from(new Set(pacoteIds)).forEach((pacoteId) => {
+        const chave = `${pacoteId}__${horarioReserva}`;
+        mapa[chave] = (mapa[chave] ?? 0) + participantes;
+      });
+    });
+    return mapa;
+  }, [obterPacoteIdsReserva, reservasDia]);
+
   const comboAtivo = useMemo(() => {
     if (selectedPackages.length === 0) return undefined;
     return combos.find(
@@ -696,6 +780,30 @@ export function BookingSection() {
       ),
     [selectedPacotes]
   );
+
+  useEffect(() => {
+    if (!selectedDay) {
+      setReservasDia([]);
+      return;
+    }
+    const dataStr = selectedDay.toISOString().slice(0, 10);
+    const q = query(collection(db, "reservas"), where("data", "==", dataStr));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const dados = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        })) as ReservaResumo[];
+        setReservasDia(dados);
+      },
+      (error) => {
+        console.error("Erro ao acompanhar reservas:", error);
+        setReservasDia([]);
+      }
+    );
+    return () => unsubscribe();
+  }, [selectedDay]);
 
   useEffect(() => {
     if (!selectedDay) {
@@ -754,7 +862,7 @@ export function BookingSection() {
     });
   }, [selectedPacotes]);
 
-  const horariosDisponiveis = useMemo(() => {
+  const horariosVisiveis = useMemo(() => {
     if (selectedPacotes.length === 0) return [];
     const horariosUnicos = [...new Set(selectedPacotes.flatMap((p) => p.horarios || []))];
     if (!selectedDay) return horariosUnicos;
@@ -784,6 +892,34 @@ export function BookingSection() {
 
     return filtrados;
   }, [selectedDay, selectedPacotes, disponibilidadeHorarios, diaSelecionadoFechado]);
+
+  const vagasRestantesPorHorario = useMemo(() => {
+    const mapa: Record<string, number | null> = {};
+    if (selectedPacotes.length === 0) return mapa;
+    horariosVisiveis.forEach((horarioLista) => {
+      let restante: number | null = null;
+      selectedPacotes.forEach((pacote) => {
+        if (!pacote.id) return;
+        const limite = Number(pacote.limite ?? 0);
+        if (!Number.isFinite(limite) || limite <= 0) return;
+        const chave = `${pacote.id}__${horarioLista}`;
+        const reservados = reservasPorPacoteHorario[chave] ?? 0;
+        const pacoteRestante = limite - reservados;
+        restante = restante === null ? pacoteRestante : Math.min(restante, pacoteRestante);
+      });
+      mapa[horarioLista] = restante;
+    });
+    return mapa;
+  }, [horariosVisiveis, reservasPorPacoteHorario, selectedPacotes]);
+
+  const horariosDisponiveis = useMemo(
+    () =>
+      horariosVisiveis.filter((horarioLista) => {
+        const restante = vagasRestantesPorHorario[horarioLista];
+        return restante === null || restante > 0;
+      }),
+    [horariosVisiveis, vagasRestantesPorHorario]
+  );
 
   useEffect(() => {
     if (!horario) return;
@@ -1094,13 +1230,18 @@ export function BookingSection() {
       (p) => (p.horarios?.length ?? 0) > 0
     );
 
-    if (selectedDay && horariosDisponiveis.length > 0 && !horario) {
-      errors.horario = "Escolha um horário disponível.";
+    const haHorariosVisiveis = horariosVisiveis.length > 0;
+    const haHorariosDisponiveis = horariosDisponiveis.length > 0;
+
+    if (selectedDay && haHorariosVisiveis && !horario) {
+      errors.horario = haHorariosDisponiveis
+        ? "Escolha um horário disponível."
+        : "Todos os horários estão lotados para os pacotes selecionados.";
     }
 
     if (
       selectedDay &&
-      horariosDisponiveis.length === 0 &&
+      !haHorariosVisiveis &&
       !temPacoteFaixa &&
       possuiHorariosNosPacotes
     ) {
@@ -1110,6 +1251,13 @@ export function BookingSection() {
     const totalParticipantes = somarMapa(participantesPorTipo) + naoPagante;
     if (totalParticipantes <= 0) {
       errors.participantes = "Informe a quantidade de participantes.";
+    }
+
+    if (horario) {
+      const restante = vagasRestantesPorHorario[horario];
+      if (typeof restante === "number" && totalParticipantes > restante) {
+        errors.horario = `Restam apenas ${Math.max(restante, 0)} vaga(s) para este horário.`;
+      }
     }
 
     if (temPet === null) {
@@ -1613,25 +1761,48 @@ export function BookingSection() {
                       Este dia esta fechado para todos os pacotes. Escolha outra data para continuar.
                     </p>
                   </div>
-                ) : horariosDisponiveis.length > 0 ? (
+                ) : horariosVisiveis.length > 0 ? (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Horario *
                     </label>
-                    <select
-                      value={horario}
-                      onChange={(e) => {
-                        setHorario(e.target.value);
-                        setFieldError("horario");
-                      }}
-                      className={getInputClasses("horario")}
-                      required
-                    >
-                      <option value="">Selecione um horario</option>
-                      {horariosDisponiveis.map((h) => (
-                        <option key={h} value={h}>{h}</option>
-                      ))}
-                    </select>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {horariosVisiveis.map((h) => {
+                        const restante = vagasRestantesPorHorario[h];
+                        const restanteExibicao =
+                          typeof restante === "number" ? Math.max(restante, 0) : null;
+                        const lotado = typeof restante === "number" && restante <= 0;
+                        const selecionado = horario === h;
+                        const base =
+                          "flex flex-col items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition";
+                        const estado = lotado
+                          ? "border-red-300 bg-red-50 text-red-600 cursor-not-allowed"
+                          : selecionado
+                            ? "border-black bg-black text-white"
+                            : "border-black text-gray-900 hover:bg-black hover:text-white";
+                        const detalhe = lotado ? "text-red-500" : "text-gray-500";
+                        const textoVagas =
+                          restanteExibicao === null
+                            ? "Sem limite de vagas"
+                            : `${restanteExibicao} vaga(s)`;
+
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            disabled={lotado}
+                            onClick={() => {
+                              setHorario(h);
+                              setFieldError("horario");
+                            }}
+                            className={`${base} ${estado}`}
+                          >
+                            <span className="text-base">{h}</span>
+                            <span className={`text-xs ${detalhe}`}>{textoVagas}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                     {temPacoteFaixa && (
                       <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                         {selectedPacotes

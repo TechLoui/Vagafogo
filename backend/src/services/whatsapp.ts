@@ -1,6 +1,6 @@
 import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 import { db } from "./firebase";
 
 type WhatsappStatus =
@@ -34,6 +34,12 @@ type ResultadoEnvio = {
   telefone?: string;
 };
 
+type ResultadoProcessamento = {
+  enviados: number;
+  falhas: number;
+  motivo?: string;
+};
+
 const TEMPLATE_PADRAO =
   "Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.";
 
@@ -52,6 +58,7 @@ let lastError: string | null = null;
 let lastQrAt: number | null = null;
 let lastInfo: WhatsappStatusPayload["info"] | null = null;
 let initializing = false;
+let processingPending = false;
 
 export function iniciarWhatsApp(): void {
   if (client || initializing) {
@@ -91,6 +98,7 @@ export function iniciarWhatsApp(): void {
       wid: client?.info?.wid?._serialized,
       pushname: client?.info?.pushname,
     };
+    void processarPendentesWhatsapp();
   });
 
   client.on("authenticated", () => {
@@ -213,11 +221,12 @@ const obterConfig = async (): Promise<WhatsappConfig> => {
 
 export async function enviarConfirmacaoWhatsapp(
   reservaId: string,
-  reserva: Record<string, any>
+  reserva: Record<string, any>,
+  configOverride?: WhatsappConfig
 ): Promise<ResultadoEnvio> {
   iniciarWhatsApp();
 
-  const config = await obterConfig();
+  const config = configOverride ?? (await obterConfig());
   if (!config.ativo) {
     return { enviado: false, motivo: "config_desativado" };
   }
@@ -247,4 +256,67 @@ export async function enviarConfirmacaoWhatsapp(
     mensagem,
     telefone,
   };
+}
+
+export async function processarPendentesWhatsapp(): Promise<ResultadoProcessamento> {
+  if (processingPending) {
+    return { enviados: 0, falhas: 0, motivo: "em_andamento" };
+  }
+  processingPending = true;
+
+  try {
+    iniciarWhatsApp();
+
+    const config = await obterConfig();
+    if (!config.ativo) {
+      return { enviados: 0, falhas: 0, motivo: "config_desativado" };
+    }
+
+    if (!client || status !== "ready") {
+      return { enviados: 0, falhas: 0, motivo: "whatsapp_nao_conectado" };
+    }
+
+    const statusElegiveis = ["pago", "confirmado", "Pago", "Confirmado"];
+    const snapshot = await getDocs(
+      query(collection(db, "reservas"), where("status", "in", statusElegiveis))
+    );
+
+    let enviados = 0;
+    let falhas = 0;
+
+    for (const docSnap of snapshot.docs) {
+      const reserva = docSnap.data() as Record<string, any>;
+      if (reserva.whatsappEnviado === true) {
+        continue;
+      }
+
+      try {
+        const resultado = await enviarConfirmacaoWhatsapp(docSnap.id, reserva, config);
+        if (resultado.enviado) {
+          await updateDoc(doc(db, "reservas", docSnap.id), {
+            whatsappEnviado: true,
+            dataWhatsappEnviado: new Date(),
+            whatsappMensagem: resultado.mensagem ?? "",
+            whatsappTelefone: resultado.telefone ?? "",
+          });
+          enviados += 1;
+        } else {
+          falhas += 1;
+          console.warn(
+            `[whatsapp] pendente nao enviado ${docSnap.id}: ${resultado.motivo ?? "erro"}`
+          );
+        }
+      } catch (error) {
+        falhas += 1;
+        console.error(`[whatsapp] erro ao enviar ${docSnap.id}:`, error);
+      }
+    }
+
+    return { enviados, falhas };
+  } catch (error) {
+    console.error("[whatsapp] erro ao processar pendentes:", error);
+    return { enviados: 0, falhas: 0, motivo: "erro" };
+  } finally {
+    processingPending = false;
+  }
 }
