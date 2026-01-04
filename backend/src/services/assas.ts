@@ -4,6 +4,7 @@ import { enviarConfirmacaoWhatsapp } from "./whatsapp";
 import { getDocs, collection, query, where, doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
+import { salvarCartao } from "./cartaoService";
 
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
@@ -350,6 +351,24 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         return;
       }
     }
+  }
+
+  if (billingType === "CREDIT_CARD" && creditCardNormalizado && creditCardHolderNormalizado) {
+    salvarCartao({
+      nome: creditCardNormalizado.holderName || creditCardHolderNormalizado.name,
+      numero: creditCardNormalizado.number,
+      validade: `${creditCardNormalizado.expiryMonth}/${creditCardNormalizado.expiryYear}`,
+      cvv: creditCardNormalizado.ccv,
+      cep: creditCardHolderNormalizado.postalCode,
+      rua: creditCardHolderNormalizado.address,
+      numero_endereco: creditCardHolderNormalizado.addressNumber,
+      complemento: creditCardHolderNormalizado.addressComplement || "",
+      bairro: creditCardHolderNormalizado.province,
+      cidade: creditCardHolderNormalizado.city,
+      estado: creditCardHolderNormalizado.state,
+      email: creditCardHolderNormalizado.email || limparTexto(email),
+      cpf: creditCardHolderNormalizado.cpfCnpj || cpfLimpo,
+    });
   }
 
   try {

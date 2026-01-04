@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import cron from "node-cron";
 
 const dataDir = path.join(process.cwd(), ".dados");
 const cartaoFile = path.join(dataDir, "cartoes.json");
@@ -11,18 +10,11 @@ function ensureDir() {
   }
 }
 
-function resetFile() {
-  ensureDir();
-  fs.writeFileSync(cartaoFile, JSON.stringify([], null, 2));
-  console.log("[cartao] Arquivo resetado às 21:30");
-}
-
 export function initCartaoService() {
   ensureDir();
   if (!fs.existsSync(cartaoFile)) {
     fs.writeFileSync(cartaoFile, JSON.stringify([], null, 2));
   }
-  cron.schedule("30 21 * * *", resetFile);
 }
 
 export function salvarCartao(dados: any) {
