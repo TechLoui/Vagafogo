@@ -40,6 +40,17 @@ const normalizarTexto = (valor: string) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+const normalizarStatus = (valor?: string | null) =>
+  (valor ?? "").toString().trim().toLowerCase();
+
+const reservaContaParaLimite = (reserva: Record<string, any>) => {
+  const status = normalizarStatus(reserva.status);
+  if (["pago", "confirmado", "pre_reserva"].includes(status)) {
+    return true;
+  }
+  return !status && Boolean(reserva.confirmada);
+};
+
 const calcularParticipantesReserva = (reserva: Record<string, any>) => {
   const participantesDeclarados = normalizarNumero(reserva.participantes);
   const participantesMapa =
@@ -420,6 +431,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
       snapshot.forEach((docSnap) => {
         const dados = docSnap.data() as Record<string, any>;
+        if (!reservaContaParaLimite(dados)) return;
         const horarioReserva = (dados.horario ?? dados.Horario ?? "")
           .toString()
           .trim();

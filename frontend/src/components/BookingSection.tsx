@@ -94,6 +94,7 @@ type ReservaResumo = {
   pacoteIds?: string[];
   atividade?: string;
   status?: string;
+  confirmada?: boolean;
 };
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
@@ -112,6 +113,17 @@ const normalizarTexto = (valor: string) =>
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+const normalizarStatus = (valor?: string | null) =>
+  (valor ?? "").toString().trim().toLowerCase();
+
+const reservaContaParaVagas = (reserva: Pick<ReservaResumo, "status" | "confirmada">) => {
+  const status = normalizarStatus(reserva.status);
+  if (["pago", "confirmado", "pre_reserva"].includes(status)) {
+    return true;
+  }
+  return !status && Boolean(reserva.confirmada);
+};
 
 const obterChaveTipo = (tipo: TipoCliente) => tipo.id ?? normalizarTexto(tipo.nome);
 
@@ -845,7 +857,8 @@ export function BookingSection() {
           id: docSnap.id,
           ...docSnap.data(),
         })) as ReservaResumo[];
-        setReservasDia(dados);
+        const reservasAtivas = dados.filter(reservaContaParaVagas);
+        setReservasDia(reservasAtivas);
       },
       (error) => {
         console.error("Erro ao acompanhar reservas:", error);
