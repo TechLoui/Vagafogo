@@ -111,12 +111,10 @@ function shouldProcess(event, payment) {
     if (!event || !payment) {
         return false;
     }
-    const status = payment.status;
-    const method = payment.billingType;
-    const isCardConfirmed = event === "PAYMENT_CONFIRMED" && status === "CONFIRMED";
-    const isPixConfirmed = event === "PAYMENT_RECEIVED" &&
-        method === "PIX" &&
-        status === "RECEIVED";
-    return isCardConfirmed || isPixConfirmed;
+    const statusNormalizado = (payment.status ?? "").toString().toUpperCase();
+    const eventNormalizado = event.toString().toUpperCase();
+    const statusPago = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusNormalizado);
+    const eventoPago = ["PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"].includes(eventNormalizado);
+    return statusPago && eventoPago;
 }
 exports.default = router;

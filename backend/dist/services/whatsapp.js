@@ -7,6 +7,7 @@ exports.iniciarWhatsApp = iniciarWhatsApp;
 exports.desconectarWhatsApp = desconectarWhatsApp;
 exports.obterStatusWhatsApp = obterStatusWhatsApp;
 exports.enviarConfirmacaoWhatsapp = enviarConfirmacaoWhatsapp;
+exports.processarPendentesWhatsapp = processarPendentesWhatsapp;
 const whatsapp_web_js_1 = require("whatsapp-web.js");
 const qrcode_1 = __importDefault(require("qrcode"));
 const firestore_1 = require("firebase/firestore");
@@ -17,6 +18,14 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
     currency: "BRL",
 });
 const formatCurrency = (valor) => currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
+const parseNumber = (value, fallback) => {
+    if (!value)
+        return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
+const INIT_MAX_RETRIES = parseNumber(process.env.WHATSAPP_INIT_RETRIES, 3);
+const INIT_RETRY_DELAY_MS = parseNumber(process.env.WHATSAPP_INIT_RETRY_DELAY_MS, 5000);
 let client = null;
 let status = "idle";
 let qrDataUrl = null;
@@ -24,11 +33,48 @@ let lastError = null;
 let lastQrAt = null;
 let lastInfo = null;
 let initializing = false;
+let processingPending = false;
+let initRetries = 0;
+let retryTimer = null;
+const clearRetryTimer = () => {
+    if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+    }
+};
+const scheduleRetry = (reason) => {
+    if (INIT_MAX_RETRIES <= 0)
+        return;
+    if (initRetries >= INIT_MAX_RETRIES)
+        return;
+    initRetries += 1;
+    clearRetryTimer();
+    retryTimer = setTimeout(() => {
+        retryTimer = null;
+        iniciarWhatsApp();
+    }, INIT_RETRY_DELAY_MS);
+    if (reason) {
+        lastError = reason;
+    }
+};
+const handleInitFailure = (error) => {
+    status = "disconnected";
+    initializing = false;
+    lastError = error?.message || "init_error";
+    qrDataUrl = null;
+    lastInfo = null;
+    if (client) {
+        client.destroy().catch(() => undefined);
+    }
+    client = null;
+    scheduleRetry(lastError);
+};
 function iniciarWhatsApp() {
     if (client || initializing) {
         return;
     }
     const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    clearRetryTimer();
     initializing = true;
     status = "initializing";
     lastError = null;
@@ -52,12 +98,14 @@ function iniciarWhatsApp() {
     client.on("ready", () => {
         status = "ready";
         initializing = false;
+        initRetries = 0;
         qrDataUrl = null;
         lastError = null;
         lastInfo = {
             wid: client?.info?.wid?._serialized,
             pushname: client?.info?.pushname,
         };
+        void processarPendentesWhatsapp();
     });
     client.on("authenticated", () => {
         status = "initializing";
@@ -72,21 +120,23 @@ function iniciarWhatsApp() {
     client.on("disconnected", (reason) => {
         status = "disconnected";
         initializing = false;
-        lastError = reason?.toString() || "disconnected";
+        const reasonText = reason?.toString() || "disconnected";
+        lastError = reasonText;
         qrDataUrl = null;
         lastInfo = null;
         client = null;
+        if (!reasonText.toLowerCase().includes("logout")) {
+            scheduleRetry(reasonText);
+        }
     });
     client.initialize().catch((error) => {
-        status = "disconnected";
-        initializing = false;
-        lastError = error?.message || "init_error";
-        qrDataUrl = null;
-        lastInfo = null;
-        client = null;
+        console.error("[whatsapp] Falha ao inicializar:", error);
+        handleInitFailure(error);
     });
 }
 async function desconectarWhatsApp() {
+    clearRetryTimer();
+    initRetries = 0;
     if (!client) {
         status = "disconnected";
         return;
@@ -170,9 +220,9 @@ const obterConfig = async () => {
         return {};
     return snap.data();
 };
-async function enviarConfirmacaoWhatsapp(reservaId, reserva) {
+async function enviarConfirmacaoWhatsapp(reservaId, reserva, configOverride) {
     iniciarWhatsApp();
-    const config = await obterConfig();
+    const config = configOverride ?? (await obterConfig());
     if (!config.ativo) {
         return { enviado: false, motivo: "config_desativado" };
     }
@@ -197,4 +247,58 @@ async function enviarConfirmacaoWhatsapp(reservaId, reserva) {
         mensagem,
         telefone,
     };
+}
+async function processarPendentesWhatsapp() {
+    if (processingPending) {
+        return { enviados: 0, falhas: 0, motivo: "em_andamento" };
+    }
+    processingPending = true;
+    try {
+        iniciarWhatsApp();
+        const config = await obterConfig();
+        if (!config.ativo) {
+            return { enviados: 0, falhas: 0, motivo: "config_desativado" };
+        }
+        if (!client || status !== "ready") {
+            return { enviados: 0, falhas: 0, motivo: "whatsapp_nao_conectado" };
+        }
+        const statusElegiveis = ["pago", "confirmado", "Pago", "Confirmado"];
+        const snapshot = await (0, firestore_1.getDocs)((0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("status", "in", statusElegiveis)));
+        let enviados = 0;
+        let falhas = 0;
+        for (const docSnap of snapshot.docs) {
+            const reserva = docSnap.data();
+            if (reserva.whatsappEnviado === true) {
+                continue;
+            }
+            try {
+                const resultado = await enviarConfirmacaoWhatsapp(docSnap.id, reserva, config);
+                if (resultado.enviado) {
+                    await (0, firestore_1.updateDoc)((0, firestore_1.doc)(firebase_1.db, "reservas", docSnap.id), {
+                        whatsappEnviado: true,
+                        dataWhatsappEnviado: new Date(),
+                        whatsappMensagem: resultado.mensagem ?? "",
+                        whatsappTelefone: resultado.telefone ?? "",
+                    });
+                    enviados += 1;
+                }
+                else {
+                    falhas += 1;
+                    console.warn(`[whatsapp] pendente nao enviado ${docSnap.id}: ${resultado.motivo ?? "erro"}`);
+                }
+            }
+            catch (error) {
+                falhas += 1;
+                console.error(`[whatsapp] erro ao enviar ${docSnap.id}:`, error);
+            }
+        }
+        return { enviados, falhas };
+    }
+    catch (error) {
+        console.error("[whatsapp] erro ao processar pendentes:", error);
+        return { enviados: 0, falhas: 0, motivo: "erro" };
+    }
+    finally {
+        processingPending = false;
+    }
 }

@@ -19,7 +19,7 @@ const normalizarMapa = (mapa) => {
     return Object.fromEntries(Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)]));
 };
 async function criarReserva(payload) {
-    const { nome, cpf, email, valor, telefone, atividade, data, adultos, bariatrica, criancas, naoPagante, participantes, participantesPorTipo, horario, status = "aguardando", observacao = "", temPet, perguntasPersonalizadas, } = payload;
+    const { nome, cpf, email, valor, telefone, atividade, data, adultos, bariatrica, criancas, naoPagante, participantes, participantesPorTipo, pacoteIds, comboId, horario, status = "aguardando", observacao = "", temPet, perguntasPersonalizadas, } = payload;
     const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
     const mapaAtivo = participantesPorTipoNormalizado &&
         Object.keys(participantesPorTipoNormalizado).length > 0;
@@ -28,6 +28,12 @@ async function criarReserva(payload) {
         : (adultos ?? 0) + (bariatrica ?? 0) + (criancas ?? 0);
     const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
     const participantesConsiderados = Math.max(participantesCalculados, Number.isFinite(participantes) ? participantes : 0);
+    const pacoteIdsNormalizados = Array.isArray(pacoteIds)
+        ? pacoteIds
+            .map((id) => id?.toString())
+            .filter((id) => Boolean(id))
+        : [];
+    const comboIdNormalizado = comboId ? comboId.toString() : null;
     const reservaId = (0, uuid_1.v4)();
     const reservaRef = (0, firestore_1.doc)(firebase_1.db, "reservas", reservaId);
     await (0, firestore_1.setDoc)(reservaRef, {
@@ -44,6 +50,8 @@ async function criarReserva(payload) {
         criancas,
         naoPagante,
         ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
+        ...(pacoteIdsNormalizados.length > 0 ? { pacoteIds: pacoteIdsNormalizados } : {}),
+        ...(comboIdNormalizado ? { comboId: comboIdNormalizado } : {}),
         horario,
         status,
         observacao,

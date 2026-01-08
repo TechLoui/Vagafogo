@@ -51,6 +51,15 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
+const parseNumber = (value: string | undefined, fallback: number) => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const INIT_MAX_RETRIES = parseNumber(process.env.WHATSAPP_INIT_RETRIES, 3);
+const INIT_RETRY_DELAY_MS = parseNumber(process.env.WHATSAPP_INIT_RETRY_DELAY_MS, 5000);
+
 let client: Client | null = null;
 let status: WhatsappStatus = "idle";
 let qrDataUrl: string | null = null;
@@ -59,6 +68,42 @@ let lastQrAt: number | null = null;
 let lastInfo: WhatsappStatusPayload["info"] | null = null;
 let initializing = false;
 let processingPending = false;
+let initRetries = 0;
+let retryTimer: NodeJS.Timeout | null = null;
+
+const clearRetryTimer = () => {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+};
+
+const scheduleRetry = (reason?: string | null) => {
+  if (INIT_MAX_RETRIES <= 0) return;
+  if (initRetries >= INIT_MAX_RETRIES) return;
+  initRetries += 1;
+  clearRetryTimer();
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    iniciarWhatsApp();
+  }, INIT_RETRY_DELAY_MS);
+  if (reason) {
+    lastError = reason;
+  }
+};
+
+const handleInitFailure = (error?: unknown) => {
+  status = "disconnected";
+  initializing = false;
+  lastError = (error as { message?: string })?.message || "init_error";
+  qrDataUrl = null;
+  lastInfo = null;
+  if (client) {
+    client.destroy().catch(() => undefined);
+  }
+  client = null;
+  scheduleRetry(lastError);
+};
 
 export function iniciarWhatsApp(): void {
   if (client || initializing) {
@@ -67,6 +112,7 @@ export function iniciarWhatsApp(): void {
 
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
 
+  clearRetryTimer();
   initializing = true;
   status = "initializing";
   lastError = null;
@@ -92,6 +138,7 @@ export function iniciarWhatsApp(): void {
   client.on("ready", () => {
     status = "ready";
     initializing = false;
+    initRetries = 0;
     qrDataUrl = null;
     lastError = null;
     lastInfo = {
@@ -116,23 +163,25 @@ export function iniciarWhatsApp(): void {
   client.on("disconnected", (reason) => {
     status = "disconnected";
     initializing = false;
-    lastError = reason?.toString() || "disconnected";
+    const reasonText = reason?.toString() || "disconnected";
+    lastError = reasonText;
     qrDataUrl = null;
     lastInfo = null;
     client = null;
+    if (!reasonText.toLowerCase().includes("logout")) {
+      scheduleRetry(reasonText);
+    }
   });
 
   client.initialize().catch((error: any) => {
-    status = "disconnected";
-    initializing = false;
-    lastError = error?.message || "init_error";
-    qrDataUrl = null;
-    lastInfo = null;
-    client = null;
+    console.error("[whatsapp] Falha ao inicializar:", error);
+    handleInitFailure(error);
   });
 }
 
 export async function desconectarWhatsApp(): Promise<void> {
+  clearRetryTimer();
+  initRetries = 0;
   if (!client) {
     status = "disconnected";
     return;

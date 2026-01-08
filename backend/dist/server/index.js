@@ -42,6 +42,7 @@ const assas_1 = require("../services/assas");
 require("dotenv/config");
 const webhook_1 = __importDefault(require("./webhook"));
 const whatsapp_1 = require("../services/whatsapp");
+const api_1 = __importDefault(require("./api"));
 const app = (0, express_1.default)();
 // Permitir requisições do localhost:5173 (seu front-end)
 app.use((0, cors_1.default)());
@@ -56,6 +57,7 @@ app.post('/webhook-test', (req, res) => {
 });
 app.post("/criar-cobranca", assas_1.criarCobrancaHandler);
 app.use('/webhook', webhook_1.default);
+app.use('/api', api_1.default);
 app.get("/whatsapp/status", (_req, res) => {
     (0, whatsapp_1.iniciarWhatsApp)();
     res.json((0, whatsapp_1.obterStatusWhatsApp)());
@@ -67,6 +69,16 @@ app.post("/whatsapp/start", (_req, res) => {
 app.post("/whatsapp/logout", async (_req, res) => {
     await (0, whatsapp_1.desconectarWhatsApp)();
     res.json((0, whatsapp_1.obterStatusWhatsApp)());
+});
+app.post("/whatsapp/process-pending", async (_req, res) => {
+    try {
+        const resultado = await (0, whatsapp_1.processarPendentesWhatsapp)();
+        res.json(resultado);
+    }
+    catch (error) {
+        console.error("Erro ao processar pendencias do WhatsApp:", error);
+        res.status(500).json({ error: "Erro ao processar pendencias do WhatsApp" });
+    }
 });
 // Endpoint para testar atualização de status (apenas para debug)
 app.post('/test-update-status/:reservaId', async (req, res) => {
@@ -153,7 +165,7 @@ app.post('/test-webhook', (req, res) => {
         res.status(500).json({ error: error.message });
     });
 });
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 app.listen(port, () => {
     console.log(`Servidor rodando na porta ${port}`);
     console.log("Token carregado:", process.env.ASAAS_API_KEY);

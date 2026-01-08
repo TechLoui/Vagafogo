@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import React from 'react';
 
-import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, setDoc, onSnapshot, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, setDoc, onSnapshot, writeBatch, deleteField, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 import dayjs from 'dayjs';
@@ -33,11 +33,37 @@ const whatsappTemplatePadrao =
 
 const whatsappPlaceholders = ['{nome}', '{datareserva}', '{horario}', '{atividade}', '{participantes}', '{telefone}', '{valor}'];
 
-const formatarDataReserva = (data?: string) => {
+const normalizarDataReserva = (data?: unknown) => {
   if (!data) return '';
-  const parsed = dayjs(data);
-  if (!parsed.isValid()) return data;
-  return parsed.format('DD/MM/YYYY');
+  if (typeof data === 'string') {
+    const valor = data.trim();
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(valor);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+    const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(valor);
+    if (brMatch) {
+      return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+    }
+    const parsed = dayjs(valor);
+    return parsed.isValid() ? parsed.format('YYYY-MM-DD') : '';
+  }
+  if (data instanceof Date) {
+    return dayjs(data).format('YYYY-MM-DD');
+  }
+  const maybeDate = (data as { toDate?: () => Date }).toDate?.();
+  if (maybeDate instanceof Date) {
+    return dayjs(maybeDate).format('YYYY-MM-DD');
+  }
+  return '';
+};
+
+const formatarDataReserva = (data?: unknown) => {
+  const normalizada = normalizarDataReserva(data);
+  if (!normalizada) {
+    return typeof data === 'string' ? data : '';
+  }
+  return dayjs(normalizada).format('DD/MM/YYYY');
 };
 
 const montarMensagemWhatsApp = (template: string, dados: Record<string, string>) =>
@@ -1154,91 +1180,98 @@ const totalParticipantesDoDia = useMemo(() => {
   useEffect(() => {
 
     const formatted = dayjs(selectedDate).format('YYYY-MM-DD');
+    const nextDay = dayjs(selectedDate).add(1, 'day').format('YYYY-MM-DD');
+    const dayStart = dayjs(selectedDate).startOf('day');
+    const dayEnd = dayjs(selectedDate).add(1, 'day').startOf('day');
 
     console.log('🔍 Observando reservas para:', formatted);
 
-
-
-    const q = query(collection(db, 'reservas'), where('data', '==', formatted));
-
-    const unsubscribe = onSnapshot(
-
-      q,
-
-      (snapshot) => {
-
-        const dados: Reserva[] = snapshot.docs.map((docSnap) => {
-
-          const data = docSnap.data() as Reserva;
-
-          return {
-
-            id: docSnap.id,
-
-            ...data,
-
-            chegou: data.chegou === true,
-
-          };
-
-        });
-
-        console.log('📥 Atualização de reservas:', dados.length);
-
-        const reservasFiltradas = dados.filter((reserva) => {
-
-          const status = normalizarStatus(reserva.status);
-
-          if (['pago', 'confirmado', 'pre_reserva'].includes(status)) {
-
-            return true;
-
-          }
-
-          return !status && Boolean(reserva.confirmada);
-
-        });
-
-        const preReservas = reservasFiltradas.filter((reserva) => statusEhPreReserva(reserva)).length;
-
-        console.log('✅ Reservas visíveis:', reservasFiltradas.length, '| Pré-reservas:', preReservas);
-
-
-
-        const reservasPorHorario = reservasFiltradas.reduce((acc, reserva) => {
-
-          const horario = reserva.horario || 'Não especificado';
-
-          if (!acc[horario]) acc[horario] = [];
-
-          acc[horario].push(reserva);
-
-          return acc;
-
-        }, {} as Record<string, Reserva[]>);
-
-
-
-        setReservas(reservasPorHorario);
-
-      },
-
-      (error) => {
-
-        console.error('Erro ao escutar reservas:', error);
-
-        setReservas({});
-
-      }
-
+    const baseRef = collection(db, 'reservas');
+    const qString = query(baseRef, where('data', '>=', formatted), where('data', '<', nextDay));
+    const qTimestamp = query(
+      baseRef,
+      where('data', '>=', Timestamp.fromDate(dayStart.toDate())),
+      where('data', '<', Timestamp.fromDate(dayEnd.toDate()))
     );
 
+    let reservasString: Reserva[] = [];
+    let reservasTimestamp: Reserva[] = [];
 
+    const atualizarReservas = () => {
+      const mapa = new Map<string, Reserva>();
+      [...reservasString, ...reservasTimestamp].forEach((reserva) => {
+        const id = reserva.id ?? `${reserva.nome}-${reserva.cpf}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
+        mapa.set(id, reserva);
+      });
+
+      const combinadas = Array.from(mapa.values());
+      const reservasFiltradas = combinadas.filter((reserva) => {
+        if (normalizarDataReserva(reserva.data) !== formatted) {
+          return false;
+        }
+        const status = normalizarStatus(reserva.status);
+        if (['pago', 'confirmado', 'pre_reserva'].includes(status)) {
+          return true;
+        }
+        return !status && Boolean(reserva.confirmada);
+      });
+
+      const preReservas = reservasFiltradas.filter((reserva) => statusEhPreReserva(reserva)).length;
+      console.log('✅ Reservas visíveis:', reservasFiltradas.length, '| Pré-reservas:', preReservas);
+
+      const reservasPorHorario = reservasFiltradas.reduce((acc, reserva) => {
+        const horario = reserva.horario || 'Não especificado';
+        if (!acc[horario]) acc[horario] = [];
+        acc[horario].push(reserva);
+        return acc;
+      }, {} as Record<string, Reserva[]>);
+
+      setReservas(reservasPorHorario);
+    };
+
+    const unsubscribeString = onSnapshot(
+      qString,
+      (snapshot) => {
+        reservasString = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as Reserva;
+          return {
+            id: docSnap.id,
+            ...data,
+            chegou: data.chegou === true,
+          };
+        });
+        atualizarReservas();
+      },
+      (error) => {
+        console.error('Erro ao escutar reservas (string):', error);
+        reservasString = [];
+        atualizarReservas();
+      }
+    );
+
+    const unsubscribeTimestamp = onSnapshot(
+      qTimestamp,
+      (snapshot) => {
+        reservasTimestamp = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as Reserva;
+          return {
+            id: docSnap.id,
+            ...data,
+            chegou: data.chegou === true,
+          };
+        });
+        atualizarReservas();
+      },
+      (error) => {
+        console.error('Erro ao escutar reservas (timestamp):', error);
+        reservasTimestamp = [];
+        atualizarReservas();
+      }
+    );
 
     return () => {
-
-      unsubscribe();
-
+      unsubscribeString();
+      unsubscribeTimestamp();
     };
 
   }, [selectedDate]);
@@ -4385,7 +4418,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const mensagem = encodeURIComponent(
 
-                                  `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${dayjs(reserva.data).format('DD/MM/YYYY')} �s ${reserva.horario}.`
+                                  `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${formatarDataReserva(reserva.data)} �s ${reserva.horario}.`
 
                                 );
 
@@ -4399,7 +4432,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                 const valorFormatado = formatarValor(reserva.valor);
 
-                                const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${reserva.data}`;
+                                const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
                                 const perguntasRespondidas = obterPerguntasComResposta(reserva);
 
@@ -4873,7 +4906,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const mensagem = encodeURIComponent(
 
-                              `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${dayjs(reserva.data).format('DD/MM/YYYY')} �s ${reserva.horario}.`
+                              `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${formatarDataReserva(reserva.data)} �s ${reserva.horario}.`
 
                             );
 
@@ -4887,7 +4920,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const valorFormatado = formatarValor(reserva.valor);
 
-                            const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${reserva.data}`;
+                            const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
                             const perguntasRespondidas = obterPerguntasComResposta(reserva);
 
