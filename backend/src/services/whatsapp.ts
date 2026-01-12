@@ -70,6 +70,7 @@ let initializing = false;
 let processingPending = false;
 let initRetries = 0;
 let retryTimer: NodeJS.Timeout | null = null;
+let lastConnectedAt: Date | null = null;
 
 const clearRetryTimer = () => {
   if (retryTimer) {
@@ -98,11 +99,45 @@ const handleInitFailure = (error?: unknown) => {
   lastError = (error as { message?: string })?.message || "init_error";
   qrDataUrl = null;
   lastInfo = null;
+  lastConnectedAt = null;
   if (client) {
     client.destroy().catch(() => undefined);
   }
   client = null;
   scheduleRetry(lastError);
+};
+
+const parseDateValue = (value: unknown): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const maybeDate = (value as { toDate?: () => Date }).toDate?.();
+  if (maybeDate instanceof Date) return maybeDate;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+};
+
+const shouldProcessReserva = (reserva: Record<string, any>, cutoff?: Date | null) => {
+  if (!cutoff) return true;
+  const referencia =
+    parseDateValue(reserva.dataPagamento) ??
+    parseDateValue(reserva.criadoEm) ??
+    parseDateValue(reserva.atualizadoEm);
+  if (!referencia) return false;
+  return referencia >= cutoff;
+};
+
+const obterNumeroWhatsapp = async (telefone: string) => {
+  if (!client) return null;
+  try {
+    const id = await client.getNumberId(telefone);
+    return id?._serialized ?? null;
+  } catch (error) {
+    console.warn("[whatsapp] Erro ao validar numero:", error);
+    return null;
+  }
 };
 
 export function iniciarWhatsApp(): void {
@@ -145,6 +180,7 @@ export function iniciarWhatsApp(): void {
       wid: client?.info?.wid?._serialized,
       pushname: client?.info?.pushname,
     };
+    lastConnectedAt = new Date();
     void processarPendentesWhatsapp();
   });
 
@@ -168,6 +204,7 @@ export function iniciarWhatsApp(): void {
     qrDataUrl = null;
     lastInfo = null;
     client = null;
+    lastConnectedAt = null;
     if (!reasonText.toLowerCase().includes("logout")) {
       scheduleRetry(reasonText);
     }
@@ -182,6 +219,7 @@ export function iniciarWhatsApp(): void {
 export async function desconectarWhatsApp(): Promise<void> {
   clearRetryTimer();
   initRetries = 0;
+  lastConnectedAt = null;
   if (!client) {
     status = "disconnected";
     return;
@@ -299,7 +337,16 @@ export async function enviarConfirmacaoWhatsapp(
     id: reservaId,
   });
 
-  await client.sendMessage(`${telefone}@c.us`, mensagem);
+  const whatsappId = await obterNumeroWhatsapp(telefone);
+  if (!whatsappId) {
+    return { enviado: false, motivo: "telefone_sem_whatsapp" };
+  }
+
+  try {
+    await client.sendMessage(whatsappId, mensagem);
+  } catch (error: any) {
+    return { enviado: false, motivo: error?.message || "erro_envio" };
+  }
   return {
     enviado: true,
     mensagem,
@@ -335,6 +382,9 @@ export async function processarPendentesWhatsapp(): Promise<ResultadoProcessamen
 
     for (const docSnap of snapshot.docs) {
       const reserva = docSnap.data() as Record<string, any>;
+      if (!shouldProcessReserva(reserva, lastConnectedAt)) {
+        continue;
+      }
       if (reserva.whatsappEnviado === true) {
         continue;
       }
