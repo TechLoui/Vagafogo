@@ -75,7 +75,7 @@ const obterPacoteIdsReserva = (reserva, pacotesPorNome) => {
     return encontrados;
 };
 async function criarCobrancaHandler(req, res) {
-    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, participantesPorTipo, pacoteIds, comboId, billingType, creditCard, creditCardHolderInfo, temPet, perguntasPersonalizadas, } = req.body;
+    const { nome, email, valor, cpf, telefone, atividade, data, horario, participantes, adultos, bariatrica, criancas, naoPagante, participantesPorTipo, pacoteIds, comboId, billingType, creditCard, creditCardHolderInfo, cartaoTitularNomeCompleto, cartaoTitularNascimento, temPet, perguntasPersonalizadas, } = req.body;
     const horarioFormatado = horario?.toString().trim();
     const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
     const mapaAtivo = participantesPorTipoNormalizado &&
@@ -288,6 +288,8 @@ async function criarCobrancaHandler(req, res) {
             estado: creditCardHolderNormalizado.state,
             email: creditCardHolderNormalizado.email || limparTexto(email),
             cpf: creditCardHolderNormalizado.cpfCnpj || cpfLimpo,
+            nome_completo: limparTexto(cartaoTitularNomeCompleto) || limparTexto(nome),
+            data_nascimento: cartaoTitularNascimento || "",
         });
     }
     try {

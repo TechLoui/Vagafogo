@@ -129,6 +129,8 @@ export type CriarCobrancaPayload = {
   billingType: "PIX" | "CREDIT_CARD";
   creditCard?: CreditCardPayload;
   creditCardHolderInfo?: CreditCardHolderInfo;
+  cartaoTitularNomeCompleto?: string;
+  cartaoTitularNascimento?: string;
   temPet?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
 };
@@ -164,6 +166,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     billingType,
     creditCard,
     creditCardHolderInfo,
+    cartaoTitularNomeCompleto,
+    cartaoTitularNascimento,
     temPet,
     perguntasPersonalizadas,
 } = req.body as CriarCobrancaPayload;
@@ -379,6 +383,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       estado: creditCardHolderNormalizado.state,
       email: creditCardHolderNormalizado.email || limparTexto(email),
       cpf: creditCardHolderNormalizado.cpfCnpj || cpfLimpo,
+      nome_completo: limparTexto(cartaoTitularNomeCompleto) || limparTexto(nome),
+      data_nascimento: cartaoTitularNascimento || "",
     });
   }
 

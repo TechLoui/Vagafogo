@@ -388,9 +388,11 @@ export function BookingSection() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [formaPagamento, setFormaPagamento] = useState<"CREDIT_CARD" | "PIX">("CREDIT_CARD");
   const [cartaoNome, setCartaoNome] = useState<string>("");
+  const [cartaoNomeCompleto, setCartaoNomeCompleto] = useState<string>("");
   const [cartaoNumero, setCartaoNumero] = useState<string>("");
   const [cartaoValidade, setCartaoValidade] = useState<string>("");
   const [cartaoCvv, setCartaoCvv] = useState<string>("");
+  const [cartaoNascimento, setCartaoNascimento] = useState<string>("");
   const [cartaoResultado, setCartaoResultado] = useState<{
     status: "success" | "pending" | "error";
     message: string;
@@ -523,6 +525,8 @@ export function BookingSection() {
       "horario",
       "participantes",
       "pet",
+      "cartaoNomeCompleto",
+      "cartaoNascimento",
       "cartaoNome",
       "cartaoNumero",
       "cartaoValidade",
@@ -1328,6 +1332,12 @@ export function BookingSection() {
     }
 
     if (formaPagamento === "CREDIT_CARD") {
+      if (!cartaoNomeCompleto.trim()) {
+        errors.cartaoNomeCompleto = "Informe o nome completo.";
+      }
+      if (!cartaoNascimento.trim()) {
+        errors.cartaoNascimento = "Informe a data de nascimento.";
+      }
       if (!cartaoNome.trim()) {
         errors.cartaoNome = "Informe o nome no cartao.";
       }
@@ -1473,6 +1483,8 @@ export function BookingSection() {
           state: enderecoEstado.trim().toUpperCase(),
           phone: onlyNumbers(telefone),
         };
+        payload.cartaoTitularNomeCompleto = cartaoNomeCompleto.trim();
+        payload.cartaoTitularNascimento = cartaoNascimento;
       }
 
       if (respostas.length > 0) {
@@ -2227,6 +2239,40 @@ export function BookingSection() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Nome completo
+                      <input
+                        type="text"
+                        value={cartaoNomeCompleto}
+                        onChange={(e) => {
+                          setCartaoNomeCompleto(e.target.value);
+                          setFieldError("cartaoNomeCompleto");
+                        }}
+                        className={`${getInputClasses("cartaoNomeCompleto")} rounded-xl bg-white shadow-sm`}
+                        placeholder="Nome completo do titular"
+                        autoCapitalize="words"
+                      />
+                      {formErrors.cartaoNomeCompleto && (
+                        <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNomeCompleto}</p>
+                      )}
+                    </label>
+
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Data de nascimento
+                      <input
+                        type="date"
+                        value={cartaoNascimento}
+                        onChange={(e) => {
+                          setCartaoNascimento(e.target.value);
+                          setFieldError("cartaoNascimento");
+                        }}
+                        className={`${getInputClasses("cartaoNascimento")} rounded-xl bg-white shadow-sm`}
+                      />
+                      {formErrors.cartaoNascimento && (
+                        <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNascimento}</p>
+                      )}
+                    </label>
+
                     <label className="text-xs font-semibold uppercase text-slate-500">
                       Nome no cartao
                       <input
