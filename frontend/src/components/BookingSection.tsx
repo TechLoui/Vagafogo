@@ -250,6 +250,13 @@ const formatPhone = (value: string): string => {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 };
 
+const formatBirthDate = (value: string): string => {
+  const digits = onlyNumbers(value).slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
 const formatCep = (value: string): string => {
   const digits = onlyNumbers(value).slice(0, 8);
   if (digits.length <= 5) return digits;
@@ -1335,7 +1342,8 @@ export function BookingSection() {
       if (!cartaoNomeCompleto.trim()) {
         errors.cartaoNomeCompleto = "Informe o nome completo.";
       }
-      if (!cartaoNascimento.trim()) {
+      const nascimentoDigits = onlyNumbers(cartaoNascimento);
+      if (nascimentoDigits.length !== 8) {
         errors.cartaoNascimento = "Informe a data de nascimento.";
       }
       if (!cartaoNome.trim()) {
@@ -2260,13 +2268,17 @@ export function BookingSection() {
                     <label className="text-xs font-semibold uppercase text-slate-500">
                       Data de nascimento
                       <input
-                        type="date"
+                        type="text"
                         value={cartaoNascimento}
                         onChange={(e) => {
-                          setCartaoNascimento(e.target.value);
+                          setCartaoNascimento(formatBirthDate(e.target.value));
                           setFieldError("cartaoNascimento");
                         }}
                         className={`${getInputClasses("cartaoNascimento")} rounded-xl bg-white shadow-sm`}
+                        placeholder="DD/MM/AAAA"
+                        inputMode="numeric"
+                        maxLength={10}
+                        autoComplete="bday"
                       />
                       {formErrors.cartaoNascimento && (
                         <p className="mt-1 text-sm text-red-600">{formErrors.cartaoNascimento}</p>
