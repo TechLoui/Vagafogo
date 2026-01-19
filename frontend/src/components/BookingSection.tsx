@@ -329,6 +329,14 @@ const parseCardExpiry = (value: string) => {
   return { month, year };
 };
 
+const extrairMensagemErroPagamento = (resposta: any, fallback: string) => {
+  const mensagem =
+    resposta?.error ||
+    resposta?.message ||
+    resposta?.details?.errors?.[0]?.description;
+  return mensagem ? String(mensagem) : fallback;
+};
+
 const isValidCardNumber = (value: string): boolean => {
   const digits = onlyNumbers(value);
   if (digits.length < 13 || digits.length > 19) return false;
@@ -401,7 +409,7 @@ export function BookingSection() {
   const [cartaoCvv, setCartaoCvv] = useState<string>("");
   const [cartaoNascimento, setCartaoNascimento] = useState<string>("");
   const [cartaoResultado, setCartaoResultado] = useState<{
-    status: "success" | "pending" | "error";
+    status: "success" | "pending" | "processing" | "error";
     message: string;
   } | null>(null);
   const [enderecoCep, setEnderecoCep] = useState<string>("");
@@ -454,10 +462,45 @@ export function BookingSection() {
     ? cartaoNome.trim().toUpperCase()
     : "NOME NO CARTAO";
   const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
+  const bloqueiaEnvioCartao =
+    formaPagamento === "CREDIT_CARD" &&
+    ["processing", "pending"].includes(cartaoResultado?.status ?? "");
 
   useEffect(() => {
     setCartaoCvv((prev) => prev.slice(0, cartaoCvvMaxLength));
   }, [cartaoCvvMaxLength]);
+
+  const resetFormulario = () => {
+    setSelectedPackages([]);
+    setNome("");
+    setEmail("");
+    setTelefone("");
+    setCpf("");
+    setSelectedDay(undefined);
+    setHorario("");
+    setParticipantesPorTipo({});
+    setTemPet(null);
+    setCheckoutUrl(null);
+    setFormaPagamento("CREDIT_CARD");
+    setCartaoNome("");
+    setCartaoNomeCompleto("");
+    setCartaoNumero("");
+    setCartaoValidade("");
+    setCartaoCvv("");
+    setCartaoNascimento("");
+    setEnderecoCep("");
+    setEnderecoRua("");
+    setEnderecoNumero("");
+    setEnderecoComplemento("");
+    setEnderecoBairro("");
+    setEnderecoCidade("");
+    setEnderecoEstado("");
+    setRespostasPersonalizadas({});
+    setFormErrors({});
+    setPixKey(null);
+    setQrCodeImage(null);
+    setExpirationDate(null);
+  };
 
 
   const todayStart = (() => {
@@ -1402,6 +1445,9 @@ export function BookingSection() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (loading || bloqueiaEnvioCartao) {
+      return;
+    }
 
     if (!validateForm()) {
       return;
@@ -1422,7 +1468,14 @@ export function BookingSection() {
     setPixKey(null);
     setQrCodeImage(null);
     setExpirationDate(null);
-    setCartaoResultado(null);
+    if (formaPagamento === "CREDIT_CARD") {
+      setCartaoResultado({
+        status: "processing",
+        message: "Processando compra. Aguarde a confirmacao do cartao.",
+      });
+    } else {
+      setCartaoResultado(null);
+    }
 
     try {
       const dataStr = selectedDay.toISOString().slice(0, 10);
@@ -1522,8 +1575,18 @@ export function BookingSection() {
 
       if (!rawResponse.ok) {
         console.error('❌ Erro na resposta:', resposta);
-        alert("Erro ao criar a cobrança: " + (resposta?.error || resposta?.message || rawResponse.statusText));
-        setLoading(false);
+        const mensagemErro = extrairMensagemErroPagamento(
+          resposta,
+          "Erro ao criar a cobranca."
+        );
+        if (formaPagamento === "CREDIT_CARD") {
+          setCartaoResultado({
+            status: "error",
+            message: `Compra negada: ${mensagemErro}`,
+          });
+        } else {
+          alert(`Erro ao criar a cobranca: ${mensagemErro}`);
+        }
         return;
       }
 
@@ -1538,15 +1601,34 @@ export function BookingSection() {
           setQrCodeImage(resposta.cobranca?.qrCodeImage || null);
           setExpirationDate(resposta.cobranca?.expirationDate || null);
         } else {
-          const statusCobranca = resposta.cobranca?.status;
-          const pagamentoConfirmado =
-            statusCobranca === "CONFIRMED" || statusCobranca === "RECEIVED";
+          const statusCobranca = String(resposta.cobranca?.status ?? "").toUpperCase();
+          const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusCobranca);
+          const pagamentoNegado = [
+            "DECLINED",
+            "DENIED",
+            "REFUSED",
+            "FAILED",
+            "CANCELED",
+            "CANCELLED",
+            "CHARGEBACK",
+          ].includes(statusCobranca);
+          const resultadoStatus = pagamentoConfirmado
+            ? "success"
+            : pagamentoNegado
+            ? "error"
+            : "pending";
+          const mensagemResultado = pagamentoConfirmado
+            ? "Compra realizada com sucesso. Reserva confirmada."
+            : pagamentoNegado
+            ? `Compra negada. Motivo: ${statusCobranca || "NAO INFORMADO"}.`
+            : "Pagamento em processamento. Aguarde a confirmacao do cartao.";
           setCartaoResultado({
-            status: pagamentoConfirmado ? "success" : "pending",
-            message: pagamentoConfirmado
-              ? "Pagamento confirmado! Em instantes sua reserva sera atualizada."
-              : "Pagamento em processamento. Aguarde a confirmacao do cartao.",
+            status: resultadoStatus,
+            message: mensagemResultado,
           });
+          if (pagamentoConfirmado) {
+            resetFormulario();
+          }
         }
 
         // Scroll automático para o card de pagamento
@@ -1563,12 +1645,30 @@ export function BookingSection() {
         }
       } else {
         console.error('❌ Status não é OK:', resposta?.status);
-        alert("Erro ao criar a cobrança. Verifique os dados ou tente novamente.");
+        const mensagemErro = extrairMensagemErroPagamento(
+          resposta,
+          "Erro ao criar a cobranca. Verifique os dados ou tente novamente."
+        );
+        if (formaPagamento === "CREDIT_CARD") {
+          setCartaoResultado({
+            status: "error",
+            message: `Compra negada: ${mensagemErro}`,
+          });
+        } else {
+          alert(mensagemErro);
+        }
       }
 
     } catch (error) {
       console.error("Erro ao processar reserva:", error);
-      alert("Erro ao processar reserva. Tente novamente.");
+      if (formaPagamento === "CREDIT_CARD") {
+        setCartaoResultado({
+          status: "error",
+          message: "Erro ao processar a compra. Tente novamente.",
+        });
+      } else {
+        alert("Erro ao processar reserva. Tente novamente.");
+      }
     } finally {
       setLoading(false);
     }
@@ -2518,10 +2618,14 @@ export function BookingSection() {
             {/* Botão de Envio */}
             <button
               type="submit"
-              disabled={loading || selectedPackages.length === 0}
+              disabled={loading || selectedPackages.length === 0 || bloqueiaEnvioCartao}
               className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? "Processando..." : "Fazer Reserva"}
+              {loading
+                ? "Processando..."
+                : bloqueiaEnvioCartao
+                ? "Aguardando confirmacao..."
+                : "Fazer Reserva"}
             </button>
           </form>
 
@@ -2548,6 +2652,8 @@ export function BookingSection() {
                     className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold ${
                       cartaoResultado.status === "success"
                         ? "bg-emerald-500/20 text-emerald-100"
+                        : cartaoResultado.status === "processing"
+                        ? "bg-sky-500/20 text-sky-100"
                         : cartaoResultado.status === "pending"
                         ? "bg-amber-500/20 text-amber-100"
                         : "bg-rose-500/20 text-rose-100"
@@ -2555,6 +2661,8 @@ export function BookingSection() {
                   >
                     {cartaoResultado.status === "success"
                       ? "Pagamento confirmado"
+                      : cartaoResultado.status === "processing"
+                      ? "Processando compra"
                       : cartaoResultado.status === "pending"
                       ? "Pagamento em processamento"
                       : "Pagamento nao aprovado"}

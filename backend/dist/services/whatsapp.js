@@ -36,7 +36,6 @@ let initializing = false;
 let processingPending = false;
 let initRetries = 0;
 let retryTimer = null;
-let lastConnectedAt = null;
 const clearRetryTimer = () => {
     if (retryTimer) {
         clearTimeout(retryTimer);
@@ -64,37 +63,38 @@ const handleInitFailure = (error) => {
     lastError = error?.message || "init_error";
     qrDataUrl = null;
     lastInfo = null;
-    lastConnectedAt = null;
     if (client) {
         client.destroy().catch(() => undefined);
     }
     client = null;
     scheduleRetry(lastError);
 };
-const parseDateValue = (value) => {
-    if (!value)
-        return null;
-    if (value instanceof Date)
-        return value;
-    const maybeDate = value.toDate?.();
-    if (maybeDate instanceof Date)
-        return maybeDate;
-    if (typeof value === "string") {
-        const parsed = new Date(value);
-        if (!Number.isNaN(parsed.getTime()))
-            return parsed;
+const formatDateKey = (date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(date);
+const obterDataReserva = (valor) => {
+    if (!valor)
+        return "";
+    if (typeof valor === "string") {
+        const trimmed = valor.trim();
+        const isoMatch = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+        if (isoMatch)
+            return isoMatch[1];
+        const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(trimmed);
+        if (brMatch)
+            return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+            return formatDateKey(parsed);
+        }
+        return "";
     }
-    return null;
-};
-const shouldProcessReserva = (reserva, cutoff) => {
-    if (!cutoff)
-        return true;
-    const referencia = parseDateValue(reserva.dataPagamento) ??
-        parseDateValue(reserva.criadoEm) ??
-        parseDateValue(reserva.atualizadoEm);
-    if (!referencia)
-        return false;
-    return referencia >= cutoff;
+    if (valor instanceof Date) {
+        return formatDateKey(valor);
+    }
+    const maybeDate = valor.toDate?.();
+    if (maybeDate instanceof Date) {
+        return formatDateKey(maybeDate);
+    }
+    return "";
 };
 const obterNumeroWhatsapp = async (telefone) => {
     if (!client)
@@ -144,7 +144,6 @@ function iniciarWhatsApp() {
             wid: client?.info?.wid?._serialized,
             pushname: client?.info?.pushname,
         };
-        lastConnectedAt = new Date();
         void processarPendentesWhatsapp();
     });
     client.on("authenticated", () => {
@@ -165,7 +164,6 @@ function iniciarWhatsApp() {
         qrDataUrl = null;
         lastInfo = null;
         client = null;
-        lastConnectedAt = null;
         if (!reasonText.toLowerCase().includes("logout")) {
             scheduleRetry(reasonText);
         }
@@ -178,7 +176,6 @@ function iniciarWhatsApp() {
 async function desconectarWhatsApp() {
     clearRetryTimer();
     initRetries = 0;
-    lastConnectedAt = null;
     if (!client) {
         status = "disconnected";
         return;
@@ -288,7 +285,7 @@ async function enviarConfirmacaoWhatsapp(reservaId, reserva, configOverride) {
         return { enviado: false, motivo: "telefone_sem_whatsapp" };
     }
     try {
-        await client.sendMessage(whatsappId, mensagem);
+        await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
     }
     catch (error) {
         return { enviado: false, motivo: error?.message || "erro_envio" };
@@ -313,13 +310,15 @@ async function processarPendentesWhatsapp() {
         if (!client || status !== "ready") {
             return { enviados: 0, falhas: 0, motivo: "whatsapp_nao_conectado" };
         }
-        const statusElegiveis = ["pago", "confirmado", "Pago", "Confirmado"];
+        const statusElegiveis = ["pago", "Pago", "PAGO"];
         const snapshot = await (0, firestore_1.getDocs)((0, firestore_1.query)((0, firestore_1.collection)(firebase_1.db, "reservas"), (0, firestore_1.where)("status", "in", statusElegiveis)));
         let enviados = 0;
         let falhas = 0;
+        const hoje = formatDateKey(new Date());
         for (const docSnap of snapshot.docs) {
             const reserva = docSnap.data();
-            if (!shouldProcessReserva(reserva, lastConnectedAt)) {
+            const dataReserva = obterDataReserva(reserva.data);
+            if (!dataReserva || dataReserva < hoje) {
                 continue;
             }
             if (reserva.whatsappEnviado === true) {
