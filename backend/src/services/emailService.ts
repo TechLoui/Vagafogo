@@ -1,15 +1,33 @@
 // emailService.ts
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 
-export const transporter = nodemailer.createTransport({
-  host: "smtp.hostinger.com",
-  port: 465, // Use 465 para SSL ou 587 para TLS
-  secure: true, // true para 465, false para 587
-  auth: {
-    user: "financeiro@nagasistemas.com", // Seu e-mail
-    pass: "Naga@1327",          // A senha da conta de e-mail
-  },
-});
+let cachedTransporter: Transporter | null = null;
+
+function getTransporter(): Transporter {
+  if (cachedTransporter) return cachedTransporter;
+
+  const host = process.env.SMTP_HOST?.trim() || "smtp.hostinger.com";
+  const portEnv = process.env.SMTP_PORT?.trim();
+  const port = portEnv ? Number(portEnv) : 465;
+  const secureEnv = process.env.SMTP_SECURE?.trim();
+  const secure = secureEnv ? secureEnv === "true" : port === 465;
+
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+
+  if (!user || !pass) {
+    throw new Error("SMTP_USER/SMTP_PASS não configurados.");
+  }
+
+  cachedTransporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+  });
+
+  return cachedTransporter;
+}
 
 export async function enviarEmailConfirmacao({
   nome,
@@ -26,8 +44,10 @@ export async function enviarEmailConfirmacao({
   horario: string;
   participantes: number;
 }) {
-  await transporter.sendMail({
-    from: `"Vagafogo Reservas" <financeiro@nagasistemas.com>`,
+  const from = process.env.SMTP_FROM?.trim() || `"Vagafogo Reservas" <${process.env.SMTP_USER}>`;
+
+  await getTransporter().sendMail({
+    from,
     to: email,
     subject: "Confirmação de Reserva",
     html: `

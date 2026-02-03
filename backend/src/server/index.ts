@@ -18,7 +18,5 @@ const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
-  console.log("Token carregado:", process.env.ASAAS_API_KEY);
-
+  console.log("ASAAS_API_KEY presente:", Boolean(process.env.ASAAS_API_KEY));
 });
-

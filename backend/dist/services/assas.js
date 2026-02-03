@@ -121,6 +121,35 @@ async function criarCobrancaHandler(req, res) {
             customerId = customerData.id;
             console.log("🆕 Cliente criado:", customerId);
         }
+        if (!customerId) {
+            console.error("❌ customerId não definido após criar/buscar cliente no Asaas.");
+            res.status(500).json({
+                status: "erro",
+                error: "Falha ao obter o customerId no Asaas.",
+            });
+            return;
+        }
+        const splitWalletId = process.env.ASAAS_SPLIT_WALLET_ID?.trim();
+        const splitPercentualValueEnv = process.env.ASAAS_SPLIT_PERCENTUAL_VALUE?.trim();
+        const splitPercentualValue = splitPercentualValueEnv ? Number(splitPercentualValueEnv) : 1;
+        const paymentPayload = {
+            billingType,
+            customer: customerId,
+            value: valor,
+            dueDate: dataHoje,
+            description: `Cobrança de ${nome}`,
+            externalReference: reservaId,
+        };
+        if (splitWalletId) {
+            if (Number.isFinite(splitPercentualValue) &&
+                splitPercentualValue > 0 &&
+                splitPercentualValue <= 100) {
+                paymentPayload.split = [{ walletId: splitWalletId, percentualValue: splitPercentualValue }];
+            }
+            else {
+                console.warn("⚠️ ASAAS_SPLIT_PERCENTUAL_VALUE inválido; split ignorado:", splitPercentualValueEnv);
+            }
+        }
         // 💰 Criar pagamento com o customer correto
         const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
             method: "POST",
@@ -129,14 +158,7 @@ async function criarCobrancaHandler(req, res) {
                 accept: "application/json",
                 access_token: process.env.ASAAS_API_KEY,
             },
-            body: JSON.stringify({
-                billingType,
-                customer: customerId,
-                value: valor,
-                dueDate: dataHoje,
-                description: `Cobrança de ${nome}`,
-                externalReference: reservaId,
-            }),
+            body: JSON.stringify(paymentPayload),
         });
         const cobrancaData = await paymentResponse.json();
         if (!paymentResponse.ok) {
