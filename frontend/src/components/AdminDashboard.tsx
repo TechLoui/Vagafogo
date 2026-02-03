@@ -1,10 +1,33 @@
 import { useEffect, useState } from 'react';
 import React from 'react';
-import {collection,query, where, getDocs, doc, deleteDoc,updateDoc, addDoc } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
+} from 'firebase/firestore';
 import { db } from '../../firebase';
 import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaBox, FaSearch } from 'react-icons/fa';
+import {
+  FaBox,
+  FaChartBar,
+  FaChevronLeft,
+  FaChevronRight,
+  FaCog,
+  FaEdit,
+  FaPlus,
+  FaSearch,
+  FaTrash,
+  FaWhatsapp
+} from 'react-icons/fa';
 
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 dayjs.extend(localizedFormat);
@@ -46,8 +69,26 @@ const horariosDisponiveis = [
   '13:00', '14:00', '15:00', '16:00', '18:00'
 ];
 
+const DEFAULT_WHATSAPP_CONFIRMATION_TEMPLATE =
+  'Olá {nome}! Aqui é Vaga Fogo confirmando sua reserva para {data} às {horario}.';
+
 export default function AdminDashboard() {
-  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa'>('reservas');
+  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'dashboard'>('reservas');
+  const [isCalendarCollapsed, setIsCalendarCollapsed] = useState(false);
+
+  // Disparador (WhatsApp)
+  const [whatsappTemplate, setWhatsappTemplate] = useState(DEFAULT_WHATSAPP_CONFIRMATION_TEMPLATE);
+  const [modalWhatsappTemplate, setModalWhatsappTemplate] = useState(false);
+  const [savingWhatsappTemplate, setSavingWhatsappTemplate] = useState(false);
+
+  // Dashboard
+  const [dashboardStartDate, setDashboardStartDate] = useState(
+    dayjs().startOf('month').format('YYYY-MM-DD')
+  );
+  const [dashboardEndDate, setDashboardEndDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [dashboardReservas, setDashboardReservas] = useState<Reserva[]>([]);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   // Reservas
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -100,6 +141,33 @@ export default function AdminDashboard() {
     }
   }, [feedback]);
 
+  useEffect(() => {
+    const stored = localStorage.getItem('admin:calendarCollapsed');
+    if (stored !== null) setIsCalendarCollapsed(stored === 'true');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('admin:calendarCollapsed', String(isCalendarCollapsed));
+  }, [isCalendarCollapsed]);
+
+  useEffect(() => {
+    const loadWhatsappTemplate = async () => {
+      try {
+        const templateRef = doc(db, 'configuracoes', 'disparador');
+        const snap = await getDoc(templateRef);
+        const fromDb = snap.exists() ? (snap.data().whatsappConfirmacaoTemplate as unknown) : undefined;
+
+        if (typeof fromDb === 'string' && fromDb.trim()) {
+          setWhatsappTemplate(fromDb);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void loadWhatsappTemplate();
+  }, []);
+
   const daysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
@@ -128,24 +196,6 @@ export default function AdminDashboard() {
     setModalReserva(true);
   };
 
-  const handleAddReserva = () => {
-    setEditReserva({
-      nome: '',
-      cpf: '',
-      telefone: '',
-      adultos: 0,
-      criancas: 0,
-      naoPagante: 0,
-      bariatrica: 0,
-      data: dayjs(selectedDate).format('YYYY-MM-DD'),
-      horario: '',
-      atividade: '',
-      temPet: false
-    });
-    setIsEditingReserva(false);
-    setModalReserva(true);
-  };
-
   function calcularParticipantes(reserva: Reserva) {
     return (
       (reserva.adultos ?? 0) +
@@ -154,6 +204,66 @@ export default function AdminDashboard() {
       (reserva.bariatrica ?? 0)
     );
   }
+
+  const formatarDataPtBr = (dataISO: string) => {
+    const parsed = dayjs(dataISO);
+    return parsed.isValid() ? parsed.format('DD/MM/YYYY') : dataISO;
+  };
+
+  const montarMensagemWhatsapp = (reserva: Reserva) => {
+    const template = whatsappTemplate?.trim() || DEFAULT_WHATSAPP_CONFIRMATION_TEMPLATE;
+
+    const replacements: Record<string, string> = {
+      nome: reserva.nome ?? '',
+      data: formatarDataPtBr(reserva.data),
+      horario: reserva.horario ?? '',
+      atividade: reserva.atividade ?? '',
+      adultos: String(reserva.adultos ?? 0),
+      criancas: String(reserva.criancas ?? 0),
+      naoPagante: String(reserva.naoPagante ?? 0),
+      bariatrica: String(reserva.bariatrica ?? 0),
+      participantes: String(calcularParticipantes(reserva)),
+    };
+
+    return template.replace(/\{(\w+)\}/g, (_match, key: string) => {
+      return replacements[key] ?? `{${key}}`;
+    });
+  };
+
+  const montarLinkWhatsapp = (reserva: Reserva) => {
+    const telefone = reserva.telefone?.replace(/\D/g, '') ?? '';
+    if (!telefone) return `https://wa.me/55`;
+
+    const mensagem = montarMensagemWhatsapp(reserva);
+    return `https://wa.me/55${telefone}?text=${encodeURIComponent(mensagem)}`;
+  };
+
+  const handleSaveWhatsappTemplate = async () => {
+    const template = whatsappTemplate.trim();
+    if (!template) {
+      setFeedback({ type: 'error', message: 'O template do WhatsApp não pode ficar vazio.' });
+      return;
+    }
+
+    setSavingWhatsappTemplate(true);
+    try {
+      await setDoc(
+        doc(db, 'configuracoes', 'disparador'),
+        {
+          whatsappConfirmacaoTemplate: template,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setFeedback({ type: 'success', message: 'Template do WhatsApp atualizado com sucesso!' });
+      setModalWhatsappTemplate(false);
+    } catch (e) {
+      setFeedback({ type: 'error', message: 'Erro ao salvar template do WhatsApp.' });
+    } finally {
+      setSavingWhatsappTemplate(false);
+    }
+  };
 
   const handleSaveReserva = async () => {
     if (!editReserva) return;
@@ -273,6 +383,227 @@ export default function AdminDashboard() {
     setCarregandoPesquisa(false);
   };
 
+  const fetchDashboardData = async (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return;
+
+    setDashboardLoading(true);
+    setDashboardError(null);
+
+    try {
+      const q = query(
+        collection(db, 'reservas'),
+        where('data', '>=', startDate),
+        where('data', '<=', endDate)
+      );
+
+      const snapshot = await getDocs(q);
+      const dados: Reserva[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Reserva));
+      setDashboardReservas(dados);
+    } catch (e) {
+      setDashboardReservas([]);
+      setDashboardError('Erro ao carregar dados do dashboard.');
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (aba !== 'dashboard') return;
+    void fetchDashboardData(dashboardStartDate, dashboardEndDate);
+  }, [aba, dashboardStartDate, dashboardEndDate]);
+
+  const exportarDashboardPdf = () => {
+    const reservasPagas = dashboardReservas.filter(r => r.status === 'pago');
+    const totalReceita = reservasPagas.reduce((acc, r) => acc + (r.valor ?? 0), 0);
+    const totalReservasPagas = reservasPagas.length;
+    const totalParticipantes = reservasPagas.reduce((acc, r) => acc + calcularParticipantes(r), 0);
+    const ticketMedio = totalReservasPagas ? totalReceita / totalReservasPagas : 0;
+
+    const porAtividade = new Map<string, { quantidade: number; receita: number }>();
+    for (const r of reservasPagas) {
+      const key = r.atividade || 'Sem atividade';
+      const atual = porAtividade.get(key) ?? { quantidade: 0, receita: 0 };
+      porAtividade.set(key, {
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (r.valor ?? 0),
+      });
+    }
+
+    const atividadesOrdenadas = [...porAtividade.entries()]
+      .map(([atividade, v]) => ({ atividade, ...v }))
+      .sort((a, b) => b.receita - a.receita);
+
+    const porCliente = new Map<string, { nome: string; quantidade: number; receita: number }>();
+    for (const r of reservasPagas) {
+      const key = r.cpf || r.telefone || r.nome || 'cliente';
+      const atual = porCliente.get(key) ?? { nome: r.nome, quantidade: 0, receita: 0 };
+      porCliente.set(key, {
+        nome: atual.nome || r.nome,
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (r.valor ?? 0),
+      });
+    }
+
+    const clientesOrdenados = [...porCliente.entries()]
+      .map(([clienteId, v]) => ({ clienteId, ...v }))
+      .sort((a, b) => b.receita - a.receita)
+      .slice(0, 15);
+
+    const porDia = new Map<string, { quantidade: number; receita: number }>();
+    for (const r of reservasPagas) {
+      const key = r.data || 'sem-data';
+      const atual = porDia.get(key) ?? { quantidade: 0, receita: 0 };
+      porDia.set(key, {
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (r.valor ?? 0),
+      });
+    }
+
+    const diasOrdenados = [...porDia.entries()]
+      .map(([data, v]) => ({ data, ...v }))
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    const escapeHtml = (value: string) =>
+      value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+
+    const moeda = (valor: number) =>
+      valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+    const janela = window.open('', '_blank');
+    if (!janela) {
+      setFeedback({ type: 'error', message: 'Não foi possível abrir a janela de exportação.' });
+      return;
+    }
+
+    const html = `
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Relatório - Vagafogo</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #111827; padding: 24px; }
+      h1 { font-size: 18px; margin: 0 0 8px 0; }
+      h2 { font-size: 14px; margin: 18px 0 8px 0; }
+      .muted { color: #6b7280; font-size: 12px; margin-bottom: 16px; }
+      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+      .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+      .label { font-size: 11px; color: #6b7280; }
+      .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 11px; }
+      th { background: #f3f4f6; text-align: left; }
+      .right { text-align: right; }
+      @media print { body { padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <h1>Relatório - Vagafogo</h1>
+    <div class="muted">Período: ${escapeHtml(formatarDataPtBr(dashboardStartDate))} a ${escapeHtml(
+      formatarDataPtBr(dashboardEndDate)
+    )}</div>
+
+    <div class="cards">
+      <div class="card"><div class="label">Receita (pagas)</div><div class="value">${escapeHtml(
+        moeda(totalReceita)
+      )}</div></div>
+      <div class="card"><div class="label">Reservas pagas</div><div class="value">${totalReservasPagas}</div></div>
+      <div class="card"><div class="label">Participantes</div><div class="value">${totalParticipantes}</div></div>
+      <div class="card"><div class="label">Ticket médio</div><div class="value">${escapeHtml(
+        moeda(ticketMedio)
+      )}</div></div>
+    </div>
+
+    <h2>Por atividade</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Atividade</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${atividadesOrdenadas
+          .map(
+            a =>
+              `<tr>
+                <td>${escapeHtml(a.atividade)}</td>
+                <td class="right">${a.quantidade}</td>
+                <td class="right">${escapeHtml(moeda(a.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+
+    <h2>Top clientes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Cliente</th>
+          <th>ID (CPF/Telefone)</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${clientesOrdenados
+          .map(
+            c =>
+              `<tr>
+                <td>${escapeHtml(c.nome || '-')}</td>
+                <td>${escapeHtml(c.clienteId)}</td>
+                <td class="right">${c.quantidade}</td>
+                <td class="right">${escapeHtml(moeda(c.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+
+    <h2>Por dia</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${diasOrdenados
+          .map(
+            d =>
+              `<tr>
+                <td>${escapeHtml(formatarDataPtBr(d.data))}</td>
+                <td class="right">${d.quantidade}</td>
+                <td class="right">${escapeHtml(moeda(d.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </body>
+</html>
+    `.trim();
+
+    janela.document.open();
+    janela.document.write(html);
+    janela.document.close();
+
+    setTimeout(() => {
+      janela.focus();
+      janela.print();
+    }, 300);
+  };
+
   // Render
   return (
     <main className="min-h-screen w-full bg-gray-50">
@@ -297,61 +628,126 @@ export default function AdminDashboard() {
           className={`px-3 py-1 rounded ${aba === 'pesquisa' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
           <FaSearch className="inline mr-1" /> Pesquisa de Clientes
         </button>
+        <button onClick={() => setAba('dashboard')}
+          className={`px-3 py-1 rounded ${aba === 'dashboard' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
+          <FaChartBar className="inline mr-1" /> Dashboard
+        </button>
       </div>
 
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
-        <>
-          {/* Calendário */}
-          <section className="bg-white p-4 rounded shadow mb-6 w-full">
-            <div className="flex justify-between items-center mb-4">
-              <button onClick={() => changeMonth(-1)}><FaChevronLeft /></button>
-              <h2 className="text-lg font-bold">{dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}</h2>
-              <button onClick={() => changeMonth(1)}><FaChevronRight /></button>
-            </div>
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {diasDaSemanaCurto.map(dia => (
-                <div key={dia} className="text-center font-semibold text-gray-600 text-sm">{dia}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {days.map((day, idx) => {
-                const isSelected = day && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear;
-                return (
-                  <div
-                    key={idx}
-                    className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${day ? (isSelected ? 'bg-green-600 text-white' : 'bg-green-100 hover:bg-green-200') : ''}`}
-                    onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
-                  >
-                    {day || ''}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Reservas Tabela */}
-          <section className="bg-white p-4 rounded shadow w-full">
-            <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                <h3 className="text-base font-bold">
-                  Agendamentos para: {dayjs(selectedDate).format('DD/MM/YYYY')}
-                </h3>
-                <select
-                  value={filtroAtividade}
-                  onChange={(e) => setFiltroAtividade(e.target.value)}
-                  className="border px-2 py-1 rounded text-xs"
+        <section className="px-4 pb-6 w-full">
+          <div className="flex flex-col lg:flex-row gap-4 w-full">
+            {/* Calendário (retrátil) */}
+            <aside
+              className={`bg-white rounded shadow w-full transition-all lg:sticky lg:top-4 ${
+                isCalendarCollapsed ? 'lg:w-12' : 'lg:w-[340px]'
+              }`}
+            >
+              <div
+                className={`flex items-center p-2 border-b ${
+                  isCalendarCollapsed ? 'justify-center' : 'justify-between'
+                }`}
+              >
+                <button
+                  onClick={() => setIsCalendarCollapsed(v => !v)}
+                  className="p-2 rounded hover:bg-gray-100"
+                  title={isCalendarCollapsed ? 'Mostrar calendário' : 'Ocultar calendário'}
+                  aria-label={isCalendarCollapsed ? 'Mostrar calendário' : 'Ocultar calendário'}
                 >
-                  <option value="">Todas Atividades</option>
-                  <option value="Trilha Ecológica">Trilha Ecológica</option>
-                  <option value="Brunch Gastronômico">Brunch Gastronômico</option>
-                  <option value="Brunch + trilha">Brunch + trilha</option>
-                </select>
+                  {isCalendarCollapsed ? <FaChevronRight /> : <FaChevronLeft />}
+                </button>
+
+                {!isCalendarCollapsed && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => changeMonth(-1)}
+                      className="p-2 rounded hover:bg-gray-100"
+                      aria-label="Mês anterior"
+                      title="Mês anterior"
+                    >
+                      <FaChevronLeft />
+                    </button>
+                    <h2 className="text-sm font-bold whitespace-nowrap">
+                      {dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}
+                    </h2>
+                    <button
+                      onClick={() => changeMonth(1)}
+                      className="p-2 rounded hover:bg-gray-100"
+                      aria-label="Próximo mês"
+                      title="Próximo mês"
+                    >
+                      <FaChevronRight />
+                    </button>
+                  </div>
+                )}
               </div>
-              <button onClick={handleAddReserva} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-2 text-sm">
-                <FaPlus /> Nova Reserva
-              </button>
-            </div>
+
+              {!isCalendarCollapsed && (
+                <div className="p-4">
+                  <div className="grid grid-cols-7 gap-1 mb-2">
+                    {diasDaSemanaCurto.map(dia => (
+                      <div key={dia} className="text-center font-semibold text-gray-600 text-xs">
+                        {dia}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {days.map((day, idx) => {
+                      const isSelected =
+                        day &&
+                        selectedDate.getDate() === day &&
+                        selectedDate.getMonth() === currentMonth &&
+                        selectedDate.getFullYear() === currentYear;
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${
+                            day
+                              ? isSelected
+                                ? 'bg-green-600 text-white'
+                                : 'bg-green-100 hover:bg-green-200'
+                              : ''
+                          }`}
+                          onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
+                        >
+                          {day || ''}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </aside>
+
+            {/* Reservas Tabela */}
+            <section className="bg-white p-4 rounded shadow w-full flex-1">
+              <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <h3 className="text-base font-bold">
+                    Agendamentos para: {dayjs(selectedDate).format('DD/MM/YYYY')}
+                  </h3>
+                  <select
+                    value={filtroAtividade}
+                    onChange={(e) => setFiltroAtividade(e.target.value)}
+                    className="border px-2 py-1 rounded text-xs"
+                  >
+                    <option value="">Todas Atividades</option>
+                    <option value="Trilha Ecológica">Trilha Ecológica</option>
+                    <option value="Brunch Gastronômico">Brunch Gastronômico</option>
+                    <option value="Brunch + trilha">Brunch + trilha</option>
+                  </select>
+
+                  <button
+                    onClick={() => setModalWhatsappTemplate(true)}
+                    className="bg-gray-800 text-white px-3 py-1 rounded flex items-center gap-2 text-sm"
+                    title="Configurar disparador do WhatsApp"
+                  >
+                    <FaCog /> Disparador
+                  </button>
+                </div>
+              </div>
 
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-xs">
@@ -412,7 +808,7 @@ export default function AdminDashboard() {
                                 </td>
                                 <td className="px-2 py-2 flex gap-1">
                                   <a
-                                    href={`https://wa.me/55${r.telefone.replace(/\D/g, '')}`}
+                                    href={montarLinkWhatsapp(r)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-green-600 hover:text-green-800 flex items-center justify-center rounded-full bg-green-50 w-8 h-8 text-xl"
@@ -568,7 +964,41 @@ export default function AdminDashboard() {
               </div>
             )}
           </section>
-        </>
+          </div>
+
+          {/* Modal Disparador WhatsApp */}
+          {modalWhatsappTemplate && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <div className="bg-white p-4 rounded shadow w-full max-w-xl">
+                <h4 className="text-base font-bold mb-2">Disparador (WhatsApp)</h4>
+                <p className="text-xs text-gray-600 mb-2">
+                  Use variáveis como {'{nome}'}, {'{data}'}, {'{horario}'}, {'{atividade}'}, {'{participantes}'}.
+                </p>
+                <textarea
+                  value={whatsappTemplate}
+                  onChange={e => setWhatsappTemplate(e.target.value)}
+                  className="w-full border rounded p-2 text-sm min-h-[140px]"
+                />
+                <div className="flex justify-end gap-2 mt-3">
+                  <button
+                    onClick={() => setModalWhatsappTemplate(false)}
+                    className="px-3 py-1 bg-gray-400 text-white rounded text-sm"
+                    disabled={savingWhatsappTemplate}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSaveWhatsappTemplate}
+                    className="px-3 py-1 bg-green-600 text-white rounded text-sm"
+                    disabled={savingWhatsappTemplate}
+                  >
+                    {savingWhatsappTemplate ? 'Salvando...' : 'Salvar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
       )}
 
       {/* ========== Pacotes ========== */}
@@ -688,6 +1118,228 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
+          )}
+        </section>
+      )}
+
+      {/* ========== Dashboard ========== */}
+      {aba === 'dashboard' && (
+        <section className="bg-white p-4 rounded shadow w-full">
+          <div className="flex flex-wrap justify-between items-start gap-4 mb-4">
+            <div>
+              <h2 className="font-bold text-lg">Dashboard</h2>
+              <p className="text-xs text-gray-500">Relatórios financeiros e operacionais (reservas pagas).</p>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs text-gray-600">
+                De:
+                <input
+                  type="date"
+                  value={dashboardStartDate}
+                  onChange={e => setDashboardStartDate(e.target.value)}
+                  className="border px-2 py-1 rounded ml-2 text-xs"
+                />
+              </label>
+              <label className="text-xs text-gray-600">
+                Até:
+                <input
+                  type="date"
+                  value={dashboardEndDate}
+                  onChange={e => setDashboardEndDate(e.target.value)}
+                  className="border px-2 py-1 rounded ml-2 text-xs"
+                />
+              </label>
+              <button
+                onClick={() => fetchDashboardData(dashboardStartDate, dashboardEndDate)}
+                className="bg-blue-600 text-white px-3 py-2 rounded text-xs"
+              >
+                Atualizar
+              </button>
+              <button
+                onClick={exportarDashboardPdf}
+                className="bg-gray-800 text-white px-3 py-2 rounded text-xs"
+              >
+                Exportar PDF
+              </button>
+            </div>
+          </div>
+
+          {dashboardLoading ? (
+            <div className="text-sm text-gray-500">Carregando dados...</div>
+          ) : dashboardError ? (
+            <div className="text-sm text-red-600">{dashboardError}</div>
+          ) : (
+            (() => {
+              const reservasPagas = dashboardReservas.filter(r => r.status === 'pago');
+              const totalReceita = reservasPagas.reduce((acc, r) => acc + (r.valor ?? 0), 0);
+              const totalReservasPagas = reservasPagas.length;
+              const totalParticipantes = reservasPagas.reduce((acc, r) => acc + calcularParticipantes(r), 0);
+              const ticketMedio = totalReservasPagas ? totalReceita / totalReservasPagas : 0;
+
+              const porAtividade = new Map<string, { quantidade: number; receita: number }>();
+              for (const r of reservasPagas) {
+                const key = r.atividade || 'Sem atividade';
+                const atual = porAtividade.get(key) ?? { quantidade: 0, receita: 0 };
+                porAtividade.set(key, {
+                  quantidade: atual.quantidade + 1,
+                  receita: atual.receita + (r.valor ?? 0),
+                });
+              }
+
+              const atividades = [...porAtividade.entries()]
+                .map(([atividade, v]) => ({ atividade, ...v }))
+                .sort((a, b) => b.receita - a.receita);
+
+              const maxReceitaAtividade = Math.max(1, ...atividades.map(a => a.receita));
+
+              const porCliente = new Map<string, { nome: string; quantidade: number; receita: number }>();
+              for (const r of reservasPagas) {
+                const key = r.cpf || r.telefone || r.nome || 'cliente';
+                const atual = porCliente.get(key) ?? { nome: r.nome, quantidade: 0, receita: 0 };
+                porCliente.set(key, {
+                  nome: atual.nome || r.nome,
+                  quantidade: atual.quantidade + 1,
+                  receita: atual.receita + (r.valor ?? 0),
+                });
+              }
+
+              const topClientes = [...porCliente.entries()]
+                .map(([clienteId, v]) => ({ clienteId, ...v }))
+                .sort((a, b) => b.receita - a.receita)
+                .slice(0, 10);
+
+              const porDia = new Map<string, { quantidade: number; receita: number }>();
+              for (const r of reservasPagas) {
+                const key = r.data || 'sem-data';
+                const atual = porDia.get(key) ?? { quantidade: 0, receita: 0 };
+                porDia.set(key, {
+                  quantidade: atual.quantidade + 1,
+                  receita: atual.receita + (r.valor ?? 0),
+                });
+              }
+
+              const dias = [...porDia.entries()]
+                .map(([data, v]) => ({ data, ...v }))
+                .sort((a, b) => a.data.localeCompare(b.data));
+
+              return (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+                    <div className="bg-gray-50 rounded p-3 border">
+                      <div className="text-xs text-gray-500">Receita (pagas)</div>
+                      <div className="text-xl font-bold">
+                        {totalReceita.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3 border">
+                      <div className="text-xs text-gray-500">Reservas pagas</div>
+                      <div className="text-xl font-bold">{totalReservasPagas}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3 border">
+                      <div className="text-xs text-gray-500">Participantes</div>
+                      <div className="text-xl font-bold">{totalParticipantes}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded p-3 border">
+                      <div className="text-xs text-gray-500">Ticket médio</div>
+                      <div className="text-xl font-bold">
+                        {ticketMedio.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="font-semibold mb-3">Receita por atividade</h3>
+                      {atividades.length === 0 ? (
+                        <div className="text-sm text-gray-500">Sem dados no período.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {atividades.map(a => (
+                            <div key={a.atividade} className="flex items-center gap-3">
+                              <div className="w-40 text-xs text-gray-700 truncate" title={a.atividade}>
+                                {a.atividade}
+                              </div>
+                              <div className="flex-1 bg-gray-100 h-3 rounded">
+                                <div
+                                  className="bg-green-600 h-3 rounded"
+                                  style={{ width: `${(a.receita / maxReceitaAtividade) * 100}%` }}
+                                />
+                              </div>
+                              <div className="w-28 text-right text-xs">
+                                {a.receita.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="font-semibold mb-3">Top clientes (por receita)</h3>
+                      {topClientes.length === 0 ? (
+                        <div className="text-sm text-gray-500">Sem dados no período.</div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-gray-200 text-xs">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-2 py-2 text-left">Cliente</th>
+                                <th className="px-2 py-2 text-left">CPF/Telefone</th>
+                                <th className="px-2 py-2 text-right">Reservas</th>
+                                <th className="px-2 py-2 text-right">Receita</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {topClientes.map(c => (
+                                <tr key={c.clienteId}>
+                                  <td className="px-2 py-2">{c.nome || '-'}</td>
+                                  <td className="px-2 py-2">{c.clienteId}</td>
+                                  <td className="px-2 py-2 text-right">{c.quantidade}</td>
+                                  <td className="px-2 py-2 text-right">
+                                    {c.receita.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-6">
+                    <h3 className="font-semibold mb-3">Receita por dia</h3>
+                    {dias.length === 0 ? (
+                      <div className="text-sm text-gray-500">Sem dados no período.</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 text-xs">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th className="px-2 py-2 text-left">Data</th>
+                              <th className="px-2 py-2 text-right">Reservas</th>
+                              <th className="px-2 py-2 text-right">Receita</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dias.map(d => (
+                              <tr key={d.data}>
+                                <td className="px-2 py-2">{formatarDataPtBr(d.data)}</td>
+                                <td className="px-2 py-2 text-right">{d.quantidade}</td>
+                                <td className="px-2 py-2 text-right">
+                                  {d.receita.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()
           )}
         </section>
       )}
