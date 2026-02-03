@@ -18,6 +18,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/pt-br';
 import {
   FaBox,
+  FaCalendarAlt,
   FaChartBar,
   FaChevronLeft,
   FaChevronRight,
@@ -606,7 +607,7 @@ export default function AdminDashboard() {
 
   // Render
   return (
-    <main className="min-h-screen w-full bg-gray-50">
+    <main className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
       {/* Feedback */}
       {feedback && (
         <div className={`fixed top-4 right-4 z-[99] px-6 py-2 rounded shadow transition-all text-white ${feedback.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
@@ -614,44 +615,72 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Abas */}
-      <div className="flex gap-2 mb-6 p-4 bg-white shadow w-full">
-        <button onClick={() => setAba('reservas')}
-          className={`px-3 py-1 rounded ${aba === 'reservas' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaPlus className="inline mr-1" /> Reservas
-        </button>
-        <button onClick={() => setAba('pacotes')}
-          className={`px-3 py-1 rounded ${aba === 'pacotes' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaBox className="inline mr-1" /> Pacotes
-        </button>
-        <button onClick={() => setAba('pesquisa')}
-          className={`px-3 py-1 rounded ${aba === 'pesquisa' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaSearch className="inline mr-1" /> Pesquisa de Clientes
-        </button>
-        <button onClick={() => setAba('dashboard')}
-          className={`px-3 py-1 rounded ${aba === 'dashboard' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'}`}>
-          <FaChartBar className="inline mr-1" /> Dashboard
-        </button>
-      </div>
+      <div className="mx-auto max-w-7xl px-4 pt-6 pb-8">
+        {/* Título */}
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Painel Administrativo</h1>
+            <p className="text-sm text-gray-600">Gerencie reservas, pacotes e relatórios.</p>
+          </div>
+          <div className="text-xs text-gray-500">Atualizado em {dayjs().format('DD/MM/YYYY HH:mm')}</div>
+        </div>
+
+        {/* Abas */}
+        <div className="mb-6 rounded-2xl border border-gray-200 bg-white/80 backdrop-blur shadow-sm p-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setAba('reservas')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/20 ${
+                aba === 'reservas' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <FaCalendarAlt className="text-base" /> Reservas
+            </button>
+            <button
+              onClick={() => setAba('pacotes')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/20 ${
+                aba === 'pacotes' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <FaBox className="text-base" /> Pacotes
+            </button>
+            <button
+              onClick={() => setAba('pesquisa')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/20 ${
+                aba === 'pesquisa' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <FaSearch className="text-base" /> Clientes
+            </button>
+            <button
+              onClick={() => setAba('dashboard')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/20 ${
+                aba === 'dashboard' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <FaChartBar className="text-base" /> Dashboard
+            </button>
+          </div>
+        </div>
 
       {/* ========== Reservas ========== */}
       {aba === 'reservas' && (
-        <section className="px-4 pb-6 w-full">
+        <section className="pb-6 w-full">
           <div className="flex flex-col lg:flex-row gap-4 w-full">
             {/* Calendário (retrátil) */}
             <aside
-              className={`bg-white rounded shadow w-full transition-all lg:sticky lg:top-4 ${
-                isCalendarCollapsed ? 'lg:w-12' : 'lg:w-[340px]'
+              className={`bg-white rounded-2xl border border-gray-200 shadow-sm w-full transition-all lg:sticky lg:top-4 ${
+                isCalendarCollapsed ? 'lg:w-14' : 'lg:w-[360px]'
               }`}
             >
               <div
-                className={`flex items-center p-2 border-b ${
+                className={`flex items-center p-3 border-b border-gray-200 ${
                   isCalendarCollapsed ? 'justify-center' : 'justify-between'
                 }`}
               >
                 <button
                   onClick={() => setIsCalendarCollapsed(v => !v)}
-                  className="p-2 rounded hover:bg-gray-100"
+                  className="h-9 w-9 inline-flex items-center justify-center rounded-xl hover:bg-gray-100 transition"
                   title={isCalendarCollapsed ? 'Mostrar calendário' : 'Ocultar calendário'}
                   aria-label={isCalendarCollapsed ? 'Mostrar calendário' : 'Ocultar calendário'}
                 >
@@ -662,18 +691,18 @@ export default function AdminDashboard() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => changeMonth(-1)}
-                      className="p-2 rounded hover:bg-gray-100"
+                      className="h-9 w-9 inline-flex items-center justify-center rounded-xl hover:bg-gray-100 transition"
                       aria-label="Mês anterior"
                       title="Mês anterior"
                     >
                       <FaChevronLeft />
                     </button>
-                    <h2 className="text-sm font-bold whitespace-nowrap">
+                    <h2 className="text-sm font-semibold whitespace-nowrap text-gray-900">
                       {dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}
                     </h2>
                     <button
                       onClick={() => changeMonth(1)}
-                      className="p-2 rounded hover:bg-gray-100"
+                      className="h-9 w-9 inline-flex items-center justify-center rounded-xl hover:bg-gray-100 transition"
                       aria-label="Próximo mês"
                       title="Próximo mês"
                     >
@@ -687,7 +716,7 @@ export default function AdminDashboard() {
                 <div className="p-4">
                   <div className="grid grid-cols-7 gap-1 mb-2">
                     {diasDaSemanaCurto.map(dia => (
-                      <div key={dia} className="text-center font-semibold text-gray-600 text-xs">
+                      <div key={dia} className="text-center font-semibold text-gray-500 text-xs">
                         {dia}
                       </div>
                     ))}
@@ -703,11 +732,11 @@ export default function AdminDashboard() {
                       return (
                         <div
                           key={idx}
-                          className={`text-center p-2 rounded cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-medium ${
+                          className={`text-center rounded-xl cursor-pointer transition-all h-10 flex items-center justify-center text-xs font-semibold ${
                             day
                               ? isSelected
                                 ? 'bg-green-600 text-white'
-                                : 'bg-green-100 hover:bg-green-200'
+                                : 'bg-gray-50 hover:bg-gray-100 text-gray-800'
                               : ''
                           }`}
                           onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
@@ -722,18 +751,20 @@ export default function AdminDashboard() {
             </aside>
 
             {/* Reservas Tabela */}
-            <section className="bg-white p-4 rounded shadow w-full flex-1">
-              <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <h3 className="text-base font-bold">
-                    Agendamentos para: {dayjs(selectedDate).format('DD/MM/YYYY')}
-                  </h3>
+            <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm w-full flex-1">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900">Agendamentos</h3>
+                  <div className="text-xs text-gray-500">Para {dayjs(selectedDate).format('DD/MM/YYYY')}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={filtroAtividade}
                     onChange={(e) => setFiltroAtividade(e.target.value)}
-                    className="border px-2 py-1 rounded text-xs"
+                    className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-900"
                   >
-                    <option value="">Todas Atividades</option>
+                    <option value="">Todas as atividades</option>
                     <option value="Trilha Ecológica">Trilha Ecológica</option>
                     <option value="Brunch Gastronômico">Brunch Gastronômico</option>
                     <option value="Brunch + trilha">Brunch + trilha</option>
@@ -741,7 +772,7 @@ export default function AdminDashboard() {
 
                   <button
                     onClick={() => setModalWhatsappTemplate(true)}
-                    className="bg-gray-800 text-white px-3 py-1 rounded flex items-center gap-2 text-sm"
+                    className="h-10 rounded-xl bg-gray-900 px-4 text-sm font-medium text-white hover:bg-gray-800 transition flex items-center gap-2"
                     title="Configurar disparador do WhatsApp"
                   >
                     <FaCog /> Disparador
@@ -749,7 +780,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-            <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
               <table className="min-w-full divide-y divide-gray-200 text-xs">
                 <thead className="bg-gray-100">
                   <tr>
@@ -811,20 +842,22 @@ export default function AdminDashboard() {
                                     href={montarLinkWhatsapp(r)}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-green-600 hover:text-green-800 flex items-center justify-center rounded-full bg-green-50 w-8 h-8 text-xl"
+                                    className="h-9 w-9 inline-flex items-center justify-center rounded-xl bg-green-50 text-green-700 hover:bg-green-100 transition"
                                     title="Enviar WhatsApp"
                                   >
                                     <FaWhatsapp />
                                   </a>
                                   <button
                                     onClick={() => handleEditReserva(r)}
-                                    className="text-blue-600 hover:underline flex items-center gap-1"
+                                    className="h-9 w-9 inline-flex items-center justify-center rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 transition"
+                                    title="Editar reserva"
                                   >
                                     <FaEdit />
                                   </button>
                                   <button
                                     onClick={() => excluirReserva(r.id!)}
-                                    className="text-red-600 hover:underline flex items-center gap-1"
+                                    className="h-9 w-9 inline-flex items-center justify-center rounded-xl bg-red-50 text-red-700 hover:bg-red-100 transition"
+                                    title="Excluir reserva"
                                   >
                                     <FaTrash />
                                   </button>
@@ -842,7 +875,7 @@ export default function AdminDashboard() {
             {/* Modal Reserva */}
             {modalReserva && editReserva && (
               <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-                <div className="bg-white p-4 rounded shadow w-full max-w-md">
+                <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-200 w-full max-w-md">
                   <h4 className="text-base font-bold mb-2">{isEditingReserva ? 'Editar' : 'Nova'} Reserva</h4>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <label className="block text-xs">Nome:
@@ -969,7 +1002,7 @@ export default function AdminDashboard() {
           {/* Modal Disparador WhatsApp */}
           {modalWhatsappTemplate && (
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white p-4 rounded shadow w-full max-w-xl">
+              <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-200 w-full max-w-xl">
                 <h4 className="text-base font-bold mb-2">Disparador (WhatsApp)</h4>
                 <p className="text-xs text-gray-600 mb-2">
                   Use variáveis como {'{nome}'}, {'{data}'}, {'{horario}'}, {'{atividade}'}, {'{participantes}'}.
@@ -1003,14 +1036,21 @@ export default function AdminDashboard() {
 
       {/* ========== Pacotes ========== */}
       {aba === 'pacotes' && (
-        <section className="bg-white p-4 rounded shadow w-full">
-          <div className="flex justify-between mb-4">
-            <h2 className="font-bold">Pacotes</h2>
-            <button onClick={handleAddPacote} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
-              <FaPlus /> Novo Pacote
+        <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm w-full">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+            <div>
+              <h2 className="font-semibold text-gray-900">Pacotes</h2>
+              <p className="text-xs text-gray-500">Cadastre e gerencie valores, dias e horários.</p>
+            </div>
+
+            <button
+              onClick={handleAddPacote}
+              className="h-10 rounded-xl bg-blue-600 text-white px-4 text-sm font-medium hover:bg-blue-700 transition inline-flex items-center gap-2"
+            >
+              <FaPlus /> Novo pacote
             </button>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
             <table className="min-w-full divide-y divide-gray-200 text-xs mb-4">
               <thead className="bg-gray-100">
                 <tr>
@@ -1036,9 +1076,23 @@ export default function AdminDashboard() {
                     <td className="px-2 py-1">{p.dias.map(i => diasDaSemana[i]).join(', ') || '-'}</td>
                     <td className="px-2 py-1">{p.horarios.join(', ') || '-'}</td>
                     <td className="px-2 py-1">{p.limite}</td>
-                    <td className="px-2 py-1 flex gap-1">
-                      <button className="text-blue-600" onClick={() => handleEditPacote(p)}>Editar</button>
-                      <button className="text-red-600" onClick={() => excluirPacote(p.id!)}>Excluir</button>
+                    <td className="px-2 py-1">
+                      <div className="flex gap-2">
+                        <button
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 transition"
+                          onClick={() => handleEditPacote(p)}
+                          title="Editar pacote"
+                        >
+                          <FaEdit />
+                        </button>
+                        <button
+                          className="h-9 w-9 inline-flex items-center justify-center rounded-xl bg-red-50 text-red-700 hover:bg-red-100 transition"
+                          onClick={() => excluirPacote(p.id!)}
+                          title="Excluir pacote"
+                        >
+                          <FaTrash />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1049,7 +1103,7 @@ export default function AdminDashboard() {
           {/* Modal Pacote */}
           {modalPacote && editPacote && (
             <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-              <div className="bg-white p-6 rounded shadow w-full max-w-xs max-h-[95vh] overflow-y-auto">
+              <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-200 w-full max-w-xs max-h-[95vh] overflow-y-auto">
                 <h4 className="font-bold mb-2">{isEditingPacote ? 'Editar' : 'Novo'} Pacote</h4>
                 <label className="block mb-1 text-xs">Nome da atividade:
                   <input value={editPacote.nome} onChange={e => setEditPacote(f => ({ ...f!, nome: e.target.value }))} className="w-full border px-2 py-1 rounded" />
@@ -1124,7 +1178,7 @@ export default function AdminDashboard() {
 
       {/* ========== Dashboard ========== */}
       {aba === 'dashboard' && (
-        <section className="bg-white p-4 rounded shadow w-full">
+        <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm w-full">
           <div className="flex flex-wrap justify-between items-start gap-4 mb-4">
             <div>
               <h2 className="font-bold text-lg">Dashboard</h2>
@@ -1346,7 +1400,7 @@ export default function AdminDashboard() {
 
       {/* ========== Pesquisa de Clientes ========== */}
       {aba === 'pesquisa' && (
-        <section className="bg-white p-4 rounded shadow w-full">
+        <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm w-full">
           <h2 className="font-bold mb-4">Pesquisa de Clientes</h2>
           <div className="flex gap-2 mb-4">
             <input
@@ -1389,6 +1443,7 @@ export default function AdminDashboard() {
           )}
         </section>
       )}
+      </div>
     </main>
   );
 }
