@@ -26,6 +26,24 @@ const moedaFormatter = new Intl.NumberFormat('pt-BR', {
 
 const formatCurrency = (valor: number) => moedaFormatter.format(Number.isFinite(valor) ? valor : 0);
 
+const numeroCompactFormatter = new Intl.NumberFormat('pt-BR', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+
+const moedaCompactaFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+
+const formatCompactNumber = (valor: number) =>
+  numeroCompactFormatter.format(Number.isFinite(valor) ? valor : 0);
+
+const formatCompactCurrency = (valor: number) =>
+  moedaCompactaFormatter.format(Number.isFinite(valor) ? valor : 0);
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 
 const whatsappTemplateConfirmacaoAutomaticaPadrao =
@@ -84,6 +102,178 @@ const montarMensagemWhatsApp = (template: string, dados: Record<string, string>)
     const valor = dados[chave];
     return valor !== undefined ? valor : match;
   });
+
+const normalizarNomeAtividade = (valor?: string) => {
+  const texto = (valor ?? '').toString().trim();
+  if (!texto) return 'Sem atividade';
+  const base = texto.split('(')[0]?.trim();
+  return base || texto;
+};
+
+type LineChartSeries = {
+  label: string;
+  values: number[];
+  stroke: string;
+  fill?: string;
+};
+
+const LineChart = ({ series, height = 156 }: { series: LineChartSeries[]; height?: number }) => {
+  const width = 120;
+  const viewHeight = 40;
+
+  const quantidadePontos = series[0]?.values.length ?? 0;
+  const maxValue =
+    Math.max(
+      0,
+      ...series.flatMap((item) => item.values.map((valor) => Number(valor) || 0))
+    ) || 1;
+
+  if (quantidadePontos === 0) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500"
+        style={{ height }}
+      >
+        Sem dados no período.
+      </div>
+    );
+  }
+
+  const stepX = quantidadePontos === 1 ? 0 : width / (quantidadePontos - 1);
+
+  const buildPoints = (values: number[]) =>
+    values.map((valor, index) => {
+      const safeValue = Number(valor) || 0;
+      const x = quantidadePontos === 1 ? width / 2 : stepX * index;
+      const y = viewHeight - (safeValue / maxValue) * viewHeight;
+      return { x, y };
+    });
+
+  const buildLinePath = (points: Array<{ x: number; y: number }>) =>
+    points
+      .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+      .join(' ');
+
+  const buildAreaPath = (points: Array<{ x: number; y: number }>) => {
+    const ultimoX = points.at(-1)?.x ?? 0;
+    const linha = points.map((p) => `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+    return `M 0 ${viewHeight} ${linha} L ${ultimoX.toFixed(2)} ${viewHeight} Z`;
+  };
+
+  const paths = series.map((item) => {
+    const values = item.values.map((valor) => Number(valor) || 0);
+    const points = buildPoints(values);
+    return {
+      ...item,
+      points,
+      line: buildLinePath(points),
+      area: item.fill ? buildAreaPath(points) : '',
+    };
+  });
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${viewHeight}`}
+      preserveAspectRatio="none"
+      className="w-full"
+      style={{ height }}
+      role="img"
+      aria-label="Gráfico de linha"
+    >
+      {[1, 2, 3].map((linha) => {
+        const y = (viewHeight / 4) * linha;
+        return (
+          <line
+            key={linha}
+            x1="0"
+            x2={width}
+            y1={y}
+            y2={y}
+            stroke="#e2e8f0"
+            strokeDasharray="4 4"
+            strokeWidth="0.8"
+          />
+        );
+      })}
+
+      {paths.map((item) =>
+        item.fill ? <path key={`${item.label}-fill`} d={item.area} fill={item.fill} stroke="none" /> : null
+      )}
+
+      {quantidadePontos > 1
+        ? paths.map((item) => (
+            <path
+              key={item.label}
+              d={item.line}
+              fill="none"
+              stroke={item.stroke}
+              strokeWidth="2.3"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ))
+        : paths.map((item) => (
+            <circle
+              key={`${item.label}-dot`}
+              cx={item.points[0]?.x ?? 0}
+              cy={item.points[0]?.y ?? viewHeight}
+              r="2.6"
+              fill={item.stroke}
+              stroke="#ffffff"
+              strokeWidth="1.2"
+            />
+          ))}
+    </svg>
+  );
+};
+
+type BarListItem = {
+  key: string;
+  label: string;
+  value: number;
+  valueLabel: string;
+  hint?: string;
+  barClassName?: string;
+};
+
+const BarList = ({ items }: { items: BarListItem[] }) => {
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+        Sem dados no período.
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(0, ...items.map((item) => item.value));
+
+  return (
+    <div className="space-y-4">
+      {items.map((item) => {
+        const percent = maxValue ? Math.min(100, (item.value / maxValue) * 100) : 0;
+        const barClassName = item.barClassName ?? 'bg-blue-600';
+
+        return (
+          <div key={item.key} className="space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm font-medium text-slate-700">{item.label}</p>
+              <p className="shrink-0 text-sm font-semibold text-slate-900">{item.valueLabel}</p>
+            </div>
+
+            <div className="h-2 rounded-full bg-slate-100">
+              <div
+                className={`h-2 rounded-full ${barClassName}`}
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+
+            {item.hint && <p className="text-xs text-slate-500">{item.hint}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 
 
@@ -646,7 +836,7 @@ const obterBadgeStatus = (reserva: Reserva) => {
 
 export default function AdminDashboard() {
 
-  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'>('reservas');
+  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'>('dashboard');
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -1093,15 +1283,15 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
-    { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
+    { id: 'dashboard', label: 'Dashboard', description: 'Financeiro e relatórios', icon: FaChartBar },
 
-    { id: 'dashboard', label: 'Dashboard', description: 'Financeiro e relatÃ³rios', icon: FaChartBar },
+    { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
 
     { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
 
     { id: 'tipos_clientes', label: 'Clientes', description: 'Tipos de clientes', icon: FaUsers },
 
-    { id: 'whatsapp', label: 'WhatsApp', description: 'Confirmacoes automaticas', icon: FaWhatsapp },
+    { id: 'whatsapp', label: 'WhatsApp', description: 'Confirmações automáticas', icon: FaWhatsapp },
 
     { id: 'pesquisa', label: 'Pesquisa', description: 'Histórico de reservas', icon: FaSearch },
 
@@ -3675,6 +3865,19 @@ const totalParticipantesDoDia = useMemo(() => {
   const fetchDashboardData = async (startDate: string, endDate: string) => {
     if (!startDate || !endDate) return;
 
+    const inicio = dayjs(startDate);
+    const fim = dayjs(endDate);
+
+    if (!inicio.isValid() || !fim.isValid()) {
+      setDashboardError('Período inválido.');
+      return;
+    }
+
+    if (fim.isBefore(inicio, 'day')) {
+      setDashboardError('A data final deve ser maior ou igual à data inicial.');
+      return;
+    }
+
     setDashboardLoading(true);
     setDashboardError(null);
 
@@ -3707,7 +3910,7 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [aba, dashboardStartDate, dashboardEndDate]);
 
   const dashboardReservasPagas = useMemo(() => {
-    return dashboardReservas.filter((reserva) => (reserva.status ?? '').trim().toLowerCase() === 'pago');
+    return dashboardReservas.filter((reserva) => normalizarStatus(reserva.status) === 'pago');
   }, [dashboardReservas]);
 
   const dashboardTotais = useMemo(() => {
@@ -3728,7 +3931,7 @@ const totalParticipantesDoDia = useMemo(() => {
     const porAtividade = new Map<string, { quantidade: number; receita: number }>();
 
     for (const r of dashboardReservasPagas) {
-      const key = r.atividade || 'Sem atividade';
+      const key = normalizarNomeAtividade(r.atividade);
       const atual = porAtividade.get(key) ?? { quantidade: 0, receita: 0 };
       porAtividade.set(key, {
         quantidade: atual.quantidade + 1,
@@ -3777,6 +3980,137 @@ const totalParticipantesDoDia = useMemo(() => {
       .sort((a, b) => a.data.localeCompare(b.data));
   }, [dashboardReservasPagas]);
 
+  const dashboardResumoStatus = useMemo(() => {
+    const total = dashboardReservas.length;
+    const pagas = dashboardReservasPagas.length;
+    const preReservas = dashboardReservas.filter((reserva) => statusEhPreReserva(reserva)).length;
+    const confirmadas = dashboardReservas.filter((reserva) => statusEhConfirmado(reserva)).length;
+    const confirmadasNaoPagas = Math.max(confirmadas - pagas, 0);
+    const outras = Math.max(total - preReservas - confirmadas, 0);
+
+    return {
+      total,
+      pagas,
+      preReservas,
+      confirmadas,
+      confirmadasNaoPagas,
+      outras,
+    };
+  }, [dashboardReservas, dashboardReservasPagas]);
+
+  const dashboardDiasNoPeriodo = useMemo(() => {
+    const inicio = dayjs(dashboardStartDate);
+    const fim = dayjs(dashboardEndDate);
+
+    if (!inicio.isValid() || !fim.isValid() || fim.isBefore(inicio, 'day')) {
+      return [] as string[];
+    }
+
+    const dias: string[] = [];
+    const limiteDias = 370;
+    let cursor = inicio.startOf('day');
+
+    while ((cursor.isBefore(fim, 'day') || cursor.isSame(fim, 'day')) && dias.length < limiteDias) {
+      dias.push(cursor.format('YYYY-MM-DD'));
+      cursor = cursor.add(1, 'day');
+    }
+
+    return dias;
+  }, [dashboardStartDate, dashboardEndDate]);
+
+  const dashboardSerieEvolucao = useMemo(() => {
+    const mapa = new Map<string, { total: number; pagas: number; receita: number }>();
+
+    for (const reserva of dashboardReservas) {
+      const data = normalizarDataReserva(reserva.data) || reserva.data;
+      if (!data) continue;
+
+      const atual = mapa.get(data) ?? { total: 0, pagas: 0, receita: 0 };
+      atual.total += 1;
+
+      if (normalizarStatus(reserva.status) === 'pago') {
+        atual.pagas += 1;
+        atual.receita += Number(reserva.valor ?? 0) || 0;
+      }
+
+      mapa.set(data, atual);
+    }
+
+    const dias = dashboardDiasNoPeriodo;
+    const receita = dias.map((dia) => mapa.get(dia)?.receita ?? 0);
+    const pagas = dias.map((dia) => mapa.get(dia)?.pagas ?? 0);
+    const total = dias.map((dia) => mapa.get(dia)?.total ?? 0);
+
+    return {
+      dias,
+      receita,
+      pagas,
+      total,
+    };
+  }, [dashboardReservas, dashboardDiasNoPeriodo]);
+
+  const dashboardStatusItens = useMemo<BarListItem[]>(() => {
+    const total = dashboardResumoStatus.total || 1;
+    const toPercent = (valor: number) => Math.round((valor / total) * 100);
+
+    return [
+      {
+        key: 'pagas',
+        label: 'Pagas',
+        value: dashboardResumoStatus.pagas,
+        valueLabel: `${dashboardResumoStatus.pagas} (${toPercent(dashboardResumoStatus.pagas)}%)`,
+        hint: 'Geram receita e entram no financeiro.',
+        barClassName: 'bg-blue-600',
+      },
+      {
+        key: 'confirmadas',
+        label: 'Confirmadas (não pagas)',
+        value: dashboardResumoStatus.confirmadasNaoPagas,
+        valueLabel: `${dashboardResumoStatus.confirmadasNaoPagas} (${toPercent(dashboardResumoStatus.confirmadasNaoPagas)}%)`,
+        hint: 'Confirmadas sem status pago.',
+        barClassName: 'bg-emerald-600',
+      },
+      {
+        key: 'pre',
+        label: 'Pré-reservas',
+        value: dashboardResumoStatus.preReservas,
+        valueLabel: `${dashboardResumoStatus.preReservas} (${toPercent(dashboardResumoStatus.preReservas)}%)`,
+        hint: 'Aguardando confirmação.',
+        barClassName: 'bg-amber-500',
+      },
+      {
+        key: 'outras',
+        label: 'Outras',
+        value: dashboardResumoStatus.outras,
+        valueLabel: `${dashboardResumoStatus.outras} (${toPercent(dashboardResumoStatus.outras)}%)`,
+        hint: 'Sem status definido ou em outro estado.',
+        barClassName: 'bg-slate-400',
+      },
+    ];
+  }, [dashboardResumoStatus]);
+
+  const dashboardTopAtividadesItens = useMemo<BarListItem[]>(() => {
+    return dashboardAtividades.slice(0, 8).map((item) => ({
+      key: item.atividade,
+      label: item.atividade,
+      value: item.receita,
+      valueLabel: formatCompactCurrency(item.receita),
+      hint: `${item.quantidade} reserva(s) paga(s)`,
+      barClassName: 'bg-indigo-600',
+    }));
+  }, [dashboardAtividades]);
+
+  const dashboardTopClientesItens = useMemo<BarListItem[]>(() => {
+    return dashboardClientesTop.slice(0, 8).map((item) => ({
+      key: item.clienteId,
+      label: item.nome || item.clienteId,
+      value: item.receita,
+      valueLabel: formatCompactCurrency(item.receita),
+      hint: `${item.quantidade} reserva(s) paga(s)`,
+      barClassName: 'bg-emerald-600',
+    }));
+  }, [dashboardClientesTop]);
+
   const exportarDashboardPdf = () => {
     const escapeHtml = (value: string) =>
       value
@@ -3788,7 +4122,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
     const janela = window.open('', '_blank');
     if (!janela) {
-      setFeedback({ type: 'error', message: 'NÃ£o foi possÃ­vel abrir a janela de exportaÃ§Ã£o.' });
+      setFeedback({ type: 'error', message: 'Não foi possível abrir a janela de exportação.' });
       return;
     }
 
@@ -3798,7 +4132,7 @@ const totalParticipantesDoDia = useMemo(() => {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RelatÃ³rio - Vagafogo</title>
+    <title>Relatório - Vagafogo</title>
     <style>
       body { font-family: Arial, sans-serif; color: #111827; padding: 24px; }
       h1 { font-size: 18px; margin: 0 0 8px 0; }
@@ -3816,8 +4150,8 @@ const totalParticipantesDoDia = useMemo(() => {
     </style>
   </head>
   <body>
-    <h1>RelatÃ³rio - Vagafogo</h1>
-    <div class="muted">PerÃ­odo: ${escapeHtml(formatarDataReserva(dashboardStartDate))} a ${escapeHtml(
+    <h1>Relatório - Vagafogo</h1>
+    <div class="muted">Período: ${escapeHtml(formatarDataReserva(dashboardStartDate))} a ${escapeHtml(
       formatarDataReserva(dashboardEndDate)
     )}</div>
 
@@ -3827,7 +4161,7 @@ const totalParticipantesDoDia = useMemo(() => {
       )}</div></div>
       <div class="card"><div class="label">Reservas pagas</div><div class="value">${dashboardTotais.totalReservasPagas}</div></div>
       <div class="card"><div class="label">Participantes</div><div class="value">${dashboardTotais.totalParticipantes}</div></div>
-      <div class="card"><div class="label">Ticket mÃ©dio</div><div class="value">${escapeHtml(
+      <div class="card"><div class="label">Ticket médio</div><div class="value">${escapeHtml(
         formatCurrency(dashboardTotais.ticketMedio)
       )}</div></div>
     </div>
@@ -6140,7 +6474,7 @@ const totalParticipantesDoDia = useMemo(() => {
               <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
 
               <p className="text-sm text-slate-500">
-                RelatÃ³rios financeiros e operacionais (reservas pagas).
+                Comparativos financeiros e operacionais (receita considera reservas pagas).
               </p>
 
             </div>
@@ -6148,7 +6482,7 @@ const totalParticipantesDoDia = useMemo(() => {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
 
               <label className="text-xs font-semibold uppercase text-slate-500">
-                InÃ­cio
+                Início
                 <input
                   type="date"
                   value={dashboardStartDate}
@@ -6185,7 +6519,7 @@ const totalParticipantesDoDia = useMemo(() => {
                   disabled={dashboardLoading}
                   className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Exportar relatÃ³rio
+                  Exportar relatório
                 </button>
               </div>
 
@@ -6199,142 +6533,292 @@ const totalParticipantesDoDia = useMemo(() => {
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Receita (pagas)</p>
               <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.receita)}</p>
               <p className="mt-2 text-xs text-slate-500">
-                {dashboardReservasPagas.length} de {dashboardReservas.length} reservas no perÃ­odo.
+                {dashboardResumoStatus.pagas} de {dashboardResumoStatus.total} reservas pagas.
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas (total)</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardResumoStatus.total}</p>
+              <p className="mt-2 text-xs text-slate-500">
+                {dashboardResumoStatus.confirmadas} confirmadas • {dashboardResumoStatus.preReservas} pré-reservas
               </p>
             </article>
 
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas pagas</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardTotais.totalReservasPagas}</p>
-              <p className="mt-2 text-xs text-slate-500">Somente status pago.</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardResumoStatus.pagas}</p>
+              <p className="mt-2 text-xs text-slate-500">Geram receita e entram no financeiro.</p>
             </article>
 
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Taxa de pagamento</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">
+                {dashboardResumoStatus.total
+                  ? `${Math.round((dashboardResumoStatus.pagas / dashboardResumoStatus.total) * 100)}%`
+                  : '0%'}
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                {dashboardResumoStatus.pagas} / {dashboardResumoStatus.total} reservas.
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes (pagas)</p>
               <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardTotais.totalParticipantes}</p>
-              <p className="mt-2 text-xs text-slate-500">Total nas reservas pagas.</p>
+              <p className="mt-2 text-xs text-slate-500">Total somado nas reservas pagas.</p>
             </article>
 
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ticket mÃ©dio</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ticket médio</p>
               <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.ticketMedio)}</p>
               <p className="mt-2 text-xs text-slate-500">Receita / reservas pagas.</p>
             </article>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-              <div className="border-b border-slate-200 px-5 py-4">
-                <h3 className="text-sm font-semibold text-slate-900">Por dia</h3>
-                <p className="text-xs text-slate-500">Reservas pagas agregadas por data.</p>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Receita por dia</h3>
+                  <p className="text-xs text-slate-500">Somente reservas pagas.</p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Total</p>
+                  <p className="text-lg font-semibold text-slate-900">{formatCompactCurrency(dashboardTotais.receita)}</p>
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Data</th>
-                      <th className="px-4 py-3 text-right">Reservas</th>
-                      <th className="px-4 py-3 text-right">Receita</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {dashboardPorDia.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
-                          Nenhum dado no perÃ­odo.
-                        </td>
-                      </tr>
-                    ) : (
-                      dashboardPorDia.map((item) => (
-                        <tr key={item.data}>
-                          <td className="px-4 py-3 text-slate-700">{formatarDataReserva(item.data)}</td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+
+              <div className="mt-4">
+                <LineChart
+                  height={176}
+                  series={[
+                    {
+                      label: 'Receita',
+                      values: dashboardSerieEvolucao.receita,
+                      stroke: '#2563eb',
+                      fill: 'rgba(37, 99, 235, 0.12)',
+                    },
+                  ]}
+                />
+              </div>
+
+              <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                <span>{formatarDataReserva(dashboardStartDate)}</span>
+                <span>{formatarDataReserva(dashboardEndDate)}</span>
               </div>
             </article>
 
-            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-              <div className="border-b border-slate-200 px-5 py-4">
-                <h3 className="text-sm font-semibold text-slate-900">Por atividade</h3>
-                <p className="text-xs text-slate-500">Receita e volume por atividade.</p>
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Reservas por dia</h3>
+                  <p className="text-xs text-slate-500">Comparativo total x pagas.</p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Período</p>
+                  <p className="text-lg font-semibold text-slate-900">{formatCompactNumber(dashboardResumoStatus.total)}</p>
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Atividade</th>
-                      <th className="px-4 py-3 text-right">Reservas</th>
-                      <th className="px-4 py-3 text-right">Receita</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {dashboardAtividades.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
-                          Nenhum dado no perÃ­odo.
-                        </td>
-                      </tr>
-                    ) : (
-                      dashboardAtividades.map((item) => (
-                        <tr key={item.atividade}>
-                          <td className="px-4 py-3 text-slate-700">{item.atividade}</td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
 
-            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-              <div className="border-b border-slate-200 px-5 py-4">
-                <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
-                <p className="text-xs text-slate-500">Maiores clientes no perÃ­odo.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
+                  Total
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                  Pagas
+                </span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Cliente</th>
-                      <th className="px-4 py-3 text-left">CPF/Telefone</th>
-                      <th className="px-4 py-3 text-right">Reservas</th>
-                      <th className="px-4 py-3 text-right">Receita</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {dashboardClientesTop.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
-                          Nenhum dado no perÃ­odo.
-                        </td>
-                      </tr>
-                    ) : (
-                      dashboardClientesTop.map((item) => (
-                        <tr key={item.clienteId}>
-                          <td className="px-4 py-3 text-slate-700">{item.nome || '-'}</td>
-                          <td className="px-4 py-3 text-slate-600">{item.clienteId}</td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+
+              <div className="mt-4">
+                <LineChart
+                  height={176}
+                  series={[
+                    {
+                      label: 'Total',
+                      values: dashboardSerieEvolucao.total,
+                      stroke: '#0f172a',
+                    },
+                    {
+                      label: 'Pagas',
+                      values: dashboardSerieEvolucao.pagas,
+                      stroke: '#059669',
+                      fill: 'rgba(5, 150, 105, 0.12)',
+                    },
+                  ]}
+                />
+              </div>
+
+              <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                <span>{formatarDataReserva(dashboardStartDate)}</span>
+                <span>{formatarDataReserva(dashboardEndDate)}</span>
               </div>
             </article>
           </div>
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Status das reservas</h3>
+                  <p className="text-xs text-slate-500">Distribuição no período.</p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <BarList items={dashboardStatusItens} />
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Top atividades</h3>
+                  <p className="text-xs text-slate-500">Ranking por receita (pagas).</p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <BarList items={dashboardTopAtividadesItens} />
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
+                  <p className="text-xs text-slate-500">Ranking por receita (pagas).</p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <BarList items={dashboardTopClientesItens} />
+              </div>
+            </article>
+          </div>
+
+          <details className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <summary className="flex cursor-pointer items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Tabelas detalhadas</p>
+                <p className="text-xs text-slate-500">Dados completos por dia, atividade e cliente.</p>
+              </div>
+              <FaChevronRight className="h-4 w-4 text-slate-400 transition group-open:rotate-90" />
+            </summary>
+
+            <div className="mt-5 grid gap-6 lg:grid-cols-3">
+              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Por dia</h3>
+                  <p className="text-xs text-slate-500">Reservas pagas agregadas por data.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full divide-y divide-slate-100 text-sm">
+                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Data</th>
+                        <th className="px-4 py-3 text-right">Reservas</th>
+                        <th className="px-4 py-3 text-right">Receita</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dashboardPorDia.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
+                            Nenhum dado no período.
+                          </td>
+                        </tr>
+                      ) : (
+                        dashboardPorDia.map((item) => (
+                          <tr key={item.data}>
+                            <td className="px-4 py-3 text-slate-700">{formatarDataReserva(item.data)}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Por atividade</h3>
+                  <p className="text-xs text-slate-500">Receita e volume por atividade.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full divide-y divide-slate-100 text-sm">
+                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Atividade</th>
+                        <th className="px-4 py-3 text-right">Reservas</th>
+                        <th className="px-4 py-3 text-right">Receita</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dashboardAtividades.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
+                            Nenhum dado no período.
+                          </td>
+                        </tr>
+                      ) : (
+                        dashboardAtividades.map((item) => (
+                          <tr key={item.atividade}>
+                            <td className="px-4 py-3 text-slate-700">{item.atividade}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
+                  <p className="text-xs text-slate-500">Maiores clientes no período.</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full divide-y divide-slate-100 text-sm">
+                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Cliente</th>
+                        <th className="px-4 py-3 text-left">CPF/Telefone</th>
+                        <th className="px-4 py-3 text-right">Reservas</th>
+                        <th className="px-4 py-3 text-right">Receita</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dashboardClientesTop.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
+                            Nenhum dado no período.
+                          </td>
+                        </tr>
+                      ) : (
+                        dashboardClientesTop.map((item) => (
+                          <tr key={item.clienteId}>
+                            <td className="px-4 py-3 text-slate-700">{item.nome || '-'}</td>
+                            <td className="px-4 py-3 text-slate-600">{item.clienteId}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+          </details>
 
         </section>
 
@@ -6342,7 +6826,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-            {/* ========== Pacotes ========== */}
+      {/* ========== Pacotes ========== */}
 
       {aba === 'pacotes' && (
 
