@@ -4,7 +4,7 @@
   "main": "dist/server/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node-dev src/server/index.ts",
+    "dev": "ts-node-dev --prefer-ts-exts src/server/index.ts",
     "start": "npm run build && node -r dotenv/config dist/server/index.js"
   },
   "dependencies": {

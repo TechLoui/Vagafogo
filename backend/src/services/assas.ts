@@ -23,6 +23,61 @@ const normalizarMapa = (mapa?: Record<string, number>) => {
   );
 };
 
+const stripWrappingQuotes = (value: string) => {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+};
+
+const maskId = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.length <= 12) return trimmed;
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+};
+
+const parsePercentual = (raw: string | undefined, fallback: number) => {
+  const cleaned = stripWrappingQuotes(raw ?? "")
+    .trim()
+    .replace("%", "")
+    .trim()
+    .replace(",", ".");
+  if (!cleaned) return fallback;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, 100);
+};
+
+type SplitConfig = {
+  walletId: string;
+  percentualValue: number;
+};
+
+const getSplitConfig = (): SplitConfig | null => {
+  const walletId = stripWrappingQuotes(process.env.ASAAS_SPLIT_WALLET_ID ?? "");
+  if (!walletId) return null;
+
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(walletId)) {
+    console.warn("[asaas] ASAAS_SPLIT_WALLET_ID inválido (esperado UUID).", {
+      walletId: maskId(walletId),
+    });
+    return null;
+  }
+
+  const percentualValue = parsePercentual(
+    process.env.ASAAS_SPLIT_PERCENTUAL,
+    1
+  );
+
+  return { walletId, percentualValue };
+};
+
 const somenteNumeros = (valor?: string) => (valor ? valor.replace(/\D/g, "") : "");
 const limparTexto = (valor?: string) => (typeof valor === "string" ? valor.trim() : "");
 const normalizarAnoValidade = (valor?: string) => {
@@ -575,6 +630,12 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       externalReference: reservaId,
     };
 
+    const splitConfig = getSplitConfig();
+
+    if (splitConfig) {
+      paymentPayload.split = [splitConfig];
+    }
+
     if (billingType === "CREDIT_CARD" && creditCardNormalizado && creditCardHolderNormalizado) {
       paymentPayload.creditCard = creditCardNormalizado;
       paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
@@ -587,6 +648,12 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       dueDate: dataHoje,
       externalReference: reservaId,
       hasCreditCard: billingType === "CREDIT_CARD",
+      split: splitConfig
+        ? {
+            walletId: maskId(splitConfig.walletId),
+            percentualValue: splitConfig.percentualValue,
+          }
+        : null,
     });
     
     const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
@@ -600,13 +667,27 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     });
 
     const cobrancaData = await paymentResponse.json();
+    const splitRetornado =
+      Array.isArray(cobrancaData?.split) && cobrancaData.split.length > 0;
     console.log("INFO Resposta do Asaas:", {
       id: cobrancaData.id,
       status: cobrancaData.status,
       billingType: cobrancaData.billingType ?? billingType,
       invoiceUrl: cobrancaData.invoiceUrl,
       value: cobrancaData.value,
+      splitRetornado,
     });
+
+    if (splitConfig && !splitRetornado) {
+      console.warn("[asaas] Cobrança criada sem split retornado pela API.", {
+        paymentId: cobrancaData?.id,
+        externalReference: reservaId,
+        split: {
+          walletId: maskId(splitConfig.walletId),
+          percentualValue: splitConfig.percentualValue,
+        },
+      });
+    }
 
     if (!paymentResponse.ok) {
       console.error("❌ Erro ao criar cobrança:", {

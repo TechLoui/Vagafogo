@@ -168,5 +168,14 @@ app.post('/test-webhook', (req, res) => {
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
     console.log(`Servidor rodando na porta ${port}`);
-    console.log("Token carregado:", process.env.ASAAS_API_KEY);
+    const asaasKey = (process.env.ASAAS_API_KEY ?? "").trim();
+    const splitWalletId = (process.env.ASAAS_SPLIT_WALLET_ID ?? "").trim();
+    const splitPercentual = (process.env.ASAAS_SPLIT_PERCENTUAL ?? "").trim();
+    console.log("Asaas config:", {
+        apiKey: asaasKey ? "SIM" : "NÃO",
+        splitWalletId: splitWalletId
+            ? `${splitWalletId.slice(0, 8)}...${splitWalletId.slice(-4)}`
+            : "NÃO",
+        splitPercentual: splitPercentual || "N/A",
+    });
 });

@@ -20,6 +20,47 @@ const normalizarMapa = (mapa) => {
         return undefined;
     return Object.fromEntries(Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)]));
 };
+const stripWrappingQuotes = (value) => {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1).trim();
+    }
+    return trimmed;
+};
+const maskId = (value) => {
+    const trimmed = value.trim();
+    if (trimmed.length <= 12)
+        return trimmed;
+    return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+};
+const parsePercentual = (raw, fallback) => {
+    const cleaned = stripWrappingQuotes(raw ?? "")
+        .trim()
+        .replace("%", "")
+        .trim()
+        .replace(",", ".");
+    if (!cleaned)
+        return fallback;
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || parsed <= 0)
+        return fallback;
+    return Math.min(parsed, 100);
+};
+const getSplitConfig = () => {
+    const walletId = stripWrappingQuotes(process.env.ASAAS_SPLIT_WALLET_ID ?? "");
+    if (!walletId)
+        return null;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(walletId)) {
+        console.warn("[asaas] ASAAS_SPLIT_WALLET_ID inválido (esperado UUID).", {
+            walletId: maskId(walletId),
+        });
+        return null;
+    }
+    const percentualValue = parsePercentual(process.env.ASAAS_SPLIT_PERCENTUAL, 1);
+    return { walletId, percentualValue };
+};
 const somenteNumeros = (valor) => (valor ? valor.replace(/\D/g, "") : "");
 const limparTexto = (valor) => (typeof valor === "string" ? valor.trim() : "");
 const normalizarAnoValidade = (valor) => {
@@ -451,6 +492,10 @@ async function criarCobrancaHandler(req, res) {
             description: `Cobranca de ${nome}`,
             externalReference: reservaId,
         };
+        const splitConfig = getSplitConfig();
+        if (splitConfig) {
+            paymentPayload.split = [splitConfig];
+        }
         if (billingType === "CREDIT_CARD" && creditCardNormalizado && creditCardHolderNormalizado) {
             paymentPayload.creditCard = creditCardNormalizado;
             paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
@@ -462,6 +507,12 @@ async function criarCobrancaHandler(req, res) {
             dueDate: dataHoje,
             externalReference: reservaId,
             hasCreditCard: billingType === "CREDIT_CARD",
+            split: splitConfig
+                ? {
+                    walletId: maskId(splitConfig.walletId),
+                    percentualValue: splitConfig.percentualValue,
+                }
+                : null,
         });
         const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
             method: "POST",
@@ -473,13 +524,25 @@ async function criarCobrancaHandler(req, res) {
             body: JSON.stringify(paymentPayload),
         });
         const cobrancaData = await paymentResponse.json();
+        const splitRetornado = Array.isArray(cobrancaData?.split) && cobrancaData.split.length > 0;
         console.log("INFO Resposta do Asaas:", {
             id: cobrancaData.id,
             status: cobrancaData.status,
             billingType: cobrancaData.billingType ?? billingType,
             invoiceUrl: cobrancaData.invoiceUrl,
             value: cobrancaData.value,
+            splitRetornado,
         });
+        if (splitConfig && !splitRetornado) {
+            console.warn("[asaas] Cobrança criada sem split retornado pela API.", {
+                paymentId: cobrancaData?.id,
+                externalReference: reservaId,
+                split: {
+                    walletId: maskId(splitConfig.walletId),
+                    percentualValue: splitConfig.percentualValue,
+                },
+            });
+        }
         if (!paymentResponse.ok) {
             console.error("❌ Erro ao criar cobrança:", {
                 status: paymentResponse.status,
