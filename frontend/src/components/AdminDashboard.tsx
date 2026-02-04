@@ -9,7 +9,7 @@ import dayjs from 'dayjs';
 
 import 'dayjs/locale/pt-br';
 
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar } from 'react-icons/fa';
 
 
 
@@ -646,7 +646,7 @@ const obterBadgeStatus = (reserva: Reserva) => {
 
 export default function AdminDashboard() {
 
-  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'>('reservas');
+  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'>('reservas');
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -657,6 +657,19 @@ export default function AdminDashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   const [calendarioAberto, setCalendarioAberto] = useState(true);
+
+  // Dashboard
+  const [dashboardStartDate, setDashboardStartDate] = useState(
+    dayjs().startOf('month').format('YYYY-MM-DD')
+  );
+
+  const [dashboardEndDate, setDashboardEndDate] = useState(dayjs().format('YYYY-MM-DD'));
+
+  const [dashboardReservas, setDashboardReservas] = useState<Reserva[]>([]);
+
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const [reservas, setReservas] = useState<Record<string, Reserva[]>>({});
 
@@ -1078,9 +1091,11 @@ const totalParticipantesDoDia = useMemo(() => {
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
 
-  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
+  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
     { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
+
+    { id: 'dashboard', label: 'Dashboard', description: 'Financeiro e relatÃ³rios', icon: FaChartBar },
 
     { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
 
@@ -3657,6 +3672,252 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+  const fetchDashboardData = async (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return;
+
+    setDashboardLoading(true);
+    setDashboardError(null);
+
+    try {
+      const q = query(
+        collection(db, 'reservas'),
+        where('data', '>=', startDate),
+        where('data', '<=', endDate)
+      );
+
+      const snapshot = await getDocs(q);
+      const dados: Reserva[] = snapshot.docs.map((documento) => ({
+        id: documento.id,
+        ...(documento.data() as Omit<Reserva, 'id'>),
+      }));
+
+      setDashboardReservas(dados);
+    } catch (error) {
+      console.error('Erro ao carregar dados do dashboard:', error);
+      setDashboardReservas([]);
+      setDashboardError('Erro ao carregar dados do dashboard.');
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (aba !== 'dashboard') return;
+    void fetchDashboardData(dashboardStartDate, dashboardEndDate);
+  }, [aba, dashboardStartDate, dashboardEndDate]);
+
+  const dashboardReservasPagas = useMemo(() => {
+    return dashboardReservas.filter((reserva) => (reserva.status ?? '').trim().toLowerCase() === 'pago');
+  }, [dashboardReservas]);
+
+  const dashboardTotais = useMemo(() => {
+    const receita = dashboardReservasPagas.reduce((acc, r) => acc + (Number(r.valor ?? 0) || 0), 0);
+    const totalReservasPagas = dashboardReservasPagas.length;
+    const totalParticipantes = dashboardReservasPagas.reduce((acc, r) => acc + calcularParticipantes(r), 0);
+    const ticketMedio = totalReservasPagas ? receita / totalReservasPagas : 0;
+
+    return {
+      receita,
+      totalReservasPagas,
+      totalParticipantes,
+      ticketMedio,
+    };
+  }, [dashboardReservasPagas]);
+
+  const dashboardAtividades = useMemo(() => {
+    const porAtividade = new Map<string, { quantidade: number; receita: number }>();
+
+    for (const r of dashboardReservasPagas) {
+      const key = r.atividade || 'Sem atividade';
+      const atual = porAtividade.get(key) ?? { quantidade: 0, receita: 0 };
+      porAtividade.set(key, {
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (Number(r.valor ?? 0) || 0),
+      });
+    }
+
+    return [...porAtividade.entries()]
+      .map(([atividade, v]) => ({ atividade, ...v }))
+      .sort((a, b) => b.receita - a.receita);
+  }, [dashboardReservasPagas]);
+
+  const dashboardClientesTop = useMemo(() => {
+    const porCliente = new Map<string, { nome: string; quantidade: number; receita: number }>();
+
+    for (const r of dashboardReservasPagas) {
+      const key = r.cpf || r.telefone || r.nome || 'cliente';
+      const atual = porCliente.get(key) ?? { nome: r.nome, quantidade: 0, receita: 0 };
+      porCliente.set(key, {
+        nome: atual.nome || r.nome,
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (Number(r.valor ?? 0) || 0),
+      });
+    }
+
+    return [...porCliente.entries()]
+      .map(([clienteId, v]) => ({ clienteId, ...v }))
+      .sort((a, b) => b.receita - a.receita)
+      .slice(0, 15);
+  }, [dashboardReservasPagas]);
+
+  const dashboardPorDia = useMemo(() => {
+    const porDia = new Map<string, { quantidade: number; receita: number }>();
+
+    for (const r of dashboardReservasPagas) {
+      const key = r.data || 'sem-data';
+      const atual = porDia.get(key) ?? { quantidade: 0, receita: 0 };
+      porDia.set(key, {
+        quantidade: atual.quantidade + 1,
+        receita: atual.receita + (Number(r.valor ?? 0) || 0),
+      });
+    }
+
+    return [...porDia.entries()]
+      .map(([data, v]) => ({ data, ...v }))
+      .sort((a, b) => a.data.localeCompare(b.data));
+  }, [dashboardReservasPagas]);
+
+  const exportarDashboardPdf = () => {
+    const escapeHtml = (value: string) =>
+      value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+
+    const janela = window.open('', '_blank');
+    if (!janela) {
+      setFeedback({ type: 'error', message: 'NÃ£o foi possÃ­vel abrir a janela de exportaÃ§Ã£o.' });
+      return;
+    }
+
+    const html = `
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RelatÃ³rio - Vagafogo</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #111827; padding: 24px; }
+      h1 { font-size: 18px; margin: 0 0 8px 0; }
+      h2 { font-size: 14px; margin: 18px 0 8px 0; }
+      .muted { color: #6b7280; font-size: 12px; margin-bottom: 16px; }
+      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+      .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+      .label { font-size: 11px; color: #6b7280; }
+      .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 11px; }
+      th { background: #f3f4f6; text-align: left; }
+      .right { text-align: right; }
+      @media print { body { padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <h1>RelatÃ³rio - Vagafogo</h1>
+    <div class="muted">PerÃ­odo: ${escapeHtml(formatarDataReserva(dashboardStartDate))} a ${escapeHtml(
+      formatarDataReserva(dashboardEndDate)
+    )}</div>
+
+    <div class="cards">
+      <div class="card"><div class="label">Receita (pagas)</div><div class="value">${escapeHtml(
+        formatCurrency(dashboardTotais.receita)
+      )}</div></div>
+      <div class="card"><div class="label">Reservas pagas</div><div class="value">${dashboardTotais.totalReservasPagas}</div></div>
+      <div class="card"><div class="label">Participantes</div><div class="value">${dashboardTotais.totalParticipantes}</div></div>
+      <div class="card"><div class="label">Ticket mÃ©dio</div><div class="value">${escapeHtml(
+        formatCurrency(dashboardTotais.ticketMedio)
+      )}</div></div>
+    </div>
+
+    <h2>Por atividade</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Atividade</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${dashboardAtividades
+          .map(
+            a =>
+              `<tr>
+                <td>${escapeHtml(a.atividade)}</td>
+                <td class="right">${a.quantidade}</td>
+                <td class="right">${escapeHtml(formatCurrency(a.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+
+    <h2>Top clientes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Cliente</th>
+          <th>ID (CPF/Telefone)</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${dashboardClientesTop
+          .map(
+            c =>
+              `<tr>
+                <td>${escapeHtml(c.nome || '-')}</td>
+                <td>${escapeHtml(c.clienteId)}</td>
+                <td class="right">${c.quantidade}</td>
+                <td class="right">${escapeHtml(formatCurrency(c.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+
+    <h2>Por dia</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th class="right">Reservas</th>
+          <th class="right">Receita</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${dashboardPorDia
+          .map(
+            d =>
+              `<tr>
+                <td>${escapeHtml(formatarDataReserva(d.data))}</td>
+                <td class="right">${d.quantidade}</td>
+                <td class="right">${escapeHtml(formatCurrency(d.receita))}</td>
+              </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </body>
+</html>
+    `.trim();
+
+    janela.document.open();
+    janela.document.write(html);
+    janela.document.close();
+
+    setTimeout(() => {
+      janela.focus();
+      janela.print();
+    }, 300);
+  };
+
+
+
   // Render
 
   return (
@@ -5866,6 +6127,221 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+      {/* ========== Dashboard ========== */}
+
+      {aba === 'dashboard' && (
+
+        <section className="space-y-6">
+
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
+
+              <p className="text-sm text-slate-500">
+                RelatÃ³rios financeiros e operacionais (reservas pagas).
+              </p>
+
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
+
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                InÃ­cio
+                <input
+                  type="date"
+                  value={dashboardStartDate}
+                  onChange={(e) => setDashboardStartDate(e.target.value)}
+                  className="mt-1 w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
+                />
+              </label>
+
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                Fim
+                <input
+                  type="date"
+                  value={dashboardEndDate}
+                  onChange={(e) => setDashboardEndDate(e.target.value)}
+                  className="mt-1 w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
+                />
+              </label>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => fetchDashboardData(dashboardStartDate, dashboardEndDate)}
+                  disabled={dashboardLoading}
+                  className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
+                    dashboardLoading ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  {dashboardLoading ? 'Carregando...' : 'Atualizar'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={exportarDashboardPdf}
+                  disabled={dashboardLoading}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Exportar relatÃ³rio
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+
+          {dashboardError && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700 shadow-sm">
+              {dashboardError}
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Receita (pagas)</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.receita)}</p>
+              <p className="mt-2 text-xs text-slate-500">
+                {dashboardReservasPagas.length} de {dashboardReservas.length} reservas no perÃ­odo.
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas pagas</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardTotais.totalReservasPagas}</p>
+              <p className="mt-2 text-xs text-slate-500">Somente status pago.</p>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardTotais.totalParticipantes}</p>
+              <p className="mt-2 text-xs text-slate-500">Total nas reservas pagas.</p>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ticket mÃ©dio</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.ticketMedio)}</p>
+              <p className="mt-2 text-xs text-slate-500">Receita / reservas pagas.</p>
+            </article>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h3 className="text-sm font-semibold text-slate-900">Por dia</h3>
+                <p className="text-xs text-slate-500">Reservas pagas agregadas por data.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full divide-y divide-slate-100 text-sm">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Data</th>
+                      <th className="px-4 py-3 text-right">Reservas</th>
+                      <th className="px-4 py-3 text-right">Receita</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dashboardPorDia.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
+                          Nenhum dado no perÃ­odo.
+                        </td>
+                      </tr>
+                    ) : (
+                      dashboardPorDia.map((item) => (
+                        <tr key={item.data}>
+                          <td className="px-4 py-3 text-slate-700">{formatarDataReserva(item.data)}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h3 className="text-sm font-semibold text-slate-900">Por atividade</h3>
+                <p className="text-xs text-slate-500">Receita e volume por atividade.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full divide-y divide-slate-100 text-sm">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Atividade</th>
+                      <th className="px-4 py-3 text-right">Reservas</th>
+                      <th className="px-4 py-3 text-right">Receita</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dashboardAtividades.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
+                          Nenhum dado no perÃ­odo.
+                        </td>
+                      </tr>
+                    ) : (
+                      dashboardAtividades.map((item) => (
+                        <tr key={item.atividade}>
+                          <td className="px-4 py-3 text-slate-700">{item.atividade}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
+                <p className="text-xs text-slate-500">Maiores clientes no perÃ­odo.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full divide-y divide-slate-100 text-sm">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Cliente</th>
+                      <th className="px-4 py-3 text-left">CPF/Telefone</th>
+                      <th className="px-4 py-3 text-right">Reservas</th>
+                      <th className="px-4 py-3 text-right">Receita</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dashboardClientesTop.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
+                          Nenhum dado no perÃ­odo.
+                        </td>
+                      </tr>
+                    ) : (
+                      dashboardClientesTop.map((item) => (
+                        <tr key={item.clienteId}>
+                          <td className="px-4 py-3 text-slate-700">{item.nome || '-'}</td>
+                          <td className="px-4 py-3 text-slate-600">{item.clienteId}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+
+        </section>
+
+      )}
+
+
+
             {/* ========== Pacotes ========== */}
 
       {aba === 'pacotes' && (
@@ -7621,6 +8097,90 @@ const totalParticipantesDoDia = useMemo(() => {
 
           </div>
 
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+            <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+
+              <div>
+
+                <h3 className="text-lg font-semibold text-slate-900">WhatsApp - Mensagem do botao</h3>
+
+                <p className="text-sm text-slate-500">
+                  Texto pre-preenchido ao clicar no botao WhatsApp de uma reserva.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="mt-4 space-y-4">
+
+              <label className="text-xs font-semibold uppercase text-slate-500">
+                Manual (botao)
+                <textarea
+                  value={whatsappConfig.mensagemConfirmacaoManual}
+                  onChange={(e) =>
+                    setWhatsappConfig((prev) => ({
+                      ...prev,
+                      mensagemConfirmacaoManual: e.target.value,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  rows={5}
+                  placeholder={whatsappTemplateMensagemManualPadrao}
+                />
+              </label>
+
+              <div className="flex flex-wrap gap-2">
+                {whatsappPlaceholders.map((placeholder) => (
+                  <button
+                    key={`clientes-manual-${placeholder}`}
+                    type="button"
+                    onClick={() => inserirPlaceholderWhatsapp('mensagemConfirmacaoManual', placeholder)}
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+                  >
+                    {placeholder}
+                  </button>
+                ))}
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
+                <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+                  {mensagemPreviewWhatsappManual || '-'}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setWhatsappConfig((prev) => ({
+                      ...prev,
+                      mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
+                    }))
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                >
+                  Restaurar padrao
+                </button>
+
+                <button
+                  type="button"
+                  onClick={salvarWhatsappConfig}
+                  disabled={whatsappSalvando}
+                  className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${
+                    whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
+                >
+                  {whatsappSalvando ? 'Salvando...' : 'Salvar mensagem'}
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+
         </section>
 
       )}
@@ -7770,7 +8330,7 @@ const totalParticipantesDoDia = useMemo(() => {
                   <h3 className="text-lg font-semibold text-slate-900">Mensagens</h3>
 
                   <p className="text-sm text-slate-500">
-                    Personalize a mensagem enviada automaticamente e a mensagem pre-preenchida do botao WhatsApp.
+                    Personalize a mensagem enviada automaticamente ao confirmar reservas.
                   </p>
 
                 </div>
@@ -7867,6 +8427,7 @@ const totalParticipantesDoDia = useMemo(() => {
                   </div>
                 </div>
 
+                {/*
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                   <div className="flex flex-col gap-1 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -7932,6 +8493,7 @@ const totalParticipantesDoDia = useMemo(() => {
                     </div>
                   </div>
                 </div>
+                */}
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                   <button
