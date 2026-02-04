@@ -31,7 +31,17 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.u
 const whatsappTemplatePadrao =
   'Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
 
-const whatsappPlaceholders = ['{nome}', '{datareserva}', '{horario}', '{atividade}', '{participantes}', '{telefone}', '{valor}'];
+const whatsappPlaceholders = [
+  '{nome}',
+  '{datareserva}',
+  '{data}',
+  '{horario}',
+  '{atividade}',
+  '{participantes}',
+  '{telefone}',
+  '{valor}',
+  '{status}',
+];
 
 const normalizarDataReserva = (data?: unknown) => {
   if (!data) return '';
@@ -2518,6 +2528,10 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [aba, fetchTiposClientes]);
 
   useEffect(() => {
+    void fetchWhatsappConfig();
+  }, [fetchWhatsappConfig]);
+
+  useEffect(() => {
 
     if (aba === 'whatsapp') {
 
@@ -4416,10 +4430,25 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                       : 'bg-white border-slate-200';
 
-                            const mensagem = encodeURIComponent(
 
-                                  `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${formatarDataReserva(reserva.data)} �s ${reserva.horario}.`
+                                const pacoteDescricao = formatarPacote(reserva);
 
+                                const valorFormatado = formatarValor(reserva.valor);
+
+                                const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+
+                                const mensagem = encodeURIComponent(
+                                  montarMensagemWhatsApp(template, {
+                                    nome: reserva.nome ?? '',
+                                    datareserva: formatarDataReserva(reserva.data),
+                                    data: formatarDataReserva(reserva.data),
+                                    horario: reserva.horario ?? '',
+                                    atividade: pacoteDescricao,
+                                    participantes: String(participantes),
+                                    telefone: reserva.telefone ?? '',
+                                    valor: valorFormatado,
+                                    status: reserva.status ?? '',
+                                  })
                                 );
 
                                 const telefoneLimpo = (reserva.telefone || '').replace(/\D/g, '');
@@ -4427,10 +4456,6 @@ const totalParticipantesDoDia = useMemo(() => {
                                 const telefoneComCodigo = telefoneLimpo.startsWith('55') ? telefoneLimpo : (telefoneLimpo ? `55${telefoneLimpo}` : '');
 
                                 const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
-
-                                const pacoteDescricao = formatarPacote(reserva);
-
-                                const valorFormatado = formatarValor(reserva.valor);
 
                                 const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
@@ -4890,11 +4915,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const chegou = reserva.chegou === true;
 
-                            const rowHighlightClass = chegou
+                              const rowHighlightClass = chegou
 
-                              ? 'bg-emerald-100/70 border-emerald-300'
+                                ? 'bg-emerald-100/70 border-emerald-300'
 
-                              : confirmada
+                                : confirmada
 
                                 ? 'bg-emerald-50/50 border-emerald-200'
 
@@ -4904,10 +4929,25 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                   : 'bg-white border-slate-200';
 
+
+                            const pacoteDescricao = formatarPacote(reserva);
+
+                            const valorFormatado = formatarValor(reserva.valor);
+
+                            const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+
                             const mensagem = encodeURIComponent(
-
-                              `Ol� ${reserva.nome}! Aqui � Vaga Fogo confirmando sua reserva para ${formatarDataReserva(reserva.data)} �s ${reserva.horario}.`
-
+                              montarMensagemWhatsApp(template, {
+                                nome: reserva.nome ?? '',
+                                datareserva: formatarDataReserva(reserva.data),
+                                data: formatarDataReserva(reserva.data),
+                                horario: reserva.horario ?? '',
+                                atividade: pacoteDescricao,
+                                participantes: String(participantes),
+                                telefone: reserva.telefone ?? '',
+                                valor: valorFormatado,
+                                status: reserva.status ?? '',
+                              })
                             );
 
                             const telefoneLimpo = (reserva.telefone || '').replace(/\D/g, '');
@@ -4915,10 +4955,6 @@ const totalParticipantesDoDia = useMemo(() => {
                             const telefoneComCodigo = telefoneLimpo.startsWith('55') ? telefoneLimpo : (telefoneLimpo ? `55${telefoneLimpo}` : '');
 
                             const whatsappUrl = telefoneComCodigo ? `https://wa.me/${telefoneComCodigo}?text=${mensagem}` : null;
-
-                            const pacoteDescricao = formatarPacote(reserva);
-
-                            const valorFormatado = formatarValor(reserva.valor);
 
                             const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
