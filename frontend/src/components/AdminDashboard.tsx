@@ -28,8 +28,11 @@ const formatCurrency = (valor: number) => moedaFormatter.format(Number.isFinite(
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 
-const whatsappTemplatePadrao =
+const whatsappTemplateConfirmacaoAutomaticaPadrao =
   'Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
+
+const whatsappTemplateMensagemManualPadrao =
+  'Ola {nome}! Aqui e Vaga Fogo confirmando sua reserva para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
 
 const whatsappPlaceholders = [
   '{nome}',
@@ -238,7 +241,9 @@ interface WhatsappConfig {
 
   ativo: boolean;
 
-  mensagemConfirmacao: string;
+  mensagemConfirmacaoAutomatica: string;
+
+  mensagemConfirmacaoManual: string;
 
 }
 
@@ -739,7 +744,9 @@ export default function AdminDashboard() {
 
     ativo: false,
 
-    mensagemConfirmacao: whatsappTemplatePadrao,
+    mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
+
+    mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
 
   });
 
@@ -1113,31 +1120,33 @@ const totalParticipantesDoDia = useMemo(() => {
 
   ];
 
-  const mensagemPreviewWhatsapp = useMemo(() => {
-
-    const dadosExemplo = {
-
+  const dadosExemploWhatsapp = useMemo(
+    () => ({
       nome: 'Cliente',
-
       datareserva: formatarDataReserva(dayjs().add(1, 'day').format('YYYY-MM-DD')),
-
+      data: formatarDataReserva(dayjs().add(1, 'day').format('YYYY-MM-DD')),
       horario: '10:00',
-
       atividade: 'Atividade',
-
       participantes: '2',
-
       telefone: '(00) 00000-0000',
-
       valor: formatCurrency(120),
+      status: 'pago',
+    }),
+    []
+  );
 
-    };
+  const mensagemPreviewWhatsappAutomatica = useMemo(() => {
+    const template =
+      whatsappConfig.mensagemConfirmacaoAutomatica ||
+      whatsappTemplateConfirmacaoAutomaticaPadrao;
+    return montarMensagemWhatsApp(template, dadosExemploWhatsapp);
+  }, [dadosExemploWhatsapp, whatsappConfig.mensagemConfirmacaoAutomatica]);
 
-    const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
-
-    return montarMensagemWhatsApp(template, dadosExemplo);
-
-  }, [whatsappConfig.mensagemConfirmacao]);
+  const mensagemPreviewWhatsappManual = useMemo(() => {
+    const template =
+      whatsappConfig.mensagemConfirmacaoManual || whatsappTemplateMensagemManualPadrao;
+    return montarMensagemWhatsApp(template, dadosExemploWhatsapp);
+  }, [dadosExemploWhatsapp, whatsappConfig.mensagemConfirmacaoManual]);
 
   const statusResumoWhatsapp = useMemo(() => {
 
@@ -2152,25 +2161,38 @@ const totalParticipantesDoDia = useMemo(() => {
 
       if (snap.exists()) {
 
-        const data = snap.data() as Partial<WhatsappConfig>;
+        const data = snap.data() as any;
+        const legadoMensagem =
+          typeof data.mensagemConfirmacao === 'string' ? data.mensagemConfirmacao.trim() : '';
+
+        const mensagemConfirmacaoAutomatica =
+          typeof data.mensagemConfirmacaoAutomatica === 'string' &&
+          data.mensagemConfirmacaoAutomatica.trim()
+            ? data.mensagemConfirmacaoAutomatica
+            : legadoMensagem || whatsappTemplateConfirmacaoAutomaticaPadrao;
+
+        const mensagemConfirmacaoManual =
+          typeof data.mensagemConfirmacaoManual === 'string' && data.mensagemConfirmacaoManual.trim()
+            ? data.mensagemConfirmacaoManual
+            : legadoMensagem || whatsappTemplateMensagemManualPadrao;
 
         setWhatsappConfig({
 
           ativo: data.ativo === true,
 
-          mensagemConfirmacao:
+          mensagemConfirmacaoAutomatica,
 
-            typeof data.mensagemConfirmacao === 'string' && data.mensagemConfirmacao.trim()
-
-              ? data.mensagemConfirmacao
-
-              : whatsappTemplatePadrao,
+          mensagemConfirmacaoManual,
 
         });
 
       } else {
 
-        setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
+        setWhatsappConfig({
+          ativo: false,
+          mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
+          mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
+        });
 
       }
 
@@ -2182,7 +2204,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
       setWhatsappErro('Erro ao carregar configuracoes.');
 
-      setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
+      setWhatsappConfig({
+        ativo: false,
+        mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
+        mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
+      });
 
     } finally {
 
@@ -2194,14 +2220,20 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const salvarWhatsappConfig = async () => {
 
-    const mensagem = whatsappConfig.mensagemConfirmacao.trim();
+    const mensagemAutomatica = whatsappConfig.mensagemConfirmacaoAutomatica.trim();
+    const mensagemManual = whatsappConfig.mensagemConfirmacaoManual.trim();
 
-    if (!mensagem) {
+    if (!mensagemAutomatica) {
 
-      setFeedback({ type: 'error', message: 'Informe a mensagem de confirmacao.' });
+      setFeedback({ type: 'error', message: 'Informe a mensagem automática.' });
 
       return;
 
+    }
+
+    if (!mensagemManual) {
+      setFeedback({ type: 'error', message: 'Informe a mensagem do botão.' });
+      return;
     }
 
     setWhatsappSalvando(true);
@@ -2212,7 +2244,12 @@ const totalParticipantesDoDia = useMemo(() => {
 
         ativo: whatsappConfig.ativo,
 
-        mensagemConfirmacao: mensagem,
+        mensagemConfirmacaoAutomatica: mensagemAutomatica,
+
+        mensagemConfirmacaoManual: mensagemManual,
+
+        // Campo legado para compatibilidade com versões antigas do backend
+        mensagemConfirmacao: mensagemAutomatica,
 
         atualizadoEm: new Date(),
 
@@ -2329,16 +2366,17 @@ const totalParticipantesDoDia = useMemo(() => {
     }
   };
 
-  const inserirPlaceholderWhatsapp = (placeholder: string) => {
+  type WhatsappMensagemKey = 'mensagemConfirmacaoAutomatica' | 'mensagemConfirmacaoManual';
 
-    setWhatsappConfig((prev) => ({
-
-      ...prev,
-
-      mensagemConfirmacao: `${prev.mensagemConfirmacao}${prev.mensagemConfirmacao ? ' ' : ''}${placeholder}`,
-
-    }));
-
+  const inserirPlaceholderWhatsapp = (key: WhatsappMensagemKey, placeholder: string) => {
+    setWhatsappConfig((prev) => {
+      const atualRaw = (prev as any)[key];
+      const atual = typeof atualRaw === 'string' ? atualRaw : '';
+      return {
+        ...prev,
+        [key]: `${atual}${atual ? ' ' : ''}${placeholder}`,
+      } as WhatsappConfig;
+    });
   };
 
 
@@ -4435,7 +4473,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                 const valorFormatado = formatarValor(reserva.valor);
 
-                                const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+                                const template =
+                                  whatsappConfig.mensagemConfirmacaoManual ||
+                                  whatsappTemplateMensagemManualPadrao;
 
                                 const mensagem = encodeURIComponent(
                                   montarMensagemWhatsApp(template, {
@@ -4934,7 +4974,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const valorFormatado = formatarValor(reserva.valor);
 
-                            const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+                            const template =
+                              whatsappConfig.mensagemConfirmacaoManual ||
+                              whatsappTemplateMensagemManualPadrao;
 
                             const mensagem = encodeURIComponent(
                               montarMensagemWhatsApp(template, {
@@ -7705,9 +7747,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 <div>
 
-                  <h3 className="text-lg font-semibold text-slate-900">Mensagem automatica</h3>
+                  <h3 className="text-lg font-semibold text-slate-900">Mensagens</h3>
 
-                  <p className="text-sm text-slate-500">Personalize o texto enviado ao confirmar reservas.</p>
+                  <p className="text-sm text-slate-500">
+                    Personalize a mensagem enviada automaticamente e a mensagem pre-preenchida do botao WhatsApp.
+                  </p>
 
                 </div>
 
@@ -7735,112 +7779,150 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </div>
 
-              <div className="mt-4 space-y-4">
-
-                <label className="text-xs font-semibold uppercase text-slate-500">
-
-                  Texto da confirmacao
-
-                  <textarea
-
-                    value={whatsappConfig.mensagemConfirmacao}
-
-                    onChange={(e) =>
-
-                      setWhatsappConfig((prev) => ({ ...prev, mensagemConfirmacao: e.target.value }))
-
-                    }
-
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-
-                    rows={5}
-
-                    placeholder={whatsappTemplatePadrao}
-
-                  />
-
-                </label>
-
-                <div className="flex flex-wrap gap-2">
-
-                  {whatsappPlaceholders.map((placeholder) => (
-
-                    <button
-
-                      key={placeholder}
-
-                      type="button"
-
-                      onClick={() => inserirPlaceholderWhatsapp(placeholder)}
-
-                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
-
-                    >
-
-                      {placeholder}
-
-                    </button>
-
-                  ))}
-
-                </div>
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
-
-                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
-
-                    {mensagemPreviewWhatsapp || '-'}
-
+              <div className="mt-4 space-y-6">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <div className="flex flex-col gap-1 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Automatica (bot)</p>
+                      <p className="text-sm text-slate-500">
+                        Enviada automaticamente ao confirmar reservas.
+                      </p>
+                    </div>
                   </div>
 
+                  <div className="mt-3 space-y-4">
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Texto automatico
+                      <textarea
+                        value={whatsappConfig.mensagemConfirmacaoAutomatica}
+                        onChange={(e) =>
+                          setWhatsappConfig((prev) => ({
+                            ...prev,
+                            mensagemConfirmacaoAutomatica: e.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        rows={5}
+                        placeholder={whatsappTemplateConfirmacaoAutomaticaPadrao}
+                      />
+                    </label>
+
+                    <div className="flex flex-wrap gap-2">
+                      {whatsappPlaceholders.map((placeholder) => (
+                        <button
+                          key={`auto-${placeholder}`}
+                          type="button"
+                          onClick={() =>
+                            inserirPlaceholderWhatsapp('mensagemConfirmacaoAutomatica', placeholder)
+                          }
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+                        >
+                          {placeholder}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
+                      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+                        {mensagemPreviewWhatsappAutomatica || '-'}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWhatsappConfig((prev) => ({
+                            ...prev,
+                            mensagemConfirmacaoAutomatica:
+                              whatsappTemplateConfirmacaoAutomaticaPadrao,
+                          }))
+                        }
+                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                      >
+                        Restaurar padrao
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <div className="flex flex-col gap-1 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Manual (botao)</p>
+                      <p className="text-sm text-slate-500">
+                        Texto pre-preenchido ao clicar no botao WhatsApp de uma reserva.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-4">
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Texto do botao
+                      <textarea
+                        value={whatsappConfig.mensagemConfirmacaoManual}
+                        onChange={(e) =>
+                          setWhatsappConfig((prev) => ({
+                            ...prev,
+                            mensagemConfirmacaoManual: e.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        rows={5}
+                        placeholder={whatsappTemplateMensagemManualPadrao}
+                      />
+                    </label>
+
+                    <div className="flex flex-wrap gap-2">
+                      {whatsappPlaceholders.map((placeholder) => (
+                        <button
+                          key={`manual-${placeholder}`}
+                          type="button"
+                          onClick={() =>
+                            inserirPlaceholderWhatsapp('mensagemConfirmacaoManual', placeholder)
+                          }
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+                        >
+                          {placeholder}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
+                      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+                        {mensagemPreviewWhatsappManual || '-'}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWhatsappConfig((prev) => ({
+                            ...prev,
+                            mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
+                          }))
+                        }
+                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                      >
+                        Restaurar padrao
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-
                   <button
-
                     type="button"
-
-                    onClick={() =>
-
-                      setWhatsappConfig((prev) => ({
-
-                        ...prev,
-
-                        mensagemConfirmacao: whatsappTemplatePadrao,
-
-                      }))
-
-                    }
-
-                    className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-
-                  >
-
-                    Restaurar padrao
-
-                  </button>
-
-                  <button
-
-                    type="button"
-
                     onClick={salvarWhatsappConfig}
-
                     disabled={whatsappSalvando}
-
                     className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-
                   >
-
                     {whatsappSalvando ? 'Salvando...' : 'Salvar configuracoes'}
-
                   </button>
-
                 </div>
-
               </div>
 
             </div>

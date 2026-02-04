@@ -269,7 +269,9 @@ async function enviarConfirmacaoWhatsapp(reservaId, reserva, configOverride) {
     if (!telefone) {
         return { enviado: false, motivo: "telefone_invalido" };
     }
-    const template = (config.mensagemConfirmacao || TEMPLATE_PADRAO).trim();
+    const template = (config.mensagemConfirmacaoAutomatica ||
+        config.mensagemConfirmacao ||
+        TEMPLATE_PADRAO).trim();
     if (!template) {
         return { enviado: false, motivo: "mensagem_vazia" };
     }

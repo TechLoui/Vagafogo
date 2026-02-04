@@ -24,6 +24,10 @@ type WhatsappStatusPayload = {
 
 type WhatsappConfig = {
   ativo?: boolean;
+  mensagemConfirmacaoAutomatica?: string;
+  mensagemConfirmacaoManual?: string;
+
+  // Campo legado
   mensagemConfirmacao?: string;
 };
 
@@ -323,7 +327,11 @@ export async function enviarConfirmacaoWhatsapp(
     return { enviado: false, motivo: "telefone_invalido" };
   }
 
-  const template = (config.mensagemConfirmacao || TEMPLATE_PADRAO).trim();
+  const template = (
+    config.mensagemConfirmacaoAutomatica ||
+    config.mensagemConfirmacao ||
+    TEMPLATE_PADRAO
+  ).trim();
   if (!template) {
     return { enviado: false, motivo: "mensagem_vazia" };
   }
