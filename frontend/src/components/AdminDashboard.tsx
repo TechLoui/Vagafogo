@@ -656,6 +656,8 @@ export default function AdminDashboard() {
 
   const [selectedDate, setSelectedDate] = useState(new Date());
 
+  const [calendarioAberto, setCalendarioAberto] = useState(true);
+
   const [reservas, setReservas] = useState<Record<string, Reserva[]>>({});
 
   const [mesas, setMesas] = useState<Mesa[]>([]);
@@ -982,34 +984,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-  const totalPreReservas = useMemo(() => {
-
-
-
-    return Object.values(reservas).reduce(
-
-
-
-      (acc, lista) => acc + lista.filter((reserva) => statusEhPreReserva(reserva)).length,
-
-
-
-      0
-
-
-
-    );
-
-
-
-  }, [reservas]);
-
-
-
-
-
-
-
   const pacotesQueNaoAceitamPet = useMemo(() => {
 
     return pacotes.filter(p => p.aceitaPet === false).length;
@@ -1017,8 +991,6 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [pacotes]);
 
   const totalPacotesAtivos = pacotes.length;
-
-  const totalCombosAtivos = combos.filter((combo) => combo.ativo !== false).length;
 
   const pacotesPorId = useMemo(() => {
 
@@ -1326,6 +1298,11 @@ const totalParticipantesDoDia = useMemo(() => {
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
+
+  useEffect(() => {
+    setCurrentMonth(selectedDate.getMonth());
+    setCurrentYear(selectedDate.getFullYear());
+  }, [selectedDate]);
 
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
 
@@ -4038,9 +4015,10 @@ const totalParticipantesDoDia = useMemo(() => {
 
         <section className="space-y-6">
 
-          <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+          <div className={`grid gap-6 ${calendarioAberto ? 'lg:grid-cols-[320px_1fr]' : 'lg:grid-cols-1'}`}>
 
-            <div className="space-y-6 lg:min-w-0">
+            {calendarioAberto && (
+              <div className="space-y-6 lg:min-w-0">
 
               <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
@@ -4168,6 +4146,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+              {/*
               <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
                 <h3 className="text-sm font-semibold text-slate-700">Resumo do dia</h3>
@@ -4231,8 +4210,10 @@ const totalParticipantesDoDia = useMemo(() => {
                 </button>
 
               </article>
-
+              */}
             </div>
+
+            )}
 
 
 
@@ -4255,6 +4236,46 @@ const totalParticipantesDoDia = useMemo(() => {
                 <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+
+                    <button
+
+                      type="button"
+
+                      onClick={() => setCalendarioAberto((aberto) => !aberto)}
+
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+
+                      title={calendarioAberto ? 'Recolher calendário' : 'Mostrar calendário'}
+
+                    >
+
+                      {calendarioAberto ? <FaChevronLeft className="h-4 w-4" /> : <FaChevronRight className="h-4 w-4" />}
+
+                      <span className="whitespace-nowrap">{calendarioAberto ? 'Recolher calendário' : 'Mostrar calendário'}</span>
+
+                    </button>
+
+                    {!calendarioAberto && (
+
+                      <input
+
+                        type="date"
+
+                        value={dayjs(selectedDate).format('YYYY-MM-DD')}
+
+                        onChange={(e) => {
+                          const valor = e.target.value;
+                          if (!valor) return;
+                          const [ano, mes, dia] = valor.split('-').map(Number);
+                          if (!ano || !mes || !dia) return;
+                          setSelectedDate(new Date(ano, mes - 1, dia));
+                        }}
+
+                        className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
+
+                      />
+
+                    )}
 
                     <select
 
@@ -5320,9 +5341,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </div>
 
-            </article>
-
-          </div>
+              </article>
+            </div>
 
 
 
