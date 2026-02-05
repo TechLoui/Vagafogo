@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import React from 'react';
 
@@ -9,7 +9,7 @@ import dayjs from 'dayjs';
 
 import 'dayjs/locale/pt-br';
 
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar, FaFilePdf, FaEye, FaEyeSlash } from 'react-icons/fa';
 
 
 
@@ -26,43 +26,12 @@ const moedaFormatter = new Intl.NumberFormat('pt-BR', {
 
 const formatCurrency = (valor: number) => moedaFormatter.format(Number.isFinite(valor) ? valor : 0);
 
-const numeroCompactFormatter = new Intl.NumberFormat('pt-BR', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-
-const moedaCompactaFormatter = new Intl.NumberFormat('pt-BR', {
-  style: 'currency',
-  currency: 'BRL',
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-
-const formatCompactNumber = (valor: number) =>
-  numeroCompactFormatter.format(Number.isFinite(valor) ? valor : 0);
-
-const formatCompactCurrency = (valor: number) =>
-  moedaCompactaFormatter.format(Number.isFinite(valor) ? valor : 0);
-
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 
-const whatsappTemplateConfirmacaoAutomaticaPadrao =
-  'Ola {nome}! Sua reserva foi confirmada para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
+const whatsappTemplatePadrao =
+  'Olá {nome}! Sua reserva foi confirmada para {datareserva} às {horario}. Atividade: {atividade}. Participantes: {participantes}.';
 
-const whatsappTemplateMensagemManualPadrao =
-  'Ola {nome}! Aqui e Vaga Fogo confirmando sua reserva para {datareserva} {horario}. Atividade: {atividade}. Participantes: {participantes}.';
-
-const whatsappPlaceholders = [
-  '{nome}',
-  '{datareserva}',
-  '{data}',
-  '{horario}',
-  '{atividade}',
-  '{participantes}',
-  '{telefone}',
-  '{valor}',
-  '{status}',
-];
+const whatsappPlaceholders = ['{nome}', '{datareserva}', '{horario}', '{atividade}', '{participantes}', '{telefone}', '{valor}'];
 
 const normalizarDataReserva = (data?: unknown) => {
   if (!data) return '';
@@ -102,178 +71,6 @@ const montarMensagemWhatsApp = (template: string, dados: Record<string, string>)
     const valor = dados[chave];
     return valor !== undefined ? valor : match;
   });
-
-const normalizarNomeAtividade = (valor?: string) => {
-  const texto = (valor ?? '').toString().trim();
-  if (!texto) return 'Sem atividade';
-  const base = texto.split('(')[0]?.trim();
-  return base || texto;
-};
-
-type LineChartSeries = {
-  label: string;
-  values: number[];
-  stroke: string;
-  fill?: string;
-};
-
-const LineChart = ({ series, height = 156 }: { series: LineChartSeries[]; height?: number }) => {
-  const width = 120;
-  const viewHeight = 40;
-
-  const quantidadePontos = series[0]?.values.length ?? 0;
-  const maxValue =
-    Math.max(
-      0,
-      ...series.flatMap((item) => item.values.map((valor) => Number(valor) || 0))
-    ) || 1;
-
-  if (quantidadePontos === 0) {
-    return (
-      <div
-        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500"
-        style={{ height }}
-      >
-        Sem dados no período.
-      </div>
-    );
-  }
-
-  const stepX = quantidadePontos === 1 ? 0 : width / (quantidadePontos - 1);
-
-  const buildPoints = (values: number[]) =>
-    values.map((valor, index) => {
-      const safeValue = Number(valor) || 0;
-      const x = quantidadePontos === 1 ? width / 2 : stepX * index;
-      const y = viewHeight - (safeValue / maxValue) * viewHeight;
-      return { x, y };
-    });
-
-  const buildLinePath = (points: Array<{ x: number; y: number }>) =>
-    points
-      .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-      .join(' ');
-
-  const buildAreaPath = (points: Array<{ x: number; y: number }>) => {
-    const ultimoX = points.at(-1)?.x ?? 0;
-    const linha = points.map((p) => `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
-    return `M 0 ${viewHeight} ${linha} L ${ultimoX.toFixed(2)} ${viewHeight} Z`;
-  };
-
-  const paths = series.map((item) => {
-    const values = item.values.map((valor) => Number(valor) || 0);
-    const points = buildPoints(values);
-    return {
-      ...item,
-      points,
-      line: buildLinePath(points),
-      area: item.fill ? buildAreaPath(points) : '',
-    };
-  });
-
-  return (
-    <svg
-      viewBox={`0 0 ${width} ${viewHeight}`}
-      preserveAspectRatio="none"
-      className="w-full"
-      style={{ height }}
-      role="img"
-      aria-label="Gráfico de linha"
-    >
-      {[1, 2, 3].map((linha) => {
-        const y = (viewHeight / 4) * linha;
-        return (
-          <line
-            key={linha}
-            x1="0"
-            x2={width}
-            y1={y}
-            y2={y}
-            stroke="#e2e8f0"
-            strokeDasharray="4 4"
-            strokeWidth="0.8"
-          />
-        );
-      })}
-
-      {paths.map((item) =>
-        item.fill ? <path key={`${item.label}-fill`} d={item.area} fill={item.fill} stroke="none" /> : null
-      )}
-
-      {quantidadePontos > 1
-        ? paths.map((item) => (
-            <path
-              key={item.label}
-              d={item.line}
-              fill="none"
-              stroke={item.stroke}
-              strokeWidth="2.3"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          ))
-        : paths.map((item) => (
-            <circle
-              key={`${item.label}-dot`}
-              cx={item.points[0]?.x ?? 0}
-              cy={item.points[0]?.y ?? viewHeight}
-              r="2.6"
-              fill={item.stroke}
-              stroke="#ffffff"
-              strokeWidth="1.2"
-            />
-          ))}
-    </svg>
-  );
-};
-
-type BarListItem = {
-  key: string;
-  label: string;
-  value: number;
-  valueLabel: string;
-  hint?: string;
-  barClassName?: string;
-};
-
-const BarList = ({ items }: { items: BarListItem[] }) => {
-  if (items.length === 0) {
-    return (
-      <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-        Sem dados no período.
-      </div>
-    );
-  }
-
-  const maxValue = Math.max(0, ...items.map((item) => item.value));
-
-  return (
-    <div className="space-y-4">
-      {items.map((item) => {
-        const percent = maxValue ? Math.min(100, (item.value / maxValue) * 100) : 0;
-        const barClassName = item.barClassName ?? 'bg-blue-600';
-
-        return (
-          <div key={item.key} className="space-y-1">
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-w-0 truncate text-sm font-medium text-slate-700">{item.label}</p>
-              <p className="shrink-0 text-sm font-semibold text-slate-900">{item.valueLabel}</p>
-            </div>
-
-            <div className="h-2 rounded-full bg-slate-100">
-              <div
-                className={`h-2 rounded-full ${barClassName}`}
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-
-            {item.hint && <p className="text-xs text-slate-500">{item.hint}</p>}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
 
 
 
@@ -431,9 +228,7 @@ interface WhatsappConfig {
 
   ativo: boolean;
 
-  mensagemConfirmacaoAutomatica: string;
-
-  mensagemConfirmacaoManual: string;
+  mensagemConfirmacao: string;
 
 }
 
@@ -518,6 +313,14 @@ interface Reserva {
   chegou?: boolean;
 
 }
+
+type NotificacaoNovaReserva = {
+  id: string;
+  nome: string;
+  horario: string;
+  atividade: string;
+  participantes: number;
+};
 
 
 
@@ -836,9 +639,15 @@ const obterBadgeStatus = (reserva: Reserva) => {
 
 export default function AdminDashboard() {
 
-  const [aba, setAba] = useState<'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'>('dashboard');
+  const [aba, setAba] = useState<'dashboard' | 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'>('reservas');
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const abaAtualRef = useRef(aba);
+
+  useEffect(() => {
+    abaAtualRef.current = aba;
+  }, [aba]);
 
 
 
@@ -846,20 +655,7 @@ export default function AdminDashboard() {
 
   const [selectedDate, setSelectedDate] = useState(new Date());
 
-  const [calendarioAberto, setCalendarioAberto] = useState(true);
-
-  // Dashboard
-  const [dashboardStartDate, setDashboardStartDate] = useState(
-    dayjs().startOf('month').format('YYYY-MM-DD')
-  );
-
-  const [dashboardEndDate, setDashboardEndDate] = useState(dayjs().format('YYYY-MM-DD'));
-
-  const [dashboardReservas, setDashboardReservas] = useState<Reserva[]>([]);
-
-  const [dashboardLoading, setDashboardLoading] = useState(false);
-
-  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [mostrarCalendario, setMostrarCalendario] = useState(true);
 
   const [reservas, setReservas] = useState<Record<string, Reserva[]>>({});
 
@@ -882,6 +678,134 @@ export default function AdminDashboard() {
   const [reservaDetalhesAberta, setReservaDetalhesAberta] = useState<string | null>(null);
 
   const [menuReservaAberto, setMenuReservaAberto] = useState<string | null>(null);
+
+   const [notificacaoNovaReserva, setNotificacaoNovaReserva] = useState<NotificacaoNovaReserva | null>(null);
+
+   const notificacaoAudioRef = useRef<HTMLAudioElement | null>(null);
+
+   const notificacaoAudioTokenRef = useRef(0);
+
+   const pararSomNotificacao = useCallback(() => {
+
+     notificacaoAudioTokenRef.current += 1;
+
+     const audio = notificacaoAudioRef.current;
+
+     if (!audio) return;
+
+     audio.onended = null;
+
+     try {
+
+       audio.pause();
+
+       audio.currentTime = 0;
+
+     } catch {
+
+       // noop
+
+     }
+
+   }, []);
+
+   const tocarSomNotificacao = useCallback(async () => {
+
+     notificacaoAudioTokenRef.current += 1;
+
+     const token = notificacaoAudioTokenRef.current;
+
+     if (!notificacaoAudioRef.current) {
+
+       notificacaoAudioRef.current = new Audio('/notificacao.mp3');
+
+     }
+
+     const audio = notificacaoAudioRef.current;
+
+     audio.onended = null;
+
+     try {
+
+       audio.pause();
+
+       audio.currentTime = 0;
+
+     } catch {
+
+       // noop
+
+     }
+
+     try {
+
+       await audio.play();
+
+     } catch (error) {
+
+       console.warn('Som de notificação bloqueado pelo navegador:', error);
+
+       return;
+
+     }
+
+     audio.onended = async () => {
+
+       if (notificacaoAudioTokenRef.current !== token) return;
+
+       audio.onended = null;
+
+       try {
+
+         audio.currentTime = 0;
+
+         await audio.play();
+
+       } catch {
+
+         // noop
+
+       }
+
+     };
+
+   }, []);
+
+   const fecharNotificacaoNovaReserva = useCallback(() => {
+
+     setNotificacaoNovaReserva(null);
+
+     pararSomNotificacao();
+
+   }, [pararSomNotificacao]);
+
+   const exibirNotificacaoNovaReserva = useCallback(
+
+     (reserva: Reserva) => {
+
+       const id = reserva.id ?? `${reserva.nome}-${reserva.cpf}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
+
+       setNotificacaoNovaReserva({
+
+         id,
+
+         nome: reserva.nome || 'Cliente',
+
+         horario: reserva.horario || '---',
+
+         atividade: reserva.atividade || 'Atividade',
+
+         participantes: calcularParticipantes(reserva),
+
+       });
+
+       void tocarSomNotificacao();
+
+     },
+
+     [tocarSomNotificacao]
+
+   );
 
 
 
@@ -949,9 +873,7 @@ export default function AdminDashboard() {
 
     ativo: false,
 
-    mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
-
-    mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
+    mensagemConfirmacao: whatsappTemplatePadrao,
 
   });
 
@@ -962,6 +884,34 @@ export default function AdminDashboard() {
   const [whatsappSalvando, setWhatsappSalvando] = useState(false);
 
   const [whatsappErro, setWhatsappErro] = useState<string | null>(null);
+
+  // Dashboard
+  const [dashboardInicio, setDashboardInicio] = useState(() => dayjs().subtract(30, 'day').format('YYYY-MM-DD'));
+
+  const [dashboardFim, setDashboardFim] = useState(() => dayjs().format('YYYY-MM-DD'));
+
+  const [dashboardReservas, setDashboardReservas] = useState<Reserva[]>([]);
+
+  const [dashboardCarregando, setDashboardCarregando] = useState(false);
+
+  const [dashboardErro, setDashboardErro] = useState<string | null>(null);
+  const [dashboardCensurar, setDashboardCensurar] = useState(false);
+  const [dashboardAtividadeFiltro, setDashboardAtividadeFiltro] = useState('');
+  const [dashboardClienteFiltro, setDashboardClienteFiltro] = useState('');
+  const [dashboardAtividadeMetrica, setDashboardAtividadeMetrica] = useState<
+    'faturamento' | 'confirmadas' | 'pre_reservas' | 'participantes'
+  >('faturamento');
+  const [dashboardClienteMetrica, setDashboardClienteMetrica] = useState<
+    'faturamento' | 'confirmadas' | 'pre_reservas' | 'participantes'
+  >('faturamento');
+  const [dashboardMostrarTodosClientes, setDashboardMostrarTodosClientes] = useState(false);
+
+  useEffect(() => {
+    if (!dashboardCensurar) return;
+    setDashboardAtividadeMetrica((prev) => (prev === 'faturamento' ? 'confirmadas' : prev));
+    setDashboardClienteMetrica((prev) => (prev === 'faturamento' ? 'confirmadas' : prev));
+    setDashboardClienteFiltro('');
+  }, [dashboardCensurar]);
 
 
   const faixaHorarioDescricao = editPacote?.modoHorario === 'intervalo'
@@ -1187,6 +1137,34 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+  const totalPreReservas = useMemo(() => {
+
+
+
+    return Object.values(reservas).reduce(
+
+
+
+      (acc, lista) => acc + lista.filter((reserva) => statusEhPreReserva(reserva)).length,
+
+
+
+      0
+
+
+
+    );
+
+
+
+  }, [reservas]);
+
+
+
+
+
+
+
   const pacotesQueNaoAceitamPet = useMemo(() => {
 
     return pacotes.filter(p => p.aceitaPet === false).length;
@@ -1194,6 +1172,330 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [pacotes]);
 
   const totalPacotesAtivos = pacotes.length;
+
+  const totalCombosAtivos = combos.filter((combo) => combo.ativo !== false).length;
+
+  const dashboardMetricas = useMemo(() => {
+    const inicio = dayjs(dashboardInicio);
+    const fim = dayjs(dashboardFim);
+
+    if (!inicio.isValid() || !fim.isValid() || inicio.isAfter(fim)) {
+      return {
+        periodo: { inicio: dashboardInicio, fim: dashboardFim },
+        resumo: {
+          confirmadas: 0,
+          preReservas: 0,
+          faturamento: 0,
+          ticketMedio: 0,
+          participantes: 0,
+        },
+        porDia: [] as Array<{
+          data: string;
+          valor: number;
+          reservas: number;
+          preReservas: number;
+          participantes: number;
+          participantesPreReservas: number;
+        }>,
+        porPacote: [] as Array<{
+          nome: string;
+          reservas: number;
+          preReservas: number;
+          participantes: number;
+          participantesPreReservas: number;
+          valor: number;
+        }>,
+        porCliente: [] as Array<{
+          chave: string;
+          nome: string;
+          cpf: string;
+          telefone: string;
+          reservas: number;
+          preReservas: number;
+          participantes: number;
+          participantesPreReservas: number;
+          valor: number;
+        }>,
+      };
+    }
+
+    const inicioStr = inicio.format('YYYY-MM-DD');
+    const fimStr = fim.format('YYYY-MM-DD');
+
+    const dentroDoPeriodo = dashboardReservas.filter((reserva) => {
+      const data = normalizarDataReserva(reserva.data);
+      if (!data) return false;
+      return data >= inicioStr && data <= fimStr;
+    });
+
+    const confirmadas = dentroDoPeriodo.filter((reserva) => statusEhConfirmado(reserva));
+    const preReservas = dentroDoPeriodo.filter((reserva) => statusEhPreReserva(reserva));
+
+    const faturamento = confirmadas.reduce((total, reserva) => total + (Number(reserva.valor) || 0), 0);
+    const ticketMedio = confirmadas.length > 0 ? faturamento / confirmadas.length : 0;
+    const participantes = confirmadas.reduce((total, reserva) => total + calcularParticipantes(reserva), 0);
+
+    const dias: string[] = [];
+    let cursor = inicio.startOf('day');
+    const end = fim.startOf('day');
+    while (cursor.isBefore(end) || cursor.isSame(end)) {
+      dias.push(cursor.format('YYYY-MM-DD'));
+      cursor = cursor.add(1, 'day');
+    }
+
+    const porDiaMapa = new Map<
+      string,
+      {
+        valor: number;
+        reservas: number;
+        preReservas: number;
+        participantes: number;
+        participantesPreReservas: number;
+      }
+    >();
+    dias.forEach((dia) =>
+      porDiaMapa.set(dia, {
+        valor: 0,
+        reservas: 0,
+        preReservas: 0,
+        participantes: 0,
+        participantesPreReservas: 0,
+      })
+    );
+
+    confirmadas.forEach((reserva) => {
+      const data = normalizarDataReserva(reserva.data);
+      if (!data) return;
+      const entrada = porDiaMapa.get(data);
+      if (!entrada) return;
+      entrada.valor += Number(reserva.valor) || 0;
+      entrada.reservas += 1;
+      entrada.participantes += calcularParticipantes(reserva);
+    });
+
+    preReservas.forEach((reserva) => {
+      const data = normalizarDataReserva(reserva.data);
+      if (!data) return;
+      const entrada = porDiaMapa.get(data);
+      if (!entrada) return;
+      entrada.preReservas += 1;
+      entrada.participantesPreReservas += calcularParticipantes(reserva);
+    });
+
+    const porDia = dias.map((dia) => {
+      const entrada =
+        porDiaMapa.get(dia) ?? {
+          valor: 0,
+          reservas: 0,
+          preReservas: 0,
+          participantes: 0,
+          participantesPreReservas: 0,
+        };
+      return { data: dia, ...entrada };
+    });
+
+    const porPacoteMapa = new Map<
+      string,
+      {
+        reservas: number;
+        preReservas: number;
+        participantes: number;
+        participantesPreReservas: number;
+        valor: number;
+      }
+    >();
+    confirmadas.forEach((reserva) => {
+      const nome = (reserva.atividade || 'Sem pacote').toString().trim() || 'Sem pacote';
+      const entrada =
+        porPacoteMapa.get(nome) ?? {
+          reservas: 0,
+          preReservas: 0,
+          participantes: 0,
+          participantesPreReservas: 0,
+          valor: 0,
+        };
+      entrada.reservas += 1;
+      entrada.participantes += calcularParticipantes(reserva);
+      entrada.valor += Number(reserva.valor) || 0;
+      porPacoteMapa.set(nome, entrada);
+    });
+
+    preReservas.forEach((reserva) => {
+      const nome = (reserva.atividade || 'Sem pacote').toString().trim() || 'Sem pacote';
+      const entrada =
+        porPacoteMapa.get(nome) ?? {
+          reservas: 0,
+          preReservas: 0,
+          participantes: 0,
+          participantesPreReservas: 0,
+          valor: 0,
+        };
+      entrada.preReservas += 1;
+      entrada.participantesPreReservas += calcularParticipantes(reserva);
+      porPacoteMapa.set(nome, entrada);
+    });
+
+    const porPacote = Array.from(porPacoteMapa.entries())
+      .map(([nome, valores]) => ({ nome, ...valores }))
+      .sort((a, b) => b.valor - a.valor);
+
+    const porClienteMapa = new Map<
+      string,
+      {
+        chave: string;
+        nome: string;
+        cpf: string;
+        telefone: string;
+        reservas: number;
+        preReservas: number;
+        participantes: number;
+        participantesPreReservas: number;
+        valor: number;
+      }
+    >();
+    confirmadas.forEach((reserva) => {
+      const cpf = (reserva.cpf || '').toString().trim();
+      const telefone = (reserva.telefone || '').toString().trim();
+      const nome = (reserva.nome || '').toString().trim();
+      const chave = cpf || telefone || nome || 'cliente';
+
+      const entrada = porClienteMapa.get(chave) ?? {
+        chave,
+        nome: nome || '---',
+        cpf,
+        telefone,
+        reservas: 0,
+        preReservas: 0,
+        participantes: 0,
+        participantesPreReservas: 0,
+        valor: 0,
+      };
+
+      entrada.reservas += 1;
+      entrada.valor += Number(reserva.valor) || 0;
+      entrada.participantes += calcularParticipantes(reserva);
+      if (!entrada.nome && nome) entrada.nome = nome;
+
+      porClienteMapa.set(chave, entrada);
+    });
+
+    preReservas.forEach((reserva) => {
+      const cpf = (reserva.cpf || '').toString().trim();
+      const telefone = (reserva.telefone || '').toString().trim();
+      const nome = (reserva.nome || '').toString().trim();
+      const chave = cpf || telefone || nome || 'cliente';
+
+      const entrada = porClienteMapa.get(chave) ?? {
+        chave,
+        nome: nome || '---',
+        cpf,
+        telefone,
+        reservas: 0,
+        preReservas: 0,
+        participantes: 0,
+        participantesPreReservas: 0,
+        valor: 0,
+      };
+
+      entrada.preReservas += 1;
+      entrada.participantesPreReservas += calcularParticipantes(reserva);
+      if (!entrada.nome && nome) entrada.nome = nome;
+
+      porClienteMapa.set(chave, entrada);
+    });
+
+    const porCliente = Array.from(porClienteMapa.values()).sort((a, b) => b.valor - a.valor);
+
+    return {
+      periodo: { inicio: inicioStr, fim: fimStr },
+      resumo: {
+        confirmadas: confirmadas.length,
+        preReservas: preReservas.length,
+        faturamento,
+        ticketMedio,
+        participantes,
+      },
+      porDia,
+      porPacote,
+      porCliente,
+    };
+  }, [dashboardReservas, dashboardInicio, dashboardFim]);
+
+  const obterValorMetricaDashboard = useCallback(
+    (
+      metrica: 'faturamento' | 'confirmadas' | 'pre_reservas' | 'participantes',
+      item: {
+        valor: number;
+        reservas: number;
+        preReservas: number;
+        participantes: number;
+        participantesPreReservas: number;
+      }
+    ) => {
+      switch (metrica) {
+        case 'faturamento':
+          return item.valor;
+        case 'confirmadas':
+          return item.reservas;
+        case 'pre_reservas':
+          return item.preReservas;
+        case 'participantes':
+          return (item.participantes ?? 0) + (item.participantesPreReservas ?? 0);
+        default:
+          return item.valor;
+      }
+    },
+    []
+  );
+
+  const dashboardAtividadesFiltradas = useMemo(() => {
+    const filtroNormalizado = dashboardAtividadeFiltro.trim().toLowerCase();
+    if (!filtroNormalizado) return dashboardMetricas.porPacote;
+    return dashboardMetricas.porPacote.filter((item) =>
+      item.nome.toLowerCase().includes(filtroNormalizado)
+    );
+  }, [dashboardAtividadeFiltro, dashboardMetricas.porPacote]);
+
+  const dashboardAtividadesOrdenadas = useMemo(() => {
+    const lista = [...dashboardAtividadesFiltradas];
+    lista.sort(
+      (a, b) =>
+        obterValorMetricaDashboard(dashboardAtividadeMetrica, b) -
+        obterValorMetricaDashboard(dashboardAtividadeMetrica, a)
+    );
+    return lista;
+  }, [dashboardAtividadeMetrica, dashboardAtividadesFiltradas, obterValorMetricaDashboard]);
+
+  const dashboardClientesFiltrados = useMemo(() => {
+    const filtroNormalizado = dashboardClienteFiltro.trim().toLowerCase();
+    if (!filtroNormalizado) return dashboardMetricas.porCliente;
+    return dashboardMetricas.porCliente.filter((item) => {
+      const nome = (item.nome ?? '').toLowerCase();
+      const cpf = (item.cpf ?? '').toLowerCase();
+      const telefone = (item.telefone ?? '').toLowerCase();
+      return (
+        nome.includes(filtroNormalizado) ||
+        cpf.includes(filtroNormalizado) ||
+        telefone.includes(filtroNormalizado)
+      );
+    });
+  }, [dashboardClienteFiltro, dashboardMetricas.porCliente]);
+
+  const dashboardClientesOrdenados = useMemo(() => {
+    const lista = [...dashboardClientesFiltrados];
+    lista.sort(
+      (a, b) =>
+        obterValorMetricaDashboard(dashboardClienteMetrica, b) -
+        obterValorMetricaDashboard(dashboardClienteMetrica, a)
+    );
+    return lista;
+  }, [dashboardClienteMetrica, dashboardClientesFiltrados, obterValorMetricaDashboard]);
+
+  const dashboardClientesParaGrafico = useMemo(() => {
+    const filtroAtivo = dashboardClienteFiltro.trim().length > 0;
+    if (dashboardMostrarTodosClientes || filtroAtivo) return dashboardClientesOrdenados;
+    return dashboardClientesOrdenados.slice(0, 30);
+  }, [dashboardClienteFiltro, dashboardClientesOrdenados, dashboardMostrarTodosClientes]);
 
   const pacotesPorId = useMemo(() => {
 
@@ -1281,49 +1583,47 @@ const totalParticipantesDoDia = useMemo(() => {
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
 
-  const abasDisponiveis: Array<{ id: 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp' | 'dashboard'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
-
-    { id: 'dashboard', label: 'Dashboard', description: 'Financeiro e relatórios', icon: FaChartBar },
+  const abasDisponiveis: Array<{ id: 'dashboard' | 'reservas' | 'pacotes' | 'pesquisa' | 'tipos_clientes' | 'whatsapp'; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
     { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
+
+    { id: 'dashboard', label: 'Dashboard', description: 'Relatórios e indicadores', icon: FaChartBar },
 
     { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
 
     { id: 'tipos_clientes', label: 'Clientes', description: 'Tipos de clientes', icon: FaUsers },
 
-    { id: 'whatsapp', label: 'WhatsApp', description: 'Confirmações automáticas', icon: FaWhatsapp },
+    { id: 'whatsapp', label: 'WhatsApp', description: 'Confirmacoes automaticas', icon: FaWhatsapp },
 
     { id: 'pesquisa', label: 'Pesquisa', description: 'Histórico de reservas', icon: FaSearch },
 
   ];
 
-  const dadosExemploWhatsapp = useMemo(
-    () => ({
+  const mensagemPreviewWhatsapp = useMemo(() => {
+
+    const dadosExemplo = {
+
       nome: 'Cliente',
+
       datareserva: formatarDataReserva(dayjs().add(1, 'day').format('YYYY-MM-DD')),
-      data: formatarDataReserva(dayjs().add(1, 'day').format('YYYY-MM-DD')),
+
       horario: '10:00',
+
       atividade: 'Atividade',
+
       participantes: '2',
+
       telefone: '(00) 00000-0000',
+
       valor: formatCurrency(120),
-      status: 'pago',
-    }),
-    []
-  );
 
-  const mensagemPreviewWhatsappAutomatica = useMemo(() => {
-    const template =
-      whatsappConfig.mensagemConfirmacaoAutomatica ||
-      whatsappTemplateConfirmacaoAutomaticaPadrao;
-    return montarMensagemWhatsApp(template, dadosExemploWhatsapp);
-  }, [dadosExemploWhatsapp, whatsappConfig.mensagemConfirmacaoAutomatica]);
+    };
 
-  const mensagemPreviewWhatsappManual = useMemo(() => {
-    const template =
-      whatsappConfig.mensagemConfirmacaoManual || whatsappTemplateMensagemManualPadrao;
-    return montarMensagemWhatsApp(template, dadosExemploWhatsapp);
-  }, [dadosExemploWhatsapp, whatsappConfig.mensagemConfirmacaoManual]);
+    const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
+
+    return montarMensagemWhatsApp(template, dadosExemplo);
+
+  }, [whatsappConfig.mensagemConfirmacao]);
 
   const statusResumoWhatsapp = useMemo(() => {
 
@@ -1379,6 +1679,10 @@ const totalParticipantesDoDia = useMemo(() => {
     const nextDay = dayjs(selectedDate).add(1, 'day').format('YYYY-MM-DD');
     const dayStart = dayjs(selectedDate).startOf('day');
     const dayEnd = dayjs(selectedDate).add(1, 'day').startOf('day');
+    const hoje = dayjs().format('YYYY-MM-DD');
+    const diaEhHoje = formatted === hoje;
+
+    fecharNotificacaoNovaReserva();
 
     console.log('🔍 Observando reservas para:', formatted);
 
@@ -1392,6 +1696,25 @@ const totalParticipantesDoDia = useMemo(() => {
 
     let reservasString: Reserva[] = [];
     let reservasTimestamp: Reserva[] = [];
+    let primeiraLeituraString = true;
+    let primeiraLeituraTimestamp = true;
+
+    const notificarSeNovaReservaHoje = (novasReservas: Reserva[]) => {
+      if (!diaEhHoje) return;
+      if (abaAtualRef.current !== 'reservas') return;
+
+      const novasVisiveis = novasReservas.filter((reserva) => {
+        const status = normalizarStatus(reserva.status);
+        if (['pago', 'confirmado', 'pre_reserva'].includes(status)) {
+          return true;
+        }
+        return !status && Boolean(reserva.confirmada);
+      });
+
+      if (novasVisiveis.length === 0) return;
+
+      exibirNotificacaoNovaReserva(novasVisiveis[0]);
+    };
 
     const atualizarReservas = () => {
       const mapa = new Map<string, Reserva>();
@@ -1428,6 +1751,22 @@ const totalParticipantesDoDia = useMemo(() => {
     const unsubscribeString = onSnapshot(
       qString,
       (snapshot) => {
+        if (!primeiraLeituraString) {
+          const adicionadas = snapshot
+            .docChanges()
+            .filter((change) => change.type === 'added' && change.doc.metadata.hasPendingWrites === false)
+            .map((change) => {
+              const data = change.doc.data() as Reserva;
+              return {
+                id: change.doc.id,
+                ...data,
+                chegou: data.chegou === true,
+              };
+            });
+          notificarSeNovaReservaHoje(adicionadas);
+        }
+        primeiraLeituraString = false;
+
         reservasString = snapshot.docs.map((docSnap) => {
           const data = docSnap.data() as Reserva;
           return {
@@ -1448,6 +1787,22 @@ const totalParticipantesDoDia = useMemo(() => {
     const unsubscribeTimestamp = onSnapshot(
       qTimestamp,
       (snapshot) => {
+        if (!primeiraLeituraTimestamp) {
+          const adicionadas = snapshot
+            .docChanges()
+            .filter((change) => change.type === 'added' && change.doc.metadata.hasPendingWrites === false)
+            .map((change) => {
+              const data = change.doc.data() as Reserva;
+              return {
+                id: change.doc.id,
+                ...data,
+                chegou: data.chegou === true,
+              };
+            });
+          notificarSeNovaReservaHoje(adicionadas);
+        }
+        primeiraLeituraTimestamp = false;
+
         reservasTimestamp = snapshot.docs.map((docSnap) => {
           const data = docSnap.data() as Reserva;
           return {
@@ -1470,7 +1825,95 @@ const totalParticipantesDoDia = useMemo(() => {
       unsubscribeTimestamp();
     };
 
-  }, [selectedDate]);
+  }, [selectedDate, exibirNotificacaoNovaReserva, fecharNotificacaoNovaReserva]);
+
+  useEffect(() => {
+    if (aba !== 'dashboard') return;
+
+    const inicio = dayjs(dashboardInicio);
+    const fim = dayjs(dashboardFim);
+
+    if (!inicio.isValid() || !fim.isValid() || inicio.isAfter(fim)) {
+      setDashboardErro('Informe um período válido.');
+      setDashboardReservas([]);
+      setDashboardCarregando(false);
+      return;
+    }
+
+    const inicioStr = inicio.format('YYYY-MM-DD');
+    const fimStr = fim.format('YYYY-MM-DD');
+    const fimExclusivoStr = fim.add(1, 'day').format('YYYY-MM-DD');
+
+    const rangeStart = inicio.startOf('day');
+    const rangeEndExclusive = fim.add(1, 'day').startOf('day');
+
+    setDashboardCarregando(true);
+    setDashboardErro(null);
+
+    const baseRef = collection(db, 'reservas');
+    const qString = query(
+      baseRef,
+      where('data', '>=', inicioStr),
+      where('data', '<', fimExclusivoStr)
+    );
+    const qTimestamp = query(
+      baseRef,
+      where('data', '>=', Timestamp.fromDate(rangeStart.toDate())),
+      where('data', '<', Timestamp.fromDate(rangeEndExclusive.toDate()))
+    );
+
+    let reservasString: Reserva[] = [];
+    let reservasTimestamp: Reserva[] = [];
+
+    const atualizarDashboard = () => {
+      const mapa = new Map<string, Reserva>();
+      [...reservasString, ...reservasTimestamp].forEach((reserva) => {
+        const id = reserva.id ?? `${reserva.nome}-${reserva.cpf}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
+        mapa.set(id, reserva);
+      });
+
+      const combinadas = Array.from(mapa.values());
+      const filtradas = combinadas.filter((reserva) => {
+        const data = normalizarDataReserva(reserva.data);
+        if (!data) return false;
+        return data >= inicioStr && data <= fimStr;
+      });
+
+      setDashboardReservas(filtradas);
+      setDashboardCarregando(false);
+    };
+
+    const unsubscribeString = onSnapshot(
+      qString,
+      (snapshot) => {
+        reservasString = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Reserva) }));
+        atualizarDashboard();
+      },
+      (error) => {
+        console.error('Erro ao carregar dashboard (string):', error);
+        reservasString = [];
+        atualizarDashboard();
+      }
+    );
+
+    const unsubscribeTimestamp = onSnapshot(
+      qTimestamp,
+      (snapshot) => {
+        reservasTimestamp = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Reserva) }));
+        atualizarDashboard();
+      },
+      (error) => {
+        console.error('Erro ao carregar dashboard (timestamp):', error);
+        reservasTimestamp = [];
+        atualizarDashboard();
+      }
+    );
+
+    return () => {
+      unsubscribeString();
+      unsubscribeTimestamp();
+    };
+  }, [aba, dashboardInicio, dashboardFim]);
 
 
 
@@ -1503,11 +1946,6 @@ const totalParticipantesDoDia = useMemo(() => {
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
-
-  useEffect(() => {
-    setCurrentMonth(selectedDate.getMonth());
-    setCurrentYear(selectedDate.getFullYear());
-  }, [selectedDate]);
 
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
 
@@ -2343,38 +2781,25 @@ const totalParticipantesDoDia = useMemo(() => {
 
       if (snap.exists()) {
 
-        const data = snap.data() as any;
-        const legadoMensagem =
-          typeof data.mensagemConfirmacao === 'string' ? data.mensagemConfirmacao.trim() : '';
-
-        const mensagemConfirmacaoAutomatica =
-          typeof data.mensagemConfirmacaoAutomatica === 'string' &&
-          data.mensagemConfirmacaoAutomatica.trim()
-            ? data.mensagemConfirmacaoAutomatica
-            : legadoMensagem || whatsappTemplateConfirmacaoAutomaticaPadrao;
-
-        const mensagemConfirmacaoManual =
-          typeof data.mensagemConfirmacaoManual === 'string' && data.mensagemConfirmacaoManual.trim()
-            ? data.mensagemConfirmacaoManual
-            : legadoMensagem || whatsappTemplateMensagemManualPadrao;
+        const data = snap.data() as Partial<WhatsappConfig>;
 
         setWhatsappConfig({
 
           ativo: data.ativo === true,
 
-          mensagemConfirmacaoAutomatica,
+          mensagemConfirmacao:
 
-          mensagemConfirmacaoManual,
+            typeof data.mensagemConfirmacao === 'string' && data.mensagemConfirmacao.trim()
+
+              ? data.mensagemConfirmacao
+
+              : whatsappTemplatePadrao,
 
         });
 
       } else {
 
-        setWhatsappConfig({
-          ativo: false,
-          mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
-          mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
-        });
+        setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
 
       }
 
@@ -2386,11 +2811,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
       setWhatsappErro('Erro ao carregar configuracoes.');
 
-      setWhatsappConfig({
-        ativo: false,
-        mensagemConfirmacaoAutomatica: whatsappTemplateConfirmacaoAutomaticaPadrao,
-        mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
-      });
+      setWhatsappConfig({ ativo: false, mensagemConfirmacao: whatsappTemplatePadrao });
 
     } finally {
 
@@ -2402,20 +2823,14 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const salvarWhatsappConfig = async () => {
 
-    const mensagemAutomatica = whatsappConfig.mensagemConfirmacaoAutomatica.trim();
-    const mensagemManual = whatsappConfig.mensagemConfirmacaoManual.trim();
+    const mensagem = whatsappConfig.mensagemConfirmacao.trim();
 
-    if (!mensagemAutomatica) {
+    if (!mensagem) {
 
-      setFeedback({ type: 'error', message: 'Informe a mensagem automática.' });
+      setFeedback({ type: 'error', message: 'Informe a mensagem de confirmacao.' });
 
       return;
 
-    }
-
-    if (!mensagemManual) {
-      setFeedback({ type: 'error', message: 'Informe a mensagem do botão.' });
-      return;
     }
 
     setWhatsappSalvando(true);
@@ -2426,12 +2841,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
         ativo: whatsappConfig.ativo,
 
-        mensagemConfirmacaoAutomatica: mensagemAutomatica,
-
-        mensagemConfirmacaoManual: mensagemManual,
-
-        // Campo legado para compatibilidade com versões antigas do backend
-        mensagemConfirmacao: mensagemAutomatica,
+        mensagemConfirmacao: mensagem,
 
         atualizadoEm: new Date(),
 
@@ -2548,17 +2958,16 @@ const totalParticipantesDoDia = useMemo(() => {
     }
   };
 
-  type WhatsappMensagemKey = 'mensagemConfirmacaoAutomatica' | 'mensagemConfirmacaoManual';
+  const inserirPlaceholderWhatsapp = (placeholder: string) => {
 
-  const inserirPlaceholderWhatsapp = (key: WhatsappMensagemKey, placeholder: string) => {
-    setWhatsappConfig((prev) => {
-      const atualRaw = (prev as any)[key];
-      const atual = typeof atualRaw === 'string' ? atualRaw : '';
-      return {
-        ...prev,
-        [key]: `${atual}${atual ? ' ' : ''}${placeholder}`,
-      } as WhatsappConfig;
-    });
+    setWhatsappConfig((prev) => ({
+
+      ...prev,
+
+      mensagemConfirmacao: `${prev.mensagemConfirmacao}${prev.mensagemConfirmacao ? ' ' : ''}${placeholder}`,
+
+    }));
+
   };
 
 
@@ -2749,17 +3158,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
   useEffect(() => {
     void fetchWhatsappConfig();
+
   }, [fetchWhatsappConfig]);
-
-  useEffect(() => {
-
-    if (aba === 'whatsapp') {
-
-      void fetchWhatsappConfig();
-
-    }
-
-  }, [aba, fetchWhatsappConfig]);
 
   useEffect(() => {
 
@@ -3806,6 +4206,88 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, [modalDisponibilidade, carregarDisponibilidade, selectedDate]);
 
+  const exportarDashboardPdf = async () => {
+    if (dashboardCensurar) {
+      setFeedback({ type: 'error', message: 'Desative a censura para exportar o relatório.' });
+      return;
+    }
+    try {
+      const { jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+      const inicioFmt = dayjs(dashboardMetricas.periodo.inicio).isValid()
+        ? dayjs(dashboardMetricas.periodo.inicio).format('DD/MM/YYYY')
+        : dashboardMetricas.periodo.inicio;
+      const fimFmt = dayjs(dashboardMetricas.periodo.fim).isValid()
+        ? dayjs(dashboardMetricas.periodo.fim).format('DD/MM/YYYY')
+        : dashboardMetricas.periodo.fim;
+
+      let y = 44;
+      doc.setFontSize(18);
+      doc.text('Vaga Fogo - Relatório (Dashboard)', 40, y);
+      y += 20;
+
+      doc.setFontSize(10);
+      doc.text(`Período: ${inicioFmt} a ${fimFmt}`, 40, y);
+      y += 14;
+      doc.text(`Gerado em: ${dayjs().format('DD/MM/YYYY HH:mm')}`, 40, y);
+      y += 22;
+
+      doc.setFontSize(12);
+      doc.text(`Reservas confirmadas: ${dashboardMetricas.resumo.confirmadas}`, 40, y);
+      y += 14;
+      doc.text(`Pré-reservas: ${dashboardMetricas.resumo.preReservas}`, 40, y);
+      y += 14;
+      doc.text(`Participantes (confirmadas): ${dashboardMetricas.resumo.participantes}`, 40, y);
+      y += 14;
+      doc.text(`Faturamento (confirmadas): ${formatCurrency(dashboardMetricas.resumo.faturamento)}`, 40, y);
+      y += 14;
+      doc.text(`Ticket médio: ${formatCurrency(dashboardMetricas.resumo.ticketMedio)}`, 40, y);
+      y += 18;
+
+      const pacotesRows = dashboardMetricas.porPacote.slice(0, 40).map((item) => [
+        item.nome,
+        String(item.reservas),
+        String(item.participantes),
+        formatCurrency(item.valor),
+      ]);
+
+      autoTable(doc, {
+        head: [['Pacote', 'Reservas', 'Participantes', 'Faturamento']],
+        body: pacotesRows.length > 0 ? pacotesRows : [['—', '0', '0', formatCurrency(0)]],
+        startY: y,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [37, 99, 235] },
+      });
+
+      const afterPacotesY =
+        (doc as any).lastAutoTable?.finalY ? Number((doc as any).lastAutoTable.finalY) + 24 : y + 24;
+
+      const clientesRows = dashboardMetricas.porCliente.slice(0, 40).map((item) => [
+        item.nome || '---',
+        item.cpf || item.telefone || '---',
+        String(item.reservas),
+        formatCurrency(item.valor),
+      ]);
+
+      autoTable(doc, {
+        head: [['Cliente', 'CPF/Telefone', 'Reservas', 'Faturamento']],
+        body: clientesRows.length > 0 ? clientesRows : [['—', '—', '0', formatCurrency(0)]],
+        startY: afterPacotesY,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [5, 150, 105] },
+      });
+
+      doc.save(`relatorio-dashboard-${dashboardMetricas.periodo.inicio}-${dashboardMetricas.periodo.fim}.pdf`);
+      setFeedback({ type: 'success', message: 'Relatório PDF gerado.' });
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      setFeedback({ type: 'error', message: 'Erro ao gerar PDF.' });
+    }
+  };
+
 
 
 
@@ -3862,396 +4344,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-  const fetchDashboardData = async (startDate: string, endDate: string) => {
-    if (!startDate || !endDate) return;
-
-    const inicio = dayjs(startDate);
-    const fim = dayjs(endDate);
-
-    if (!inicio.isValid() || !fim.isValid()) {
-      setDashboardError('Período inválido.');
-      return;
-    }
-
-    if (fim.isBefore(inicio, 'day')) {
-      setDashboardError('A data final deve ser maior ou igual à data inicial.');
-      return;
-    }
-
-    setDashboardLoading(true);
-    setDashboardError(null);
-
-    try {
-      const q = query(
-        collection(db, 'reservas'),
-        where('data', '>=', startDate),
-        where('data', '<=', endDate)
-      );
-
-      const snapshot = await getDocs(q);
-      const dados: Reserva[] = snapshot.docs.map((documento) => ({
-        id: documento.id,
-        ...(documento.data() as Omit<Reserva, 'id'>),
-      }));
-
-      setDashboardReservas(dados);
-    } catch (error) {
-      console.error('Erro ao carregar dados do dashboard:', error);
-      setDashboardReservas([]);
-      setDashboardError('Erro ao carregar dados do dashboard.');
-    } finally {
-      setDashboardLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (aba !== 'dashboard') return;
-    void fetchDashboardData(dashboardStartDate, dashboardEndDate);
-  }, [aba, dashboardStartDate, dashboardEndDate]);
-
-  const dashboardReservasPagas = useMemo(() => {
-    return dashboardReservas.filter((reserva) => normalizarStatus(reserva.status) === 'pago');
-  }, [dashboardReservas]);
-
-  const dashboardTotais = useMemo(() => {
-    const receita = dashboardReservasPagas.reduce((acc, r) => acc + (Number(r.valor ?? 0) || 0), 0);
-    const totalReservasPagas = dashboardReservasPagas.length;
-    const totalParticipantes = dashboardReservasPagas.reduce((acc, r) => acc + calcularParticipantes(r), 0);
-    const ticketMedio = totalReservasPagas ? receita / totalReservasPagas : 0;
-
-    return {
-      receita,
-      totalReservasPagas,
-      totalParticipantes,
-      ticketMedio,
-    };
-  }, [dashboardReservasPagas]);
-
-  const dashboardAtividades = useMemo(() => {
-    const porAtividade = new Map<string, { quantidade: number; receita: number }>();
-
-    for (const r of dashboardReservasPagas) {
-      const key = normalizarNomeAtividade(r.atividade);
-      const atual = porAtividade.get(key) ?? { quantidade: 0, receita: 0 };
-      porAtividade.set(key, {
-        quantidade: atual.quantidade + 1,
-        receita: atual.receita + (Number(r.valor ?? 0) || 0),
-      });
-    }
-
-    return [...porAtividade.entries()]
-      .map(([atividade, v]) => ({ atividade, ...v }))
-      .sort((a, b) => b.receita - a.receita);
-  }, [dashboardReservasPagas]);
-
-  const dashboardClientesTop = useMemo(() => {
-    const porCliente = new Map<string, { nome: string; quantidade: number; receita: number }>();
-
-    for (const r of dashboardReservasPagas) {
-      const key = r.cpf || r.telefone || r.nome || 'cliente';
-      const atual = porCliente.get(key) ?? { nome: r.nome, quantidade: 0, receita: 0 };
-      porCliente.set(key, {
-        nome: atual.nome || r.nome,
-        quantidade: atual.quantidade + 1,
-        receita: atual.receita + (Number(r.valor ?? 0) || 0),
-      });
-    }
-
-    return [...porCliente.entries()]
-      .map(([clienteId, v]) => ({ clienteId, ...v }))
-      .sort((a, b) => b.receita - a.receita)
-      .slice(0, 15);
-  }, [dashboardReservasPagas]);
-
-  const dashboardPorDia = useMemo(() => {
-    const porDia = new Map<string, { quantidade: number; receita: number }>();
-
-    for (const r of dashboardReservasPagas) {
-      const key = r.data || 'sem-data';
-      const atual = porDia.get(key) ?? { quantidade: 0, receita: 0 };
-      porDia.set(key, {
-        quantidade: atual.quantidade + 1,
-        receita: atual.receita + (Number(r.valor ?? 0) || 0),
-      });
-    }
-
-    return [...porDia.entries()]
-      .map(([data, v]) => ({ data, ...v }))
-      .sort((a, b) => a.data.localeCompare(b.data));
-  }, [dashboardReservasPagas]);
-
-  const dashboardResumoStatus = useMemo(() => {
-    const total = dashboardReservas.length;
-    const pagas = dashboardReservasPagas.length;
-    const preReservas = dashboardReservas.filter((reserva) => statusEhPreReserva(reserva)).length;
-    const confirmadas = dashboardReservas.filter((reserva) => statusEhConfirmado(reserva)).length;
-    const confirmadasNaoPagas = Math.max(confirmadas - pagas, 0);
-    const outras = Math.max(total - preReservas - confirmadas, 0);
-
-    return {
-      total,
-      pagas,
-      preReservas,
-      confirmadas,
-      confirmadasNaoPagas,
-      outras,
-    };
-  }, [dashboardReservas, dashboardReservasPagas]);
-
-  const dashboardDiasNoPeriodo = useMemo(() => {
-    const inicio = dayjs(dashboardStartDate);
-    const fim = dayjs(dashboardEndDate);
-
-    if (!inicio.isValid() || !fim.isValid() || fim.isBefore(inicio, 'day')) {
-      return [] as string[];
-    }
-
-    const dias: string[] = [];
-    const limiteDias = 370;
-    let cursor = inicio.startOf('day');
-
-    while ((cursor.isBefore(fim, 'day') || cursor.isSame(fim, 'day')) && dias.length < limiteDias) {
-      dias.push(cursor.format('YYYY-MM-DD'));
-      cursor = cursor.add(1, 'day');
-    }
-
-    return dias;
-  }, [dashboardStartDate, dashboardEndDate]);
-
-  const dashboardSerieEvolucao = useMemo(() => {
-    const mapa = new Map<string, { total: number; pagas: number; receita: number }>();
-
-    for (const reserva of dashboardReservas) {
-      const data = normalizarDataReserva(reserva.data) || reserva.data;
-      if (!data) continue;
-
-      const atual = mapa.get(data) ?? { total: 0, pagas: 0, receita: 0 };
-      atual.total += 1;
-
-      if (normalizarStatus(reserva.status) === 'pago') {
-        atual.pagas += 1;
-        atual.receita += Number(reserva.valor ?? 0) || 0;
-      }
-
-      mapa.set(data, atual);
-    }
-
-    const dias = dashboardDiasNoPeriodo;
-    const receita = dias.map((dia) => mapa.get(dia)?.receita ?? 0);
-    const pagas = dias.map((dia) => mapa.get(dia)?.pagas ?? 0);
-    const total = dias.map((dia) => mapa.get(dia)?.total ?? 0);
-
-    return {
-      dias,
-      receita,
-      pagas,
-      total,
-    };
-  }, [dashboardReservas, dashboardDiasNoPeriodo]);
-
-  const dashboardStatusItens = useMemo<BarListItem[]>(() => {
-    const total = dashboardResumoStatus.total || 1;
-    const toPercent = (valor: number) => Math.round((valor / total) * 100);
-
-    return [
-      {
-        key: 'pagas',
-        label: 'Pagas',
-        value: dashboardResumoStatus.pagas,
-        valueLabel: `${dashboardResumoStatus.pagas} (${toPercent(dashboardResumoStatus.pagas)}%)`,
-        hint: 'Geram receita e entram no financeiro.',
-        barClassName: 'bg-blue-600',
-      },
-      {
-        key: 'confirmadas',
-        label: 'Confirmadas (não pagas)',
-        value: dashboardResumoStatus.confirmadasNaoPagas,
-        valueLabel: `${dashboardResumoStatus.confirmadasNaoPagas} (${toPercent(dashboardResumoStatus.confirmadasNaoPagas)}%)`,
-        hint: 'Confirmadas sem status pago.',
-        barClassName: 'bg-emerald-600',
-      },
-      {
-        key: 'pre',
-        label: 'Pré-reservas',
-        value: dashboardResumoStatus.preReservas,
-        valueLabel: `${dashboardResumoStatus.preReservas} (${toPercent(dashboardResumoStatus.preReservas)}%)`,
-        hint: 'Aguardando confirmação.',
-        barClassName: 'bg-amber-500',
-      },
-      {
-        key: 'outras',
-        label: 'Outras',
-        value: dashboardResumoStatus.outras,
-        valueLabel: `${dashboardResumoStatus.outras} (${toPercent(dashboardResumoStatus.outras)}%)`,
-        hint: 'Sem status definido ou em outro estado.',
-        barClassName: 'bg-slate-400',
-      },
-    ];
-  }, [dashboardResumoStatus]);
-
-  const dashboardTopAtividadesItens = useMemo<BarListItem[]>(() => {
-    return dashboardAtividades.slice(0, 8).map((item) => ({
-      key: item.atividade,
-      label: item.atividade,
-      value: item.receita,
-      valueLabel: formatCompactCurrency(item.receita),
-      hint: `${item.quantidade} reserva(s) paga(s)`,
-      barClassName: 'bg-indigo-600',
-    }));
-  }, [dashboardAtividades]);
-
-  const dashboardTopClientesItens = useMemo<BarListItem[]>(() => {
-    return dashboardClientesTop.slice(0, 8).map((item) => ({
-      key: item.clienteId,
-      label: item.nome || item.clienteId,
-      value: item.receita,
-      valueLabel: formatCompactCurrency(item.receita),
-      hint: `${item.quantidade} reserva(s) paga(s)`,
-      barClassName: 'bg-emerald-600',
-    }));
-  }, [dashboardClientesTop]);
-
-  const exportarDashboardPdf = () => {
-    const escapeHtml = (value: string) =>
-      value
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-
-    const janela = window.open('', '_blank');
-    if (!janela) {
-      setFeedback({ type: 'error', message: 'Não foi possível abrir a janela de exportação.' });
-      return;
-    }
-
-    const html = `
-<!doctype html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Relatório - Vagafogo</title>
-    <style>
-      body { font-family: Arial, sans-serif; color: #111827; padding: 24px; }
-      h1 { font-size: 18px; margin: 0 0 8px 0; }
-      h2 { font-size: 14px; margin: 18px 0 8px 0; }
-      .muted { color: #6b7280; font-size: 12px; margin-bottom: 16px; }
-      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-      .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
-      .label { font-size: 11px; color: #6b7280; }
-      .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 11px; }
-      th { background: #f3f4f6; text-align: left; }
-      .right { text-align: right; }
-      @media print { body { padding: 0; } }
-    </style>
-  </head>
-  <body>
-    <h1>Relatório - Vagafogo</h1>
-    <div class="muted">Período: ${escapeHtml(formatarDataReserva(dashboardStartDate))} a ${escapeHtml(
-      formatarDataReserva(dashboardEndDate)
-    )}</div>
-
-    <div class="cards">
-      <div class="card"><div class="label">Receita (pagas)</div><div class="value">${escapeHtml(
-        formatCurrency(dashboardTotais.receita)
-      )}</div></div>
-      <div class="card"><div class="label">Reservas pagas</div><div class="value">${dashboardTotais.totalReservasPagas}</div></div>
-      <div class="card"><div class="label">Participantes</div><div class="value">${dashboardTotais.totalParticipantes}</div></div>
-      <div class="card"><div class="label">Ticket médio</div><div class="value">${escapeHtml(
-        formatCurrency(dashboardTotais.ticketMedio)
-      )}</div></div>
-    </div>
-
-    <h2>Por atividade</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Atividade</th>
-          <th class="right">Reservas</th>
-          <th class="right">Receita</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${dashboardAtividades
-          .map(
-            a =>
-              `<tr>
-                <td>${escapeHtml(a.atividade)}</td>
-                <td class="right">${a.quantidade}</td>
-                <td class="right">${escapeHtml(formatCurrency(a.receita))}</td>
-              </tr>`
-          )
-          .join('')}
-      </tbody>
-    </table>
-
-    <h2>Top clientes</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Cliente</th>
-          <th>ID (CPF/Telefone)</th>
-          <th class="right">Reservas</th>
-          <th class="right">Receita</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${dashboardClientesTop
-          .map(
-            c =>
-              `<tr>
-                <td>${escapeHtml(c.nome || '-')}</td>
-                <td>${escapeHtml(c.clienteId)}</td>
-                <td class="right">${c.quantidade}</td>
-                <td class="right">${escapeHtml(formatCurrency(c.receita))}</td>
-              </tr>`
-          )
-          .join('')}
-      </tbody>
-    </table>
-
-    <h2>Por dia</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Data</th>
-          <th class="right">Reservas</th>
-          <th class="right">Receita</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${dashboardPorDia
-          .map(
-            d =>
-              `<tr>
-                <td>${escapeHtml(formatarDataReserva(d.data))}</td>
-                <td class="right">${d.quantidade}</td>
-                <td class="right">${escapeHtml(formatCurrency(d.receita))}</td>
-              </tr>`
-          )
-          .join('')}
-      </tbody>
-    </table>
-  </body>
-</html>
-    `.trim();
-
-    janela.document.open();
-    janela.document.write(html);
-    janela.document.close();
-
-    setTimeout(() => {
-      janela.focus();
-      janela.print();
-    }, 300);
-  };
-
-
-
   // Render
 
   return (
@@ -4274,6 +4366,42 @@ const totalParticipantesDoDia = useMemo(() => {
 
         </div>
 
+      )}
+
+      {notificacaoNovaReserva && (
+        <div
+          className="fixed bottom-6 right-6 z-50 w-[360px] max-w-[calc(100vw-3rem)]"
+          role="alert"
+          aria-live="assertive"
+        >
+          <button
+            type="button"
+            onClick={fecharNotificacaoNovaReserva}
+            className="relative w-full overflow-hidden rounded-2xl border border-emerald-200 bg-white p-4 text-left shadow-lg transition hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-emerald-300 before:pointer-events-none before:absolute before:inset-0 before:rounded-2xl before:border-2 before:border-emerald-500 before:opacity-90 before:animate-pulse"
+            aria-label="Fechar notificação de nova reserva"
+            title="Clique para fechar"
+          >
+            <div className="relative flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-emerald-700">
+                  Nova reserva recebida
+                </p>
+                <p className="mt-2 truncate text-base font-semibold text-slate-900">
+                  {notificacaoNovaReserva.nome}
+                </p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  {notificacaoNovaReserva.horario} · {notificacaoNovaReserva.participantes}{' '}
+                  {notificacaoNovaReserva.participantes === 1 ? 'participante' : 'participantes'}
+                </p>
+                <p className="mt-1 truncate text-sm text-slate-500">{notificacaoNovaReserva.atividade}</p>
+              </div>
+
+              <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                Fechar
+              </span>
+            </div>
+          </button>
+        </div>
       )}
 
 
@@ -4604,18 +4732,734 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+      {/* ========== Dashboard ========== */}
+
+      {aba === 'dashboard' && (
+
+        <section className="space-y-6">
+
+          <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
+
+                <p className="text-sm text-slate-500">Relatórios do período selecionado (confirmadas e pré-reservas).</p>
+
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
+
+                <div className="grid grid-cols-2 gap-3">
+
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+
+                    Início
+
+                    <input
+
+                      type="date"
+
+                      value={dashboardInicio}
+
+                      onChange={(e) => setDashboardInicio(e.target.value)}
+
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+
+                    />
+
+                  </label>
+
+                  <label className="text-xs font-semibold uppercase text-slate-500">
+
+                    Fim
+
+                    <input
+
+                      type="date"
+
+                      value={dashboardFim}
+
+                      onChange={(e) => setDashboardFim(e.target.value)}
+
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+
+                    />
+
+                  </label>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDashboardCensurar((prev) => !prev)}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+                  aria-label={dashboardCensurar ? 'Mostrar dados sensíveis' : 'Censurar dados sensíveis'}
+                  title={dashboardCensurar ? 'Mostrar dados sensíveis' : 'Censurar dados sensíveis'}
+                  aria-pressed={dashboardCensurar}
+                >
+                  {dashboardCensurar ? <FaEye className="h-4 w-4" /> : <FaEyeSlash className="h-4 w-4" />}
+                  {dashboardCensurar ? 'Mostrar' : 'Censurar'}
+                </button>
+
+                <button
+
+                  type="button"
+
+                  onClick={exportarDashboardPdf}
+
+                  disabled={dashboardCarregando || Boolean(dashboardErro) || dashboardCensurar}
+
+                  className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition ${
+
+                    dashboardCarregando || dashboardErro || dashboardCensurar
+
+                      ? 'bg-slate-300 cursor-not-allowed'
+
+                      : 'bg-rose-600 hover:bg-rose-700'
+
+                  }`}
+
+                >
+
+                  <FaFilePdf className="h-4 w-4" />
+
+                  Exportar PDF
+
+                </button>
+
+              </div>
+
+            </div>
+
+            {dashboardErro && (
+
+              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+
+                {dashboardErro}
+
+              </div>
+
+            )}
+
+            {dashboardCarregando && (
+
+              <p className="mt-4 text-sm text-slate-500">Carregando dados do período...</p>
+
+            )}
+
+          </article>
+
+
+
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+            <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+
+              <div className="flex items-start justify-between">
+
+                <div>
+
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Faturamento</p>
+
+                  <p className="mt-3 text-2xl font-semibold text-slate-900">{dashboardCensurar ? '••••' : formatCurrency(dashboardMetricas.resumo.faturamento)}</p>
+
+                  <span className="text-xs text-slate-400">Somente confirmadas</span>
+
+                </div>
+
+                <span className="rounded-full bg-blue-50 p-3 text-blue-600">
+
+                  <FaCreditCard className="h-5 w-5" />
+
+                </span>
+
+              </div>
+
+            </article>
+
+            <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+
+              <div className="flex items-start justify-between">
+
+                <div>
+
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ticket médio</p>
+
+                  <p className="mt-3 text-2xl font-semibold text-slate-900">{dashboardCensurar ? '••••' : formatCurrency(dashboardMetricas.resumo.ticketMedio)}</p>
+
+                  <span className="text-xs text-slate-400">Confirmadas</span>
+
+                </div>
+
+                <span className="rounded-full bg-slate-100 p-3 text-slate-600">
+
+                  <FaChartBar className="h-5 w-5" />
+
+                </span>
+
+              </div>
+
+            </article>
+
+            <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+
+              <div className="flex items-start justify-between">
+
+                <div>
+
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
+
+                  <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardMetricas.resumo.participantes}</p>
+
+                  <span className="text-xs text-slate-400">Confirmadas</span>
+
+                </div>
+
+                <span className="rounded-full bg-indigo-50 p-3 text-indigo-600">
+
+                  <FaUsers className="h-5 w-5" />
+
+                </span>
+
+              </div>
+
+            </article>
+
+          </section>
+
+
+
+          <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+
+              <div>
+
+                <h3 className="text-lg font-semibold text-slate-900">Faturamento por dia</h3>
+
+                <p className="text-sm text-slate-500">Confirmadas no período.</p>
+
+              </div>
+
+              <p className="text-sm font-semibold text-slate-700">
+
+                Total: {dashboardCensurar ? '••••' : formatCurrency(dashboardMetricas.resumo.faturamento)}
+
+              </p>
+
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+
+              {dashboardCensurar ? (
+                <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                  Valores censurados. Clique no ícone de olho para exibir.
+                </div>
+              ) : (
+                (() => {
+                const chartHeight = 140;
+                const maxValor = Math.max(0, ...dashboardMetricas.porDia.map((item) => item.valor));
+
+                if (dashboardMetricas.porDia.length === 0) {
+                  return <p className="text-sm text-slate-500">Nenhum dado no período.</p>;
+                }
+
+                return (
+                  <div className="relative min-w-max pb-2">
+                    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <div key={idx} className="border-t border-slate-100" />
+                      ))}
+                    </div>
+
+                    <div className="relative flex items-end gap-2 min-w-max">
+                      {dashboardMetricas.porDia.map((item) => {
+                        const altura = maxValor > 0 ? Math.round((item.valor / maxValor) * chartHeight) : 0;
+                        const temValor = item.valor > 0;
+                        const ticketDia = item.reservas > 0 ? item.valor / item.reservas : 0;
+                        const participantesTotal = item.participantes + item.participantesPreReservas;
+
+                        return (
+                          <div key={item.data} className="group relative flex flex-col items-center">
+                            <div style={{ height: `${chartHeight}px` }} className="flex items-end">
+                              {temValor ? (
+                                <div
+                                  className="w-7 rounded-t bg-blue-600"
+                                  style={{ height: `${Math.max(2, altura)}px` }}
+                                />
+                              ) : (
+                                <div className="w-7 rounded-t bg-slate-200" style={{ height: '2px' }} />
+                              )}
+                            </div>
+
+                            <div className="pointer-events-none absolute -top-2 left-1/2 z-10 w-56 -translate-x-1/2 -translate-y-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 opacity-0 shadow-lg transition group-hover:opacity-100">
+                              <p className="font-semibold text-slate-900">{dayjs(item.data).format('DD/MM/YYYY')}</p>
+                              <div className="mt-1 space-y-0.5">
+                                <p className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-500">Faturamento</span>
+                                  <span className="font-semibold">{formatCurrency(item.valor)}</span>
+                                </p>
+                                <p className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-500">Confirmadas</span>
+                                  <span className="font-semibold">{item.reservas.toLocaleString('pt-BR')}</span>
+                                </p>
+                                <p className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-500">Pré-reservas</span>
+                                  <span className="font-semibold">{item.preReservas.toLocaleString('pt-BR')}</span>
+                                </p>
+                                <p className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
+                                  <span className="text-slate-500">Ticket médio</span>
+                                  <span className="font-semibold">{formatCurrency(ticketDia)}</span>
+                                </p>
+                                <p className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-500">Participantes</span>
+                                  <span className="font-semibold">{participantesTotal.toLocaleString('pt-BR')}</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className="mt-1 text-[10px] font-medium text-slate-500">
+                              {dayjs(item.data).format('DD')}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()
+              )}
+
+            </div>
+
+          </article>
+
+
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Reservas por dia</h3>
+                  <p className="text-sm text-slate-500">Confirmadas e pré-reservas no período.</p>
+                </div>
+                <p className="text-sm font-semibold text-slate-700">
+                  Total: {(dashboardMetricas.resumo.confirmadas + dashboardMetricas.resumo.preReservas).toLocaleString('pt-BR')}
+                </p>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                {(() => {
+                  const chartHeight = 140;
+                  const maxTotal = Math.max(
+                    0,
+                    ...dashboardMetricas.porDia.map((item) => item.reservas + item.preReservas)
+                  );
+
+                  if (dashboardMetricas.porDia.length === 0) {
+                    return <p className="text-sm text-slate-500">Nenhum dado no período.</p>;
+                  }
+
+                  return (
+                    <div className="relative min-w-max pb-2">
+                      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <div key={idx} className="border-t border-slate-100" />
+                        ))}
+                      </div>
+
+                      <div className="relative flex items-end gap-2 min-w-max">
+                        {dashboardMetricas.porDia.map((item) => {
+                          const total = item.reservas + item.preReservas;
+                          const alturaConfirmadas =
+                            maxTotal > 0 ? Math.round((item.reservas / maxTotal) * chartHeight) : 0;
+                          const alturaPre =
+                            maxTotal > 0 ? Math.round((item.preReservas / maxTotal) * chartHeight) : 0;
+                          const participantesTotal = item.participantes + item.participantesPreReservas;
+
+                          return (
+                            <div key={item.data} className="group relative flex flex-col items-center">
+                              <div
+                                className="flex w-7 flex-col justify-end"
+                                style={{ height: `${chartHeight}px` }}
+                              >
+                                {alturaPre > 0 && (
+                                  <div
+                                    className={`w-7 bg-amber-400 ${alturaConfirmadas === 0 ? 'rounded-t' : ''}`}
+                                    style={{ height: `${Math.max(2, alturaPre)}px` }}
+                                  />
+                                )}
+                                {alturaConfirmadas > 0 && (
+                                  <div
+                                    className={`w-7 bg-blue-600 ${alturaPre === 0 ? 'rounded-t' : ''}`}
+                                    style={{ height: `${Math.max(2, alturaConfirmadas)}px` }}
+                                  />
+                                )}
+                                {total === 0 && (
+                                  <div className="w-7 rounded-t bg-slate-200" style={{ height: '2px' }} />
+                                )}
+                              </div>
+
+                              <div className="pointer-events-none absolute -top-2 left-1/2 z-10 w-52 -translate-x-1/2 -translate-y-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 opacity-0 shadow-lg transition group-hover:opacity-100">
+                                <p className="font-semibold text-slate-900">{dayjs(item.data).format('DD/MM/YYYY')}</p>
+                                <div className="mt-1 space-y-0.5">
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="inline-flex items-center gap-2 text-slate-600">
+                                      <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                                      Confirmadas
+                                    </span>
+                                    <span className="font-semibold">{item.reservas.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="inline-flex items-center gap-2 text-slate-600">
+                                      <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                                      Pré-reservas
+                                    </span>
+                                    <span className="font-semibold">{item.preReservas.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
+                                    <span className="text-slate-500">Total</span>
+                                    <span className="font-semibold">{total.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-500">Participantes</span>
+                                    <span className="font-semibold">{participantesTotal.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span className="mt-1 text-[10px] font-medium text-slate-500">
+                                {dayjs(item.data).format('DD')}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                  Confirmadas
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  Pré-reservas
+                </span>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Dados por atividade</h3>
+                  <p className="text-sm text-slate-500">Dados completos por atividade no período.</p>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <select
+                    value={dashboardAtividadeMetrica}
+                    onChange={(e) =>
+                      setDashboardAtividadeMetrica(
+                        e.target.value as 'faturamento' | 'confirmadas' | 'pre_reservas' | 'participantes'
+                      )
+                    }
+                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <option value="faturamento" disabled={dashboardCensurar}>Faturamento</option>
+                    <option value="confirmadas">Confirmadas</option>
+                    <option value="pre_reservas">Pré-reservas</option>
+                    <option value="participantes">Participantes (total)</option>
+                  </select>
+
+                  <input
+                    value={dashboardAtividadeFiltro}
+                    onChange={(e) => setDashboardAtividadeFiltro(e.target.value)}
+                    placeholder="Filtrar atividade..."
+                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+              </div>
+
+              <p className="mt-3 text-xs font-semibold uppercase text-slate-400">
+                Exibindo {dashboardAtividadesFiltradas.length.toLocaleString('pt-BR')} de{' '}
+                {dashboardMetricas.porPacote.length.toLocaleString('pt-BR')} atividades
+              </p>
+
+              <div className="mt-4 overflow-x-auto">
+                {(() => {
+                  const chartHeight = 140;
+                  const cor =
+                    dashboardAtividadeMetrica === 'faturamento'
+                      ? 'bg-blue-600'
+                      : dashboardAtividadeMetrica === 'confirmadas'
+                        ? 'bg-emerald-600'
+                        : dashboardAtividadeMetrica === 'pre_reservas'
+                          ? 'bg-amber-500'
+                          : 'bg-indigo-600';
+
+                  const valores = dashboardAtividadesOrdenadas.map((item) =>
+                    obterValorMetricaDashboard(dashboardAtividadeMetrica, item)
+                  );
+                  const maxValor = Math.max(0, ...valores);
+
+                  if (dashboardAtividadesOrdenadas.length === 0) {
+                    return <p className="text-sm text-slate-500">Nenhuma atividade encontrada.</p>;
+                  }
+
+                  return (
+                    <div className="relative min-w-max pb-2">
+                      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <div key={idx} className="border-t border-slate-100" />
+                        ))}
+                      </div>
+
+                      <div className="relative flex items-end gap-3 min-w-max">
+                        {dashboardAtividadesOrdenadas.map((item) => {
+                          const valor = obterValorMetricaDashboard(dashboardAtividadeMetrica, item);
+                          const altura = maxValor > 0 ? Math.round((valor / maxValor) * chartHeight) : 0;
+                          const participantesTotal = item.participantes + item.participantesPreReservas;
+                          const ticket = item.reservas > 0 ? item.valor / item.reservas : 0;
+
+                          return (
+                            <div key={item.nome} className="group relative flex w-20 flex-col items-center">
+                              <div style={{ height: `${chartHeight}px` }} className="flex items-end">
+                                {valor > 0 ? (
+                                  <div
+                                    className={`w-12 rounded-t ${cor}`}
+                                    style={{ height: `${Math.max(2, altura)}px` }}
+                                  />
+                                ) : (
+                                  <div className="w-12 rounded-t bg-slate-200" style={{ height: '2px' }} />
+                                )}
+                              </div>
+
+                              <div className="pointer-events-none absolute -top-2 left-1/2 z-10 w-64 -translate-x-1/2 -translate-y-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 opacity-0 shadow-lg transition group-hover:opacity-100">
+                                <p className="font-semibold text-slate-900">{item.nome}</p>
+                                <div className="mt-1 space-y-0.5">
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-500">Faturamento</span>
+                                    <span className="font-semibold">{dashboardCensurar ? '••••' : formatCurrency(item.valor)}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-500">Confirmadas</span>
+                                    <span className="font-semibold">{item.reservas.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-500">Pré-reservas</span>
+                                    <span className="font-semibold">{item.preReservas.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-500">Participantes</span>
+                                    <span className="font-semibold">{participantesTotal.toLocaleString('pt-BR')}</span>
+                                  </p>
+                                  <p className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
+                                    <span className="text-slate-500">Ticket médio</span>
+                                    <span className="font-semibold">{dashboardCensurar ? '••••' : formatCurrency(ticket)}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span
+                                title={item.nome}
+                                className="mt-2 w-20 truncate text-center text-[10px] font-medium text-slate-500"
+                              >
+                                {item.nome}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+              {dashboardCensurar ? (
+                <>
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">Dados por cliente</h3>
+                      <p className="text-sm text-slate-500">Clientes e valores censurados.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                    Informações de clientes ocultas. Clique no ícone de olho para exibir.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">Dados por cliente</h3>
+                      <p className="text-sm text-slate-500">Dados completos por cliente no período.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={dashboardClienteMetrica}
+                        onChange={(e) =>
+                          setDashboardClienteMetrica(
+                            e.target.value as 'faturamento' | 'confirmadas' | 'pre_reservas' | 'participantes'
+                          )
+                        }
+                        className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      >
+                        <option value="faturamento" disabled={dashboardCensurar}>Faturamento</option>
+                        <option value="confirmadas">Confirmadas</option>
+                        <option value="pre_reservas">Pré-reservas</option>
+                        <option value="participantes">Participantes (total)</option>
+                      </select>
+
+                      <input
+                        value={dashboardClienteFiltro}
+                        onChange={(e) => setDashboardClienteFiltro(e.target.value)}
+                        placeholder="Filtrar cliente, CPF ou telefone..."
+                        className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs font-semibold uppercase text-slate-400">
+                      Exibindo {dashboardClientesParaGrafico.length.toLocaleString('pt-BR')} de{' '}
+                      {dashboardClientesOrdenados.length.toLocaleString('pt-BR')} clientes
+                      {!dashboardMostrarTodosClientes && dashboardClienteFiltro.trim().length === 0 ? ' (top 30)' : ''}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() => setDashboardMostrarTodosClientes((prev) => !prev)}
+                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+                    >
+                      {dashboardMostrarTodosClientes ? 'Mostrar top 30' : 'Mostrar todos'}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 overflow-x-auto">
+                    {(() => {
+                      const chartHeight = 140;
+                      const cor =
+                        dashboardClienteMetrica === 'faturamento'
+                          ? 'bg-blue-600'
+                          : dashboardClienteMetrica === 'confirmadas'
+                            ? 'bg-emerald-600'
+                            : dashboardClienteMetrica === 'pre_reservas'
+                              ? 'bg-amber-500'
+                              : 'bg-indigo-600';
+
+                      const valores = dashboardClientesParaGrafico.map((item) =>
+                        obterValorMetricaDashboard(dashboardClienteMetrica, item)
+                      );
+                      const maxValor = Math.max(0, ...valores);
+
+                      if (dashboardClientesParaGrafico.length === 0) {
+                        return <p className="text-sm text-slate-500">Nenhum cliente encontrado.</p>;
+                      }
+
+                      return (
+                        <div className="relative min-w-max pb-2">
+                          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                            {Array.from({ length: 5 }).map((_, idx) => (
+                              <div key={idx} className="border-t border-slate-100" />
+                            ))}
+                          </div>
+
+                          <div className="relative flex items-end gap-3 min-w-max">
+                            {dashboardClientesParaGrafico.map((item) => {
+                              const valor = obterValorMetricaDashboard(dashboardClienteMetrica, item);
+                              const altura = maxValor > 0 ? Math.round((valor / maxValor) * chartHeight) : 0;
+                              const participantesTotal = item.participantes + item.participantesPreReservas;
+                              const ticket = item.reservas > 0 ? item.valor / item.reservas : 0;
+                              const identificador = item.cpf || item.telefone || item.chave;
+                              const label = (item.nome || identificador || '---').split(' ')[0];
+
+                              return (
+                                <div key={identificador} className="group relative flex w-16 flex-col items-center">
+                                  <div style={{ height: `${chartHeight}px` }} className="flex items-end">
+                                    {valor > 0 ? (
+                                      <div
+                                        className={`w-10 rounded-t ${cor}`}
+                                        style={{ height: `${Math.max(2, altura)}px` }}
+                                      />
+                                    ) : (
+                                      <div className="w-10 rounded-t bg-slate-200" style={{ height: '2px' }} />
+                                    )}
+                                  </div>
+
+                                  <div className="pointer-events-none absolute -top-2 left-1/2 z-10 w-72 -translate-x-1/2 -translate-y-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 opacity-0 shadow-lg transition group-hover:opacity-100">
+                                    <p className="font-semibold text-slate-900">{item.nome || '---'}</p>
+                                    <p className="mt-0.5 text-[11px] text-slate-500">{item.cpf || item.telefone || '---'}</p>
+                                    <div className="mt-1 space-y-0.5">
+                                      <p className="flex items-center justify-between gap-3">
+                                        <span className="text-slate-500">Faturamento</span>
+                                        <span className="font-semibold">{formatCurrency(item.valor)}</span>
+                                      </p>
+                                      <p className="flex items-center justify-between gap-3">
+                                        <span className="text-slate-500">Confirmadas</span>
+                                        <span className="font-semibold">{item.reservas.toLocaleString('pt-BR')}</span>
+                                      </p>
+                                      <p className="flex items-center justify-between gap-3">
+                                        <span className="text-slate-500">Pré-reservas</span>
+                                        <span className="font-semibold">{item.preReservas.toLocaleString('pt-BR')}</span>
+                                      </p>
+                                      <p className="flex items-center justify-between gap-3">
+                                        <span className="text-slate-500">Participantes</span>
+                                        <span className="font-semibold">{participantesTotal.toLocaleString('pt-BR')}</span>
+                                      </p>
+                                      <p className="flex items-center justify-between gap-3 border-t border-slate-100 pt-1">
+                                        <span className="text-slate-500">Ticket médio</span>
+                                        <span className="font-semibold">{formatCurrency(ticket)}</span>
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <span
+                                    title={item.nome || identificador}
+                                    className="mt-2 w-16 truncate text-center text-[10px] font-medium text-slate-500"
+                                  >
+                                    {label}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </article>
+          </div>
+
+        </section>
+
+      )}
+
+
+
       {/* ========== Reservas ========== */}
 
       {aba === 'reservas' && (
 
         <section className="space-y-6">
 
-          <div className={`grid gap-6 ${calendarioAberto ? 'lg:grid-cols-[320px_1fr]' : 'lg:grid-cols-1'}`}>
+          <div className={`grid gap-6 ${mostrarCalendario ? 'lg:grid-cols-[320px_minmax(0,1fr)]' : 'lg:grid-cols-1'}`}>
 
-            {calendarioAberto && (
-              <div className="space-y-6 lg:min-w-0">
-
-              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            {mostrarCalendario && (
+              <div className="relative lg:min-w-0">
+                <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
                 <div className="flex items-center justify-between">
 
@@ -4737,82 +5581,22 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 </button>
 
-              </article>
-
-
-
-              {/*
-              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-                <h3 className="text-sm font-semibold text-slate-700">Resumo do dia</h3>
-
-                <dl className="mt-4 space-y-3 text-sm">
-
-                  <div className="flex items-center justify-between text-slate-500">
-
-                    <dt>Reservas confirmadas</dt>
-
-                    <dd className="font-semibold text-slate-900">{totalReservasConfirmadas}</dd>
-
-                  </div>
-
-                  <div className="flex items-center justify-between text-slate-500">
-
-                    <dt>Pré-reservas</dt>
-
-                    <dd className="font-semibold text-slate-900">{totalPreReservas}</dd>
-
-                  </div>
-
-                  <div className="flex items-center justify-between text-slate-500">
-
-                    <dt>Participantes</dt>
-
-                    <dd className="font-semibold text-slate-900">{totalParticipantesDoDia}</dd>
-
-                  </div>
-
-                  <div className="flex items-center justify-between text-slate-500">
-
-                    <dt>Horários ativos</dt>
-
-                    <dd className="font-semibold text-slate-900">{Object.keys(reservas).length}</dd>
-
-                  </div>
-
-                  <div className="flex items-center justify-between text-slate-500">
-
-                    <dt>Combos cadastrados</dt>
-
-                    <dd className="font-semibold text-slate-900">{totalCombosAtivos}</dd>
-
-                  </div>
-
-                </dl>
-
-                <button
-
-                  onClick={handleAddReserva}
-
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
-
-                >
-
-                  <FaPlus className="h-4 w-4" />
-
-                  Reserva manual
-
-                </button>
-
-              </article>
-              */}
-            </div>
-
+                  </article>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarCalendario(false)}
+                    className="hidden lg:flex absolute -right-3 top-1/2 -translate-y-1/2 h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
+                    aria-label="Recolher calendário"
+                    title="Recolher calendário"
+                  >
+                    <FaChevronLeft className="h-4 w-4" />
+                  </button>
+              </div>
             )}
 
 
 
-            <article className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:min-w-0">
+            <article className="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm">
 
               <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
 
@@ -4830,47 +5614,16 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
 
+                  <button
+                    type="button"
+                    onClick={() => setMostrarCalendario((prev) => !prev)}
+                    className="inline-flex items-center gap-2 self-start rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 whitespace-nowrap sm:self-auto"
+                  >
+                    <FaCalendarAlt className="h-4 w-4" />
+                    {mostrarCalendario ? 'Recolher calendário' : 'Mostrar calendário'}
+                  </button>
+
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-
-                    <button
-
-                      type="button"
-
-                      onClick={() => setCalendarioAberto((aberto) => !aberto)}
-
-                      className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-
-                      title={calendarioAberto ? 'Recolher calendário' : 'Mostrar calendário'}
-
-                    >
-
-                      {calendarioAberto ? <FaChevronLeft className="h-4 w-4" /> : <FaChevronRight className="h-4 w-4" />}
-
-                      <span className="whitespace-nowrap">{calendarioAberto ? 'Recolher calendário' : 'Mostrar calendário'}</span>
-
-                    </button>
-
-                    {!calendarioAberto && (
-
-                      <input
-
-                        type="date"
-
-                        value={dayjs(selectedDate).format('YYYY-MM-DD')}
-
-                        onChange={(e) => {
-                          const valor = e.target.value;
-                          if (!valor) return;
-                          const [ano, mes, dia] = valor.split('-').map(Number);
-                          if (!ano || !mes || !dia) return;
-                          setSelectedDate(new Date(ano, mes - 1, dia));
-                        }}
-
-                        className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
-
-                      />
-
-                    )}
 
                     <select
 
@@ -5084,26 +5837,21 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                       : 'bg-white border-slate-200';
 
-
-                                const pacoteDescricao = formatarPacote(reserva);
+                            const pacoteDescricao = formatarPacote(reserva);
 
                                 const valorFormatado = formatarValor(reserva.valor);
 
-                                const template =
-                                  whatsappConfig.mensagemConfirmacaoManual ||
-                                  whatsappTemplateMensagemManualPadrao;
+                                const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
 
                                 const mensagem = encodeURIComponent(
                                   montarMensagemWhatsApp(template, {
                                     nome: reserva.nome ?? '',
                                     datareserva: formatarDataReserva(reserva.data),
-                                    data: formatarDataReserva(reserva.data),
                                     horario: reserva.horario ?? '',
                                     atividade: pacoteDescricao,
                                     participantes: String(participantes),
                                     telefone: reserva.telefone ?? '',
                                     valor: valorFormatado,
-                                    status: reserva.status ?? '',
                                   })
                                 );
 
@@ -5571,11 +6319,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const chegou = reserva.chegou === true;
 
-                              const rowHighlightClass = chegou
+                            const rowHighlightClass = chegou
 
-                                ? 'bg-emerald-100/70 border-emerald-300'
+                              ? 'bg-emerald-100/70 border-emerald-300'
 
-                                : confirmada
+                              : confirmada
 
                                 ? 'bg-emerald-50/50 border-emerald-200'
 
@@ -5585,26 +6333,21 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                   : 'bg-white border-slate-200';
 
-
                             const pacoteDescricao = formatarPacote(reserva);
 
                             const valorFormatado = formatarValor(reserva.valor);
 
-                            const template =
-                              whatsappConfig.mensagemConfirmacaoManual ||
-                              whatsappTemplateMensagemManualPadrao;
+                            const template = whatsappConfig.mensagemConfirmacao || whatsappTemplatePadrao;
 
                             const mensagem = encodeURIComponent(
                               montarMensagemWhatsApp(template, {
                                 nome: reserva.nome ?? '',
                                 datareserva: formatarDataReserva(reserva.data),
-                                data: formatarDataReserva(reserva.data),
                                 horario: reserva.horario ?? '',
                                 atividade: pacoteDescricao,
                                 participantes: String(participantes),
                                 telefone: reserva.telefone ?? '',
                                 valor: valorFormatado,
-                                status: reserva.status ?? '',
                               })
                             );
 
@@ -5936,8 +6679,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </div>
 
-              </article>
-            </div>
+            </article>
+
+          </div>
 
 
 
@@ -6461,372 +7205,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-      {/* ========== Dashboard ========== */}
-
-      {aba === 'dashboard' && (
-
-        <section className="space-y-6">
-
-          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-
-            <div>
-
-              <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
-
-              <p className="text-sm text-slate-500">
-                Comparativos financeiros e operacionais (receita considera reservas pagas).
-              </p>
-
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
-
-              <label className="text-xs font-semibold uppercase text-slate-500">
-                Início
-                <input
-                  type="date"
-                  value={dashboardStartDate}
-                  onChange={(e) => setDashboardStartDate(e.target.value)}
-                  className="mt-1 w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
-                />
-              </label>
-
-              <label className="text-xs font-semibold uppercase text-slate-500">
-                Fim
-                <input
-                  type="date"
-                  value={dashboardEndDate}
-                  onChange={(e) => setDashboardEndDate(e.target.value)}
-                  className="mt-1 w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:w-44"
-                />
-              </label>
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <button
-                  type="button"
-                  onClick={() => fetchDashboardData(dashboardStartDate, dashboardEndDate)}
-                  disabled={dashboardLoading}
-                  className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
-                    dashboardLoading ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {dashboardLoading ? 'Carregando...' : 'Atualizar'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={exportarDashboardPdf}
-                  disabled={dashboardLoading}
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Exportar relatório
-                </button>
-              </div>
-
-            </div>
-
-          </div>
-
-          {dashboardError && (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700 shadow-sm">
-              {dashboardError}
-            </div>
-          )}
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Receita (pagas)</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.receita)}</p>
-              <p className="mt-2 text-xs text-slate-500">
-                {dashboardResumoStatus.pagas} de {dashboardResumoStatus.total} reservas pagas.
-              </p>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas (total)</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardResumoStatus.total}</p>
-              <p className="mt-2 text-xs text-slate-500">
-                {dashboardResumoStatus.confirmadas} confirmadas • {dashboardResumoStatus.preReservas} pré-reservas
-              </p>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas pagas</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardResumoStatus.pagas}</p>
-              <p className="mt-2 text-xs text-slate-500">Geram receita e entram no financeiro.</p>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Taxa de pagamento</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">
-                {dashboardResumoStatus.total
-                  ? `${Math.round((dashboardResumoStatus.pagas / dashboardResumoStatus.total) * 100)}%`
-                  : '0%'}
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                {dashboardResumoStatus.pagas} / {dashboardResumoStatus.total} reservas.
-              </p>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes (pagas)</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{dashboardTotais.totalParticipantes}</p>
-              <p className="mt-2 text-xs text-slate-500">Total somado nas reservas pagas.</p>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ticket médio</p>
-              <p className="mt-3 text-3xl font-semibold text-slate-900">{formatCurrency(dashboardTotais.ticketMedio)}</p>
-              <p className="mt-2 text-xs text-slate-500">Receita / reservas pagas.</p>
-            </article>
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Receita por dia</h3>
-                  <p className="text-xs text-slate-500">Somente reservas pagas.</p>
-                </div>
-                <div className="text-left sm:text-right">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Total</p>
-                  <p className="text-lg font-semibold text-slate-900">{formatCompactCurrency(dashboardTotais.receita)}</p>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <LineChart
-                  height={176}
-                  series={[
-                    {
-                      label: 'Receita',
-                      values: dashboardSerieEvolucao.receita,
-                      stroke: '#2563eb',
-                      fill: 'rgba(37, 99, 235, 0.12)',
-                    },
-                  ]}
-                />
-              </div>
-
-              <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                <span>{formatarDataReserva(dashboardStartDate)}</span>
-                <span>{formatarDataReserva(dashboardEndDate)}</span>
-              </div>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Reservas por dia</h3>
-                  <p className="text-xs text-slate-500">Comparativo total x pagas.</p>
-                </div>
-                <div className="text-left sm:text-right">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Período</p>
-                  <p className="text-lg font-semibold text-slate-900">{formatCompactNumber(dashboardResumoStatus.total)}</p>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
-                  Total
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
-                  Pagas
-                </span>
-              </div>
-
-              <div className="mt-4">
-                <LineChart
-                  height={176}
-                  series={[
-                    {
-                      label: 'Total',
-                      values: dashboardSerieEvolucao.total,
-                      stroke: '#0f172a',
-                    },
-                    {
-                      label: 'Pagas',
-                      values: dashboardSerieEvolucao.pagas,
-                      stroke: '#059669',
-                      fill: 'rgba(5, 150, 105, 0.12)',
-                    },
-                  ]}
-                />
-              </div>
-
-              <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                <span>{formatarDataReserva(dashboardStartDate)}</span>
-                <span>{formatarDataReserva(dashboardEndDate)}</span>
-              </div>
-            </article>
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-3">
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Status das reservas</h3>
-                  <p className="text-xs text-slate-500">Distribuição no período.</p>
-                </div>
-              </div>
-              <div className="mt-4">
-                <BarList items={dashboardStatusItens} />
-              </div>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Top atividades</h3>
-                  <p className="text-xs text-slate-500">Ranking por receita (pagas).</p>
-                </div>
-              </div>
-              <div className="mt-4">
-                <BarList items={dashboardTopAtividadesItens} />
-              </div>
-            </article>
-
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
-                  <p className="text-xs text-slate-500">Ranking por receita (pagas).</p>
-                </div>
-              </div>
-              <div className="mt-4">
-                <BarList items={dashboardTopClientesItens} />
-              </div>
-            </article>
-          </div>
-
-          <details className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <summary className="flex cursor-pointer items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Tabelas detalhadas</p>
-                <p className="text-xs text-slate-500">Dados completos por dia, atividade e cliente.</p>
-              </div>
-              <FaChevronRight className="h-4 w-4 text-slate-400 transition group-open:rotate-90" />
-            </summary>
-
-            <div className="mt-5 grid gap-6 lg:grid-cols-3">
-              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-                <div className="border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Por dia</h3>
-                  <p className="text-xs text-slate-500">Reservas pagas agregadas por data.</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full divide-y divide-slate-100 text-sm">
-                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Data</th>
-                        <th className="px-4 py-3 text-right">Reservas</th>
-                        <th className="px-4 py-3 text-right">Receita</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dashboardPorDia.length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
-                            Nenhum dado no período.
-                          </td>
-                        </tr>
-                      ) : (
-                        dashboardPorDia.map((item) => (
-                          <tr key={item.data}>
-                            <td className="px-4 py-3 text-slate-700">{formatarDataReserva(item.data)}</td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-
-              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-                <div className="border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Por atividade</h3>
-                  <p className="text-xs text-slate-500">Receita e volume por atividade.</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full divide-y divide-slate-100 text-sm">
-                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Atividade</th>
-                        <th className="px-4 py-3 text-right">Reservas</th>
-                        <th className="px-4 py-3 text-right">Receita</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dashboardAtividades.length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="px-4 py-6 text-center text-sm text-slate-500">
-                            Nenhum dado no período.
-                          </td>
-                        </tr>
-                      ) : (
-                        dashboardAtividades.map((item) => (
-                          <tr key={item.atividade}>
-                            <td className="px-4 py-3 text-slate-700">{item.atividade}</td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-
-              <article className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-1">
-                <div className="border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Top clientes</h3>
-                  <p className="text-xs text-slate-500">Maiores clientes no período.</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full divide-y divide-slate-100 text-sm">
-                    <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Cliente</th>
-                        <th className="px-4 py-3 text-left">CPF/Telefone</th>
-                        <th className="px-4 py-3 text-right">Reservas</th>
-                        <th className="px-4 py-3 text-right">Receita</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dashboardClientesTop.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
-                            Nenhum dado no período.
-                          </td>
-                        </tr>
-                      ) : (
-                        dashboardClientesTop.map((item) => (
-                          <tr key={item.clienteId}>
-                            <td className="px-4 py-3 text-slate-700">{item.nome || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600">{item.clienteId}</td>
-                            <td className="px-4 py-3 text-right font-medium text-slate-700">{item.quantidade}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(item.receita)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-            </div>
-          </details>
-
-        </section>
-
-      )}
-
-
-
-      {/* ========== Pacotes ========== */}
+            {/* ========== Pacotes ========== */}
 
       {aba === 'pacotes' && (
 
@@ -8581,90 +8960,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-            <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-
-              <div>
-
-                <h3 className="text-lg font-semibold text-slate-900">WhatsApp - Mensagem do botao</h3>
-
-                <p className="text-sm text-slate-500">
-                  Texto pre-preenchido ao clicar no botao WhatsApp de uma reserva.
-                </p>
-
-              </div>
-
-            </div>
-
-            <div className="mt-4 space-y-4">
-
-              <label className="text-xs font-semibold uppercase text-slate-500">
-                Manual (botao)
-                <textarea
-                  value={whatsappConfig.mensagemConfirmacaoManual}
-                  onChange={(e) =>
-                    setWhatsappConfig((prev) => ({
-                      ...prev,
-                      mensagemConfirmacaoManual: e.target.value,
-                    }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                  rows={5}
-                  placeholder={whatsappTemplateMensagemManualPadrao}
-                />
-              </label>
-
-              <div className="flex flex-wrap gap-2">
-                {whatsappPlaceholders.map((placeholder) => (
-                  <button
-                    key={`clientes-manual-${placeholder}`}
-                    type="button"
-                    onClick={() => inserirPlaceholderWhatsapp('mensagemConfirmacaoManual', placeholder)}
-                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
-                  >
-                    {placeholder}
-                  </button>
-                ))}
-              </div>
-
-              <div>
-                <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
-                <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
-                  {mensagemPreviewWhatsappManual || '-'}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setWhatsappConfig((prev) => ({
-                      ...prev,
-                      mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
-                    }))
-                  }
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                >
-                  Restaurar padrao
-                </button>
-
-                <button
-                  type="button"
-                  onClick={salvarWhatsappConfig}
-                  disabled={whatsappSalvando}
-                  className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${
-                    whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
-                  }`}
-                >
-                  {whatsappSalvando ? 'Salvando...' : 'Salvar mensagem'}
-                </button>
-              </div>
-
-            </div>
-
-          </div>
-
         </section>
 
       )}
@@ -8811,11 +9106,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 <div>
 
-                  <h3 className="text-lg font-semibold text-slate-900">Mensagens</h3>
+                  <h3 className="text-lg font-semibold text-slate-900">Mensagem automatica</h3>
 
-                  <p className="text-sm text-slate-500">
-                    Personalize a mensagem enviada automaticamente ao confirmar reservas.
-                  </p>
+                  <p className="text-sm text-slate-500">Personalize o texto enviado ao confirmar reservas.</p>
 
                 </div>
 
@@ -8843,152 +9136,112 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </div>
 
-              <div className="mt-4 space-y-6">
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-                  <div className="flex flex-col gap-1 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500">Automatica (bot)</p>
-                      <p className="text-sm text-slate-500">
-                        Enviada automaticamente ao confirmar reservas.
-                      </p>
-                    </div>
-                  </div>
+              <div className="mt-4 space-y-4">
 
-                  <div className="mt-3 space-y-4">
-                    <label className="text-xs font-semibold uppercase text-slate-500">
-                      Texto automatico
-                      <textarea
-                        value={whatsappConfig.mensagemConfirmacaoAutomatica}
-                        onChange={(e) =>
-                          setWhatsappConfig((prev) => ({
-                            ...prev,
-                            mensagemConfirmacaoAutomatica: e.target.value,
-                          }))
-                        }
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                        rows={5}
-                        placeholder={whatsappTemplateConfirmacaoAutomaticaPadrao}
-                      />
-                    </label>
+                <label className="text-xs font-semibold uppercase text-slate-500">
 
-                    <div className="flex flex-wrap gap-2">
-                      {whatsappPlaceholders.map((placeholder) => (
-                        <button
-                          key={`auto-${placeholder}`}
-                          type="button"
-                          onClick={() =>
-                            inserirPlaceholderWhatsapp('mensagemConfirmacaoAutomatica', placeholder)
-                          }
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
-                        >
-                          {placeholder}
-                        </button>
-                      ))}
-                    </div>
+                  Texto da confirmacao
 
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
-                      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
-                        {mensagemPreviewWhatsappAutomatica || '-'}
-                      </div>
-                    </div>
+                  <textarea
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWhatsappConfig((prev) => ({
-                            ...prev,
-                            mensagemConfirmacaoAutomatica:
-                              whatsappTemplateConfirmacaoAutomaticaPadrao,
-                          }))
-                        }
-                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                      >
-                        Restaurar padrao
-                      </button>
-                    </div>
-                  </div>
+                    value={whatsappConfig.mensagemConfirmacao}
+
+                    onChange={(e) =>
+
+                      setWhatsappConfig((prev) => ({ ...prev, mensagemConfirmacao: e.target.value }))
+
+                    }
+
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+
+                    rows={5}
+
+                    placeholder={whatsappTemplatePadrao}
+
+                  />
+
+                </label>
+
+                <div className="flex flex-wrap gap-2">
+
+                  {whatsappPlaceholders.map((placeholder) => (
+
+                    <button
+
+                      key={placeholder}
+
+                      type="button"
+
+                      onClick={() => inserirPlaceholderWhatsapp(placeholder)}
+
+                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+
+                    >
+
+                      {placeholder}
+
+                    </button>
+
+                  ))}
+
                 </div>
 
-                {/*
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-                  <div className="flex flex-col gap-1 border-b border-slate-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500">Manual (botao)</p>
-                      <p className="text-sm text-slate-500">
-                        Texto pre-preenchido ao clicar no botao WhatsApp de uma reserva.
-                      </p>
-                    </div>
+                <div>
+
+                  <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
+
+                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+
+                    {mensagemPreviewWhatsapp || '-'}
+
                   </div>
 
-                  <div className="mt-3 space-y-4">
-                    <label className="text-xs font-semibold uppercase text-slate-500">
-                      Texto do botao
-                      <textarea
-                        value={whatsappConfig.mensagemConfirmacaoManual}
-                        onChange={(e) =>
-                          setWhatsappConfig((prev) => ({
-                            ...prev,
-                            mensagemConfirmacaoManual: e.target.value,
-                          }))
-                        }
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                        rows={5}
-                        placeholder={whatsappTemplateMensagemManualPadrao}
-                      />
-                    </label>
-
-                    <div className="flex flex-wrap gap-2">
-                      {whatsappPlaceholders.map((placeholder) => (
-                        <button
-                          key={`manual-${placeholder}`}
-                          type="button"
-                          onClick={() =>
-                            inserirPlaceholderWhatsapp('mensagemConfirmacaoManual', placeholder)
-                          }
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
-                        >
-                          {placeholder}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-500">Preview</p>
-                      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
-                        {mensagemPreviewWhatsappManual || '-'}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWhatsappConfig((prev) => ({
-                            ...prev,
-                            mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
-                          }))
-                        }
-                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                      >
-                        Restaurar padrao
-                      </button>
-                    </div>
-                  </div>
                 </div>
-                */}
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+
                   <button
+
                     type="button"
-                    onClick={salvarWhatsappConfig}
-                    disabled={whatsappSalvando}
-                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+
+                    onClick={() =>
+
+                      setWhatsappConfig((prev) => ({
+
+                        ...prev,
+
+                        mensagemConfirmacao: whatsappTemplatePadrao,
+
+                      }))
+
+                    }
+
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+
                   >
-                    {whatsappSalvando ? 'Salvando...' : 'Salvar configuracoes'}
+
+                    Restaurar padrao
+
                   </button>
+
+                  <button
+
+                    type="button"
+
+                    onClick={salvarWhatsappConfig}
+
+                    disabled={whatsappSalvando}
+
+                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-sm transition ${whatsappSalvando ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+
+                  >
+
+                    {whatsappSalvando ? 'Salvando...' : 'Salvar configuracoes'}
+
+                  </button>
+
                 </div>
+
               </div>
 
             </div>
