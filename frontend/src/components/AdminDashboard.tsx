@@ -9737,23 +9737,51 @@ const totalParticipantesDoDia = useMemo(() => {
               <table className="w-full table-fixed divide-y divide-slate-100 text-sm">
                 <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 text-left w-[28%]">Nome</th>
-                    <th className="px-4 py-3 text-left w-[16%]">CPF</th>
-                    <th className="px-4 py-3 text-left w-[20%]">Telefone</th>
-                    <th className="px-4 py-3 text-left w-[18%]">Data</th>
+                    <th className="px-4 py-3 text-left w-[26%]">Nome</th>
+                    <th className="px-4 py-3 text-left w-[14%]">CPF</th>
+                    <th className="px-4 py-3 text-left w-[18%]">Telefone</th>
+                    <th className="px-4 py-3 text-left w-[14%]">Data</th>
                     <th className="px-4 py-3 text-left w-[18%]">Atividade</th>
+                    <th className="px-4 py-3 text-right w-[10%]">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {resultadosPesquisa.map((resultado) => (
-                    <tr key={resultado.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3 font-medium text-slate-800 break-words">{resultado.nome}</td>
-                      <td className="px-4 py-3 text-slate-600 break-all">{resultado.cpf}</td>
-                      <td className="px-4 py-3 text-slate-600 break-all">{resultado.telefone}</td>
-                      <td className="px-4 py-3 text-slate-600">{resultado.data}</td>
-                      <td className="px-4 py-3 text-slate-600 break-words">{resultado.atividade}</td>
-                    </tr>
-                  ))}
+                  {resultadosPesquisa.map((resultado) => {
+                    const participantes = calcularParticipantes(resultado);
+                    const pacoteDescricao = formatarPacote(resultado);
+                    const valorFormatado = formatarValor(resultado.valor);
+
+                    const telefoneLimpo = (resultado.telefone || '').replace(/\D/g, '');
+                    const telefoneComCodigo = telefoneLimpo.startsWith('55')
+                      ? telefoneLimpo
+                      : telefoneLimpo
+                        ? `55${telefoneLimpo}`
+                        : '';
+                    const podeAbrirWhatsapp = Boolean(telefoneComCodigo);
+
+                    return (
+                      <tr key={resultado.id} className="hover:bg-slate-50/80">
+                        <td className="px-4 py-3 font-medium text-slate-800 break-words">{resultado.nome}</td>
+                        <td className="px-4 py-3 text-slate-600 break-all">{resultado.cpf}</td>
+                        <td className="px-4 py-3 text-slate-600 break-all">{resultado.telefone}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatarDataReserva(resultado.data)}</td>
+                        <td className="px-4 py-3 text-slate-600 break-words">{resultado.atividade}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              abrirEnvioWhatsapp(resultado, participantes, pacoteDescricao, valorFormatado)
+                            }
+                            disabled={!podeAbrirWhatsapp}
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <FaWhatsapp className="h-3.5 w-3.5" />
+                            WhatsApp
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
