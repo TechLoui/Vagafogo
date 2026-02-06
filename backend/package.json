@@ -17,7 +17,7 @@
     "nodemailer": "^7.0.5",
     "qrcode": "^1.5.4",
     "uuid": "^9.0.1",
-    "whatsapp-web.js": "^1.34.2",
+    "whatsapp-web.js": "^1.34.6",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

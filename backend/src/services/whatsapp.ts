@@ -3,6 +3,10 @@ import qrcode from "qrcode";
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 import { db } from "./firebase";
 
+type PuppeteerPage = {
+  evaluate: <T>(pageFunction: (...args: any[]) => T | Promise<T>, ...args: any[]) => Promise<T>;
+};
+
 type WhatsappStatus =
   | "idle"
   | "initializing"
@@ -109,6 +113,89 @@ const handleInitFailure = (error?: unknown) => {
   scheduleRetry(lastError);
 };
 
+class WhatsappIndisponivelError extends Error {
+  cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "WhatsappIndisponivelError";
+    this.cause = cause;
+  }
+}
+
+const getErrorMessage = (error: unknown): string => {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  const maybeMessage = (error as { message?: unknown })?.message;
+  if (typeof maybeMessage === "string") return maybeMessage;
+  return String(error);
+};
+
+const isStoreNotInjectedError = (error: unknown): boolean => {
+  const message = getErrorMessage(error);
+  return (
+    message.includes("WidFactory") &&
+    (message.includes("Cannot read properties of undefined") ||
+      message.includes("window.Store") ||
+      message.includes("Evaluation failed"))
+  );
+};
+
+const carregarFuncoesInjecao = (): { ExposeStore: () => void; LoadUtils: () => void } | null => {
+  try {
+    const store = require("whatsapp-web.js/src/util/Injected/Store") as { ExposeStore?: unknown };
+    const utils = require("whatsapp-web.js/src/util/Injected/Utils") as { LoadUtils?: unknown };
+
+    if (typeof store.ExposeStore !== "function" || typeof utils.LoadUtils !== "function") {
+      return null;
+    }
+
+    return {
+      ExposeStore: store.ExposeStore as () => void,
+      LoadUtils: utils.LoadUtils as () => void,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const obterPuppeteerPage = (): PuppeteerPage | null => {
+  const page = (client as any)?.pupPage as PuppeteerPage | undefined;
+  return page ?? null;
+};
+
+const garantirInjecaoStore = async (): Promise<boolean> => {
+  const page = obterPuppeteerPage();
+  if (!page) return false;
+
+  try {
+    const injected = await page.evaluate(() => {
+      const w = window as any;
+      return Boolean(w.Store && w.WWebJS && w.Store.WidFactory);
+    });
+    if (injected) return true;
+  } catch {
+    // ignore
+  }
+
+  const fns = carregarFuncoesInjecao();
+  if (!fns) return false;
+
+  try {
+    await page.evaluate(fns.ExposeStore);
+    await page.evaluate(fns.LoadUtils);
+
+    const injected = await page.evaluate(() => {
+      const w = window as any;
+      return Boolean(w.Store && w.WWebJS && w.Store.WidFactory);
+    });
+    return Boolean(injected);
+  } catch (error) {
+    console.warn("[whatsapp] Falha ao reinjetar Store/WWebJS:", error);
+    return false;
+  }
+};
+
 const formatDateKey = (date: Date) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(date);
 
@@ -137,11 +224,25 @@ const obterDataReserva = (valor: unknown): string => {
 };
 
 const obterNumeroWhatsapp = async (telefone: string) => {
-  if (!client) return null;
+  if (!client) {
+    throw new WhatsappIndisponivelError("whatsapp_nao_inicializado");
+  }
   try {
     const id = await client.getNumberId(telefone);
     return id?._serialized ?? null;
   } catch (error) {
+    if (isStoreNotInjectedError(error)) {
+      const reinjetado = await garantirInjecaoStore();
+      if (reinjetado && client) {
+        try {
+          const id = await client.getNumberId(telefone);
+          return id?._serialized ?? null;
+        } catch (innerError) {
+          throw new WhatsappIndisponivelError("whatsapp_store_indisponivel", innerError);
+        }
+      }
+      throw new WhatsappIndisponivelError("whatsapp_store_indisponivel", error);
+    }
     console.warn("[whatsapp] Erro ao validar numero:", error);
     return null;
   }
@@ -345,7 +446,14 @@ export async function enviarConfirmacaoWhatsapp(
     id: reservaId,
   });
 
-  const whatsappId = await obterNumeroWhatsapp(telefone);
+  let whatsappId: string | null;
+  try {
+    whatsappId = await obterNumeroWhatsapp(telefone);
+  } catch (error) {
+    console.warn("[whatsapp] Falha ao validar numero (cliente indisponivel):", error);
+    handleInitFailure(error);
+    return { enviado: false, motivo: "whatsapp_nao_conectado" };
+  }
   if (!whatsappId) {
     return { enviado: false, motivo: "telefone_sem_whatsapp" };
   }
@@ -377,6 +485,12 @@ export async function processarPendentesWhatsapp(): Promise<ResultadoProcessamen
     }
 
     if (!client || status !== "ready") {
+      return { enviados: 0, falhas: 0, motivo: "whatsapp_nao_conectado" };
+    }
+
+    const injecaoOk = await garantirInjecaoStore();
+    if (!injecaoOk) {
+      handleInitFailure(new Error("whatsapp_store_indisponivel"));
       return { enviados: 0, falhas: 0, motivo: "whatsapp_nao_conectado" };
     }
 
