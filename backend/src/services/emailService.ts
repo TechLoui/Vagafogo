@@ -1,64 +1,101 @@
-// emailService.ts
 import nodemailer, { type Transporter } from "nodemailer";
 
-let cachedTransporter: Transporter | null = null;
-
-function getTransporter(): Transporter {
-  if (cachedTransporter) return cachedTransporter;
-
-  const host = process.env.SMTP_HOST?.trim() || "smtp.hostinger.com";
-  const portEnv = process.env.SMTP_PORT?.trim();
-  const port = portEnv ? Number(portEnv) : 465;
-  const secureEnv = process.env.SMTP_SECURE?.trim();
-  const secure = secureEnv ? secureEnv === "true" : port === 465;
-
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
-
-  if (!user || !pass) {
-    throw new Error("SMTP_USER/SMTP_PASS não configurados.");
-  }
-
-  cachedTransporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-  });
-
-  return cachedTransporter;
-}
-
-export async function enviarEmailConfirmacao({
-  nome,
-  email,
-  atividade,
-  data,
-  horario,
-  participantes,
-}: {
+type EmailConfirmacaoPayload = {
   nome: string;
   email: string;
   atividade: string;
   data: string;
   horario: string;
   participantes: number;
-}) {
-  const from = process.env.SMTP_FROM?.trim() || `"Vagafogo Reservas" <${process.env.SMTP_USER}>`;
+};
+
+type EmailConfirmacaoResultado =
+  | { enviado: true }
+  | { enviado: false; motivo: "DISABLED" | "MISSING_CONFIG" };
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalizado = value.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalizado)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalizado)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+const SMTP_HOST = process.env.SMTP_HOST?.trim() || "smtp.hostinger.com";
+const SMTP_PORT = Number(process.env.SMTP_PORT?.trim() || 465);
+const SMTP_SECURE =
+  (process.env.SMTP_SECURE?.trim() || (SMTP_PORT === 465 ? "true" : "false")) ===
+  "true";
+const SMTP_USER = process.env.SMTP_USER?.trim() || "";
+const SMTP_PASS = process.env.SMTP_PASS?.trim() || "";
+const SMTP_FROM =
+  process.env.SMTP_FROM?.trim() || `"Vagafogo Reservas" <${SMTP_USER}>`;
+
+const EMAIL_CONFIRMATION_ENABLED = parseBooleanEnv(
+  process.env.EMAIL_CONFIRMATION_ENABLED,
+);
+
+let cachedTransporter: Transporter | null = null;
+
+export function isEmailConfirmacaoHabilitada(): boolean {
+  if (EMAIL_CONFIRMATION_ENABLED !== undefined) {
+    return EMAIL_CONFIRMATION_ENABLED;
+  }
+
+  return Boolean(SMTP_USER && SMTP_PASS);
+}
+
+function getTransporter(): Transporter {
+  if (!SMTP_USER || !SMTP_PASS) {
+    throw new Error("SMTP_USER/SMTP_PASS não configurados.");
+  }
+
+  if (!cachedTransporter) {
+    cachedTransporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+  }
+
+  return cachedTransporter;
+}
+
+export async function enviarEmailConfirmacao(
+  payload: EmailConfirmacaoPayload,
+): Promise<EmailConfirmacaoResultado> {
+  if (!isEmailConfirmacaoHabilitada()) {
+    return { enviado: false, motivo: "DISABLED" };
+  }
+
+  if (!SMTP_USER || !SMTP_PASS) {
+    console.error("[email] SMTP_USER/SMTP_PASS não configurados.");
+    return { enviado: false, motivo: "MISSING_CONFIG" };
+  }
 
   await getTransporter().sendMail({
-    from,
-    to: email,
+    from: SMTP_FROM,
+    to: payload.email,
     subject: "Confirmação de Reserva",
     html: `
-      <h2>Olá, ${nome}!</h2>
-      <p>Recebemos sua reserva para a atividade <strong>${atividade}</strong>.</p>
-      <p><strong>Data:</strong> ${data} <br />
-         <strong>Horário:</strong> ${horario} <br />
-         <strong>Participantes:</strong> ${participantes}</p>
-      <p>Aguardamos você! 🌳</p>
+      <h2>Olá, ${payload.nome}!</h2>
+      <p>Recebemos sua reserva para a atividade <strong>${payload.atividade}</strong>.</p>
+      <p><strong>Data:</strong> ${payload.data} <br />
+         <strong>Horário:</strong> ${payload.horario} <br />
+         <strong>Participantes:</strong> ${payload.participantes}</p>
+      <p>Aguardamos você.</p>
     `,
   });
 
-  console.log(`📧 E-mail enviado para ${email}`);
+  console.log(`[email] confirmação enviada para ${payload.email}`);
+  return { enviado: true };
 }

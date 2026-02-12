@@ -89,11 +89,20 @@ app.post('/test-update-status/:reservaId', async (req, res) => {
 });
 
 // Endpoint para processar emails de confirmação
-app.post('/process-emails', async (req, res) => {
+  app.post('/process-emails', async (req, res) => {
   try {
     const { collection, query, where, getDocs, getDoc, doc } = await import('firebase/firestore');
     const { db } = await import('../services/firebase');
-    const { enviarEmailConfirmacao } = await import('../services/emailService');
+    const { enviarEmailConfirmacao, isEmailConfirmacaoHabilitada } = await import('../services/emailService');
+
+    if (!isEmailConfirmacaoHabilitada()) {
+      return res.json({
+        success: true,
+        emailsEnviados: 0,
+        emailHabilitado: false,
+        message: 'Envio de email desabilitado (EMAIL_CONFIRMATION_ENABLED=false ou SMTP não configurado)'
+      });
+    }
     
     // Buscar reservas pagas sem email enviado
     const q = query(
@@ -110,7 +119,7 @@ app.post('/process-emails', async (req, res) => {
       // Verificar se já foi enviado email (evitar spam)
       if (!reserva.emailEnviado) {
         try {
-          await enviarEmailConfirmacao({
+          const resultadoEmail = await enviarEmailConfirmacao({
             nome: reserva.nome,
             email: reserva.email,
             atividade: reserva.atividade,
@@ -118,6 +127,11 @@ app.post('/process-emails', async (req, res) => {
             horario: reserva.horario,
             participantes: reserva.participantes,
           });
+
+          if (!resultadoEmail.enviado) {
+            console.warn(`[email] Email ignorado (${resultadoEmail.motivo}): ${reserva.email}`);
+            continue;
+          }
           
           // Marcar como enviado
           const { updateDoc } = await import('firebase/firestore');
