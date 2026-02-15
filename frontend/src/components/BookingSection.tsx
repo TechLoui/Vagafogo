@@ -1984,6 +1984,13 @@ export function BookingSection() {
     ? `Faixa: ${faixasResumo.join(" / ")}`
     : "Sem horário específico";
 
+  const atividadesResumoMobile =
+    pacotesResumo.length > 0
+      ? `${pacotesResumo.slice(0, 2).join(" + ")}${
+          pacotesResumo.length > 2 ? ` +${pacotesResumo.length - 2}` : ""
+        }`
+      : "Selecione os pacotes para continuar.";
+
   const resumoCard = (
     <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-sm backdrop-blur">
       <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
@@ -2055,18 +2062,96 @@ export function BookingSection() {
     </div>
   );
 
+  const resumoCardMobile = (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Resumo
+          </p>
+          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
+            {atividadesResumoMobile}
+          </p>
+        </div>
+        <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalResumo)}</p>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-600">
+        <p>
+          <span className="font-semibold text-slate-700">Data:</span>{" "}
+          {selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}
+        </p>
+        <p>
+          <span className="font-semibold text-slate-700">Horário:</span>{" "}
+          {selectedDay ? horarioResumo : "—"}
+        </p>
+        <p>
+          <span className="font-semibold text-slate-700">Participantes:</span>{" "}
+          {totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}
+        </p>
+        <p>
+          <span className="font-semibold text-slate-700">Pagamento:</span>{" "}
+          {formaPagamento === "PIX" ? "PIX" : "Cartão"}
+        </p>
+      </div>
+      {comboAtivo && (
+        <p className="mt-2 text-xs font-semibold text-emerald-700">Combo: {comboAtivo.nome}</p>
+      )}
+    </div>
+  );
+
+  const etapasCardDesktop = (
+    <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-sm backdrop-blur">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Etapas</p>
+      <div className="mt-4 space-y-2">
+        {wizardSteps.map((stepInfo, idx) => {
+          const ativo = idx === etapa;
+          const disponivel = idx <= etapa;
+          return (
+            <button
+              key={stepInfo.title}
+              type="button"
+              disabled={!disponivel}
+              onClick={() => disponivel && setEtapa(idx as 0 | 1 | 2)}
+              className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
+                ativo
+                  ? "border-emerald-200 bg-emerald-50"
+                  : disponivel
+                  ? "border-slate-200 bg-white hover:bg-slate-50"
+                  : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-400"
+              }`}
+            >
+              <span
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                  ativo || disponivel
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-200 text-slate-500"
+                }`}
+              >
+                {idx + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{stepInfo.title}</p>
+                <p className="truncate text-xs text-slate-500">{stepInfo.description}</p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
     <section id="reservas" className="py-10">
       <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-6xl">
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start xl:grid-cols-[minmax(0,1fr)_360px]">
             <div>
               <form
                 onSubmit={handleSubmit}
                 noValidate
-                className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-xl backdrop-blur md:p-8"
+                className="rounded-3xl border border-white/60 bg-white/80 p-4 shadow-xl backdrop-blur sm:p-6 md:p-8"
               >
-                <div className="mb-8">
+                <div className="mb-6 sm:mb-8">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
@@ -2090,7 +2175,7 @@ export function BookingSection() {
                     />
                   </div>
 
-                  <div className="mt-5 hidden grid-cols-3 gap-3 sm:grid">
+                  <div className="mt-5 hidden grid-cols-3 gap-3 sm:grid lg:hidden">
                     {wizardSteps.map((stepInfo, idx) => {
                       const ativo = idx === etapa;
                       const disponivel = idx <= etapa;
@@ -2132,8 +2217,6 @@ export function BookingSection() {
                     })}
                   </div>
                 </div>
-
-                <div className="mb-8 lg:hidden">{resumoCard}</div>
 
                 {etapa === 0 && (
                   <>
@@ -3104,32 +3187,12 @@ export function BookingSection() {
                 </div>
               </div>
             )}
-            {selectedPackages.length > 0 && (
-              <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-sm font-semibold text-slate-700">Total</span>
-                  <span className="text-xl font-bold text-emerald-700">
-                    {formatCurrency(calcularTotal())}
-                  </span>
-                </div>
-                {comboAtivo && (
-                  <p className="mt-2 text-xs text-emerald-700">
-                    {hasCustomComboPricing(comboAtivo)
-                      ? `Combo ${comboAtivo.nome}: ${describeComboValores(comboAtivo)}.`
-                      : comboAtivo.preco && comboAtivo.preco > 0
-                      ? `Valor especial do combo ${comboAtivo.nome}.`
-                      : comboAtivo.desconto && comboAtivo.desconto > 0
-                      ? `Desconto de ${comboAtivo.desconto}% aplicado!`
-                      : `Combo ${comboAtivo.nome} aplicado.`}
-                  </p>
-                )}
-              </div>
-            )}
-
                   </>
                 )}
 
-                <div className="mt-10 flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mb-6 lg:hidden">{resumoCardMobile}</div>
+
+                <div className="mt-8 flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:mt-10 sm:flex-row sm:items-center sm:justify-between">
                   <button
                     type="button"
                     onClick={handleVoltarEtapa}
@@ -3255,7 +3318,10 @@ export function BookingSection() {
             </div>
 
             <aside className="hidden lg:block">
-              <div className="sticky top-6">{resumoCard}</div>
+              <div className="sticky top-6 space-y-4">
+                {resumoCard}
+                {etapasCardDesktop}
+              </div>
             </aside>
           </div>
         </div>
