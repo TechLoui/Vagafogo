@@ -2576,7 +2576,7 @@ export function BookingSection() {
                   {horario ? "para este horário" : "para esta data"}.
                 </p>
               )}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {tiposClientesAtivos.map((tipo) => {
                   const chave = obterChaveTipo(tipo);
                   const valor = Number(obterValorMapa(participantesPorTipo, tipo) ?? 0);
@@ -2588,45 +2588,70 @@ export function BookingSection() {
                     limiteNormalizado === null
                       ? undefined
                       : Math.max(limiteNormalizado - (totalParticipantesSelecionados - valor), 0);
+                  const podeDiminuir = valor > 0;
+                  const podeAumentar = typeof maximo === "number" ? valor < maximo : true;
+                  const atualizarQuantidade = (proximoValor: number) => {
+                    const valorDigitado = Math.floor(normalizarNumero(proximoValor));
+                    setParticipantesPorTipo((prev) => {
+                      if (limiteNormalizado === null) {
+                        return {
+                          ...prev,
+                          [chave]: valorDigitado,
+                        };
+                      }
+
+                      const atual = Math.floor(normalizarNumero(prev[chave]));
+                      const outros = somarMapa(prev) - atual + naoPagante;
+                      const maxParaEste = Math.max(limiteNormalizado - outros, 0);
+                      return {
+                        ...prev,
+                        [chave]: Math.min(valorDigitado, maxParaEste),
+                      };
+                    });
+                    setFieldError("participantes");
+                    setFieldError("horario");
+                  };
                   return (
-                    <div key={chave}>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        <span>{tipo.nome}</span>
+                    <div
+                      key={chave}
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                    >
+                      <label className="block text-sm font-medium text-gray-700">
+                        <span className="block">{tipo.nome}</span>
                         {tipo.descricao && (
                           <span className="mt-1 block text-xs font-normal text-gray-500">
                             {tipo.descricao}
                           </span>
                         )}
                       </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step={1}
-                        max={typeof maximo === "number" ? maximo : undefined}
-                        value={valor}
-                        onChange={(e) => {
-                          const valorDigitado = Math.floor(normalizarNumero(e.target.value));
-                          setParticipantesPorTipo((prev) => {
-                            if (limiteNormalizado === null) {
-                              return {
-                                ...prev,
-                                [chave]: valorDigitado,
-                              };
-                            }
-
-                            const atual = Math.floor(normalizarNumero(prev[chave]));
-                            const outros = somarMapa(prev) - atual + naoPagante;
-                            const maxParaEste = Math.max(limiteNormalizado - outros, 0);
-                            return {
-                              ...prev,
-                              [chave]: Math.min(valorDigitado, maxParaEste),
-                            };
-                          });
-                          setFieldError("participantes");
-                          setFieldError("horario");
-                        }}
-                        className="w-full px-3 py-2 border border-black rounded-md focus:outline-none focus:ring-2 focus:ring-black"
-                      />
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => atualizarQuantidade(valor - 1)}
+                          disabled={!podeDiminuir}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-xl font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          aria-label={`Diminuir ${tipo.nome}`}
+                        >
+                          −
+                        </button>
+                        <span className="min-w-[40px] text-center text-2xl font-bold text-slate-800">
+                          {valor}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => atualizarQuantidade(valor + 1)}
+                          disabled={!podeAumentar}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-xl font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          aria-label={`Aumentar ${tipo.nome}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                      {typeof maximo === "number" && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Máximo disponível: {maximo}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
