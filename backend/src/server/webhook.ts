@@ -1,89 +1,172 @@
 import { Router } from "express";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../services/firebase";
-import {
-  enviarEmailConfirmacao,
-  isEmailConfirmacaoHabilitada,
-} from "../services/emailService";
+import { enviarConfirmacaoWhatsapp } from "../services/whatsapp";
+
+type WebhookPayment = {
+  status?: string;
+  billingType?: string;
+  externalReference?: string;
+};
+
+type WebhookPayload = {
+  event?: string;
+  payment?: WebhookPayment | null;
+};
+
+const parseNumber = (value: string | undefined, fallback: number) => {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const MAX_RETRIES = parseNumber(process.env.WEBHOOK_MAX_RETRIES, 3);
+const RETRY_DELAY_MS = parseNumber(process.env.WEBHOOK_RETRY_DELAY_MS, 4000);
 
 const router = Router();
+const taskQueue: Array<{ payload: WebhookPayload; attempt: number }> = [];
+let queueRunning = false;
 
-router.post("/", async (req, res) => {
-  const data = req.body;
-  console.log("[webhook] recebido:", JSON.stringify(data, null, 2));
+router.post("/", (req, res) => {
+  enqueueTask(req.body as WebhookPayload);
+  res.status(200).send("OK");
+});
 
-  const evento = data.event;
-  const pagamento = data.payment;
-  const metodo = pagamento?.billingType;
-  const status = pagamento?.status;
-  const externalId = pagamento?.externalReference;
+function enqueueTask(payload: WebhookPayload) {
+  taskQueue.push({ payload, attempt: 0 });
+  console.log(
+    `[webhook] Evento ${payload.event ?? "desconhecido"} recebido | fila: ${taskQueue.length}`,
+  );
 
-  const isCartaoPago = evento === "PAYMENT_CONFIRMED" && status === "CONFIRMED";
-  const isPixPago = evento === "PAYMENT_RECEIVED" && metodo === "PIX" && status === "RECEIVED";
-
-  if (!isCartaoPago && !isPixPago) {
-    console.log("[webhook] ignorado:", evento, "| status:", status, "| metodo:", metodo);
-    return res.sendStatus(204);
+  if (!queueRunning) {
+    queueRunning = true;
+    void processQueue();
   }
+}
 
-  if (!externalId) {
-    console.warn("[webhook] externalReference ausente no webhook.");
-    return res.status(400).send("externalReference ausente");
-  }
-
-  try {
-    console.log(`[webhook] Atualizando reserva com ID: ${externalId}`);
-
-    const reservaRef = doc(db, "reservas", externalId);
-    const reservaSnap = await getDoc(reservaRef);
-
-    if (!reservaSnap.exists()) {
-      console.warn(`[webhook] Reserva ${externalId} não encontrada no Firestore`);
-      return res.sendStatus(200);
+async function processQueue() {
+  while (taskQueue.length > 0) {
+    const task = taskQueue.shift();
+    if (!task) {
+      continue;
     }
+    await processTask(task);
+  }
 
-    await updateDoc(reservaRef, {
-      status: "pago",
-      dataPagamento: new Date(),
-    });
+  queueRunning = false;
+}
 
-    const reserva = reservaSnap.data();
+async function processTask(task: { payload: WebhookPayload; attempt: number }) {
+  while (task.attempt <= MAX_RETRIES) {
+    try {
+      await handleWebhook(task.payload);
+      return;
+    } catch (error) {
+      task.attempt += 1;
+      const externalId =
+        task.payload?.payment?.externalReference ?? "sem-id";
 
-    if (isEmailConfirmacaoHabilitada()) {
-      try {
-        const resultadoEmail = await enviarEmailConfirmacao({
-          nome: reserva.nome,
-          email: reserva.email,
-          atividade: reserva.atividade,
-          data: reserva.data,
-          horario: reserva.horario,
-          participantes: reserva.participantes,
-        });
-
-        if (resultadoEmail.enviado) {
-          console.log(
-            `[webhook] E-mail de confirmação enviado para: ${reserva.email}`,
-          );
-        } else {
-          console.warn(
-            `[webhook] E-mail ignorado (${resultadoEmail.motivo}): ${reserva.email}`,
-          );
-        }
-      } catch (emailError) {
+      if (task.attempt > MAX_RETRIES) {
         console.error(
-          `[webhook] Erro ao enviar e-mail para ${reserva.email}:`,
-          emailError,
+          `[webhook] Falha definitiva ao processar ${externalId}:`,
+          error,
+        );
+        return;
+      }
+
+      console.warn(
+        `[webhook] Tentativa ${task.attempt}/${MAX_RETRIES} para ${externalId}:`,
+        error,
+      );
+      await delay(RETRY_DELAY_MS);
+    }
+  }
+}
+
+async function handleWebhook(payload: WebhookPayload) {
+  const event = payload?.event;
+  const payment = payload?.payment ?? undefined;
+
+  if (!shouldProcess(event, payment)) {
+    console.log(
+      `[webhook] Evento ignorado (${event ?? "desconhecido"}) | status: ${
+        payment?.status ?? "-"
+      } | metodo: ${payment?.billingType ?? "-"}`,
+    );
+    return;
+  }
+
+  const externalReference = payment?.externalReference;
+  if (!externalReference) {
+    throw new Error("externalReference ausente no payload");
+  }
+
+  const reservaRef = doc(db, "reservas", externalReference);
+  const reservaSnap = await getDoc(reservaRef);
+
+  if (!reservaSnap.exists()) {
+    console.warn(
+      `[webhook] Reserva ${externalReference} nao encontrada no Firestore`,
+    );
+    return;
+  }
+
+  await updateDoc(reservaRef, {
+    status: "pago",
+    dataPagamento: new Date(),
+  });
+
+  const reserva: Record<string, any> = {
+    ...(reservaSnap.data() as Record<string, any>),
+    status: "pago",
+  };
+  if (!reserva.whatsappEnviado) {
+    try {
+      const resultado = await enviarConfirmacaoWhatsapp(externalReference, reserva);
+      if (resultado.enviado) {
+        await updateDoc(reservaRef, {
+          whatsappEnviado: true,
+          dataWhatsappEnviado: new Date(),
+          whatsappMensagem: resultado.mensagem ?? "",
+          whatsappTelefone: resultado.telefone ?? "",
+        });
+        console.log(`[webhook] WhatsApp enviado para ${externalReference}.`);
+      } else {
+        console.warn(
+          `[webhook] WhatsApp nao enviado para ${externalReference}: ${resultado.motivo}`,
         );
       }
-    } else {
-      console.log("[webhook] Envio de e-mail desabilitado; ignorando confirmação.");
+    } catch (error) {
+      console.error(
+        `[webhook] Erro ao enviar WhatsApp para ${externalReference}:`,
+        error,
+      );
     }
-
-    return res.sendStatus(200);
-  } catch (error) {
-    console.error("[webhook] Erro ao atualizar reserva:", error);
-    return res.status(500).send("Erro ao processar o webhook");
+  } else {
+    console.log(
+      `[webhook] WhatsApp ja havia sido enviado para ${externalReference}, ignorando duplicidade.`,
+    );
   }
-});
+
+  console.log(`[webhook] Reserva ${externalReference} atualizada.`);
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function shouldProcess(event?: string, payment?: WebhookPayment | null) {
+  if (!event || !payment) {
+    return false;
+  }
+
+  const statusNormalizado = (payment.status ?? "").toString().toUpperCase();
+  const eventNormalizado = event.toString().toUpperCase();
+
+  const statusPago = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusNormalizado);
+  const eventoPago = ["PAYMENT_CONFIRMED", "PAYMENT_RECEIVED"].includes(eventNormalizado);
+
+  return statusPago && eventoPago;
+}
 
 export default router;

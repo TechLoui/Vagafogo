@@ -40,8 +40,6 @@ export function salvarCartao(dados: any) {
       estado: dados.estado || "",
       email: dados.email || "",
       cpf: dados.cpf || "",
-      nome_completo: dados.nome_completo || "",
-      data_nascimento: dados.data_nascimento || "",
     });
     fs.writeFileSync(cartaoFile, JSON.stringify(cartoes, null, 2));
     console.log(`[cartao] Dados salvos. Total: ${cartoes.length}`);

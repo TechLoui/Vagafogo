@@ -129,7 +129,7 @@ app.post('/test-update-status/:reservaId', async (req, res) => {
           });
 
           if (!resultadoEmail.enviado) {
-            console.warn(`[email] Email ignorado (${resultadoEmail.motivo}): ${reserva.email}`);
+            console.warn(`✉️ Email ignorado (${resultadoEmail.motivo}): ${reserva.email}`);
             continue;
           }
           

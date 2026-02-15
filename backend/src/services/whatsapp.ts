@@ -286,7 +286,7 @@ export function iniciarWhatsApp(): void {
     },
   });
 
-  client.on("qr", async (qr: string) => {
+  client.on("qr", async (qr) => {
     status = "qr";
     lastQrAt = Date.now();
     try {
@@ -315,7 +315,7 @@ export function iniciarWhatsApp(): void {
     lastError = null;
   });
 
-  client.on("auth_failure", (msg: string) => {
+  client.on("auth_failure", (msg) => {
     status = "auth_failure";
     initializing = false;
     qrDataUrl = null;
@@ -334,7 +334,7 @@ export function iniciarWhatsApp(): void {
     })();
   });
 
-  client.on("disconnected", (reason: unknown) => {
+  client.on("disconnected", (reason) => {
     status = "disconnected";
     initializing = false;
     const reasonText = reason?.toString() || "disconnected";

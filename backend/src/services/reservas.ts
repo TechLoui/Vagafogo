@@ -1,6 +1,24 @@
 import { db } from "./firebase";
 import { doc, setDoc, Timestamp } from "firebase/firestore";
 import { v4 as uuidv4 } from "uuid";
+import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
+
+const normalizarNumero = (valor: unknown) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
+};
+
+const somarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return 0;
+  return Object.values(mapa).reduce((total, valor) => total + normalizarNumero(valor), 0);
+};
+
+const normalizarMapa = (mapa?: Record<string, number>) => {
+  if (!mapa) return undefined;
+  return Object.fromEntries(
+    Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)])
+  );
+};
 
 export type CriarReservaPayload = {
   nome: string;
@@ -15,10 +33,14 @@ export type CriarReservaPayload = {
   criancas: number;
   naoPagante: number;
   participantes: number;
-  horario: string | null; // Novo campo para horário
+  participantesPorTipo?: Record<string, number>;
+  pacoteIds?: string[];
+  comboId?: string | null;
+  horario: string | null;
   status?: string;
   observacao?: string;
   temPet?: boolean;
+  perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
 };
 
 export async function criarReserva(payload: CriarReservaPayload): Promise<string> {
@@ -30,22 +52,43 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     telefone,
     atividade,
     data,
-    participantes,
     adultos,
     bariatrica,
     criancas,
     naoPagante,
-    horario, // Captura o horário do payload
+    participantes,
+    participantesPorTipo,
+    pacoteIds,
+    comboId,
+    horario,
     status = "aguardando",
     observacao = "",
-    temPet
+    temPet,
+    perguntasPersonalizadas,
   } = payload;
 
-  // 🔹 Gera um ID único (reservaId)
+  const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+  const mapaAtivo =
+    participantesPorTipoNormalizado &&
+    Object.keys(participantesPorTipoNormalizado).length > 0;
+  const participantesCalculadosBase = mapaAtivo
+    ? somarMapa(participantesPorTipoNormalizado)
+    : (adultos ?? 0) + (bariatrica ?? 0) + (criancas ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
+  const participantesConsiderados = Math.max(
+    participantesCalculados,
+    Number.isFinite(participantes) ? participantes : 0
+  );
+  const pacoteIdsNormalizados = Array.isArray(pacoteIds)
+    ? pacoteIds
+        .map((id) => id?.toString())
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const comboIdNormalizado = comboId ? comboId.toString() : null;
+
   const reservaId = uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
 
-  // 🔹 Cria o documento com ID fixo
   await setDoc(reservaRef, {
     nome,
     cpf,
@@ -54,18 +97,21 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     telefone,
     atividade,
     data,
-    participantes,
+    participantes: participantesConsiderados,
     adultos,
     bariatrica,
     criancas,
     naoPagante,
-    horario, // Adiciona o horário ao documento
+    ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
+    ...(pacoteIdsNormalizados.length > 0 ? { pacoteIds: pacoteIdsNormalizados } : {}),
+    ...(comboIdNormalizado ? { comboId: comboIdNormalizado } : {}),
+    horario,
     status,
     observacao,
     temPet,
+    perguntasPersonalizadas: perguntasPersonalizadas ?? [],
     criadoEm: Timestamp.now(),
   });
 
-  // 🔹 Retorna o ID gerado (será usado no externalReference do Asaas)
   return reservaId;
 }

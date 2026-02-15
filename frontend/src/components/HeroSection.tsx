@@ -12,8 +12,8 @@ export function HeroSection() {
       }}
     >
       <div className="absolute inset-0 bg-black/40" /> {/* Extra overlay, opcional */}
-      <div className="relative z-10 container mx-auto px-4 py-16 md:py-0 flex flex-col items-center">
-        <div className="max-w-2xl w-full text-center px-4">
+      <div className="relative z-10 mx-auto flex w-full max-w-screen-2xl flex-col items-center px-4 py-16 md:py-0 sm:px-6 lg:px-8">
+        <div className="w-full max-w-4xl text-center lg:max-w-5xl">
           <h1 className="font-heading text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight drop-shadow-lg">
             Descubra o Santuário Vagafogo
           </h1>

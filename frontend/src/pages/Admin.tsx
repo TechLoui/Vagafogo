@@ -1,5 +1,11 @@
+import { AdminMainContentHeader } from "../components/AdminMainContent.tsx";
 import AdminDashboard from "../components/AdminDashboard.tsx";
 
 export function Admin() {
-  return <AdminDashboard />;
+  return (
+    <main>
+      <AdminMainContentHeader />
+      <AdminDashboard />
+    </main>
+  );
 }

@@ -11,12 +11,12 @@ export function TrailSection() {
         backgroundSize: "cover",
       }}
     >
-      <div className="container mx-auto px-4">
-        <div className="max-w-4xl mx-auto text-center mb-12">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+        <div className="max-w-5xl mx-auto text-center mb-12">
           <span className="text-white font-semibold uppercase tracking-widest">CONEXÃO COM A NATUREZA</span>
           <h2 className="font-heading text-4xl md:text-5xl font-bold text-white mt-2 mb-4">Trilha Ecológica</h2>
         </div>
-        <div className="flex flex-col lg:flex-row items-center gap-10 max-w-5xl mx-auto">
+        <div className="flex flex-col lg:flex-row items-center gap-10 max-w-7xl mx-auto">
           {/* Imagem */}
           <div className="lg:w-1/2 mb-6 lg:mb-0">
             <div className="bg-white/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-sm">

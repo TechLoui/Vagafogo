@@ -6,5 +6,13 @@ export default defineConfig({
   server: {
     port: 8080,
     host: true
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: undefined
+      }
+    }
   }
 })
