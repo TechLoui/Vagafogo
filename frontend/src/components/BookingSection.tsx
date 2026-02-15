@@ -1713,11 +1713,11 @@ export function BookingSection() {
     },
     {
       title: "Participantes",
-      description: "Informe participantes e se levarÃ¡ pet.",
+      description: "Informe participantes e se levará pet.",
     },
     {
       title: "Perguntas",
-      description: "Responda as informaÃ§Ãµes adicionais.",
+      description: "Responda as informações adicionais.",
     },
     {
       title: "Resumo e Pagamento",
@@ -2120,7 +2120,7 @@ export function BookingSection() {
         </div>
         <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalResumo)}</p>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-600">
+      <div className="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-xs text-slate-600 sm:grid-cols-2">
         <p>
           <span className="font-semibold text-slate-700">Data:</span>{" "}
           {selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}
@@ -3006,9 +3006,9 @@ export function BookingSection() {
             </div>
 
             {formaPagamento === "CREDIT_CARD" && (
-              <div ref={cartaoRef} className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
-                  <div className="relative mx-auto w-full max-w-[420px] aspect-[1.586/1] overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-5 text-white sm:p-6 lg:mx-0">
+              <div ref={cartaoRef} className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
+                <div className="flex min-w-0 flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
+                  <div className="relative mx-auto w-full max-w-[330px] aspect-[1.586/1] overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-4 text-white sm:max-w-[420px] sm:p-6 lg:mx-0">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/70">
                         Credito
@@ -3022,7 +3022,7 @@ export function BookingSection() {
                       </span>
                     </div>
 
-                    <div className="mt-8 whitespace-nowrap text-[0.95rem] font-semibold tracking-[0.18em] sm:text-lg sm:tracking-[0.25em]">
+                    <div className="mt-8 whitespace-nowrap text-[0.82rem] font-semibold tracking-[0.13em] sm:text-lg sm:tracking-[0.25em]">
                       {cartaoNumeroExibicao}
                     </div>
 
@@ -3317,7 +3317,7 @@ export function BookingSection() {
           {(checkoutUrl || cartaoResultado) && (
             <div 
               ref={paymentCardRef}
-              className="mt-8 p-8 rounded-3xl shadow-2xl relative overflow-hidden"
+              className="relative mt-8 overflow-hidden rounded-3xl p-5 shadow-2xl sm:p-8"
               style={{
                 background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                 animation: 'pulse-glow 3s ease-in-out infinite'
