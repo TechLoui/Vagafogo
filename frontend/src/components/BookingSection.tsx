@@ -187,6 +187,7 @@ const somarMapa = (mapa?: Record<string, number>) => {
 };
 
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
+type EtapaReserva = 0 | 1 | 2 | 3 | 4;
 
 const onlyNumbers = (value: string) => value.replace(/\D/g, "");
 
@@ -379,7 +380,7 @@ export function BookingSection() {
   const [loadingPacotes, setLoadingPacotes] = useState(true);
   const [reservasDia, setReservasDia] = useState<ReservaResumo[]>([]);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
-  const [etapa, setEtapa] = useState<0 | 1 | 2>(0);
+  const [etapa, setEtapa] = useState<EtapaReserva>(0);
 
   // Formulário
   const [nome, setNome] = useState<string>("");
@@ -423,6 +424,7 @@ export function BookingSection() {
   const horarioRef = useRef<HTMLDivElement | null>(null);
   const participantesRef = useRef<HTMLDivElement | null>(null);
   const petRef = useRef<HTMLDivElement | null>(null);
+  const perguntasRef = useRef<HTMLDivElement | null>(null);
   const cartaoRef = useRef<HTMLDivElement | null>(null);
 
 
@@ -1210,7 +1212,11 @@ export function BookingSection() {
       etapa === 0
         ? pacotesRef.current
         : etapa === 1
-        ? dataRef.current ?? participantesRef.current
+        ? dataRef.current ?? horarioRef.current
+        : etapa === 2
+        ? participantesRef.current ?? petRef.current
+        : etapa === 3
+        ? perguntasRef.current ?? participantesRef.current
         : nomeRef.current ?? cartaoRef.current;
 
     if (!target) return;
@@ -1524,13 +1530,15 @@ export function BookingSection() {
     "enderecoEstado",
   ] as const;
 
-  const etapaParaCampo = (campo: string): 0 | 1 | 2 => {
+  const etapaParaCampo = (campo: string): EtapaReserva => {
     if (campo === "pacotes") return 0;
-    if (["data", "horario", "participantes", "pet"].includes(campo)) return 1;
-    return 2;
+    if (["data", "horario"].includes(campo)) return 1;
+    if (["participantes", "pet"].includes(campo)) return 2;
+    if (campo === "perguntas") return 3;
+    return 4;
   };
 
-  const etapaParaPrimeiroErro = (errors: Record<string, string>): 0 | 1 | 2 => {
+  const etapaParaPrimeiroErro = (errors: Record<string, string>): EtapaReserva => {
     for (const key of errorFocusOrder) {
       if (errors[key]) {
         return etapaParaCampo(key);
@@ -1540,7 +1548,7 @@ export function BookingSection() {
     return fallbackKey ? etapaParaCampo(fallbackKey) : 0;
   };
 
-  const getErrorsAteEtapa = (ateEtapa: 0 | 1 | 2) => {
+  const getErrorsAteEtapa = (ateEtapa: EtapaReserva) => {
     const errors: Record<string, string> = {};
 
     if (ateEtapa >= 0) {
@@ -1584,6 +1592,7 @@ export function BookingSection() {
           "Não há horários disponíveis para os pacotes selecionados nesta data.";
       }
 
+      if (ateEtapa >= 2) {
       const totalParticipantes = totalParticipantesSelecionados;
       if (totalParticipantes <= 0) {
         errors.participantes = "Informe a quantidade de participantes.";
@@ -1604,7 +1613,7 @@ export function BookingSection() {
             : null;
 
         if (limiteHorario !== null && totalParticipantes > limiteHorario) {
-          errors.horario = `Restam apenas ${limiteHorario} vaga(s) para este horário.`;
+          errors.participantes = `Restam apenas ${limiteHorario} vaga(s) para este horário.`;
         } else if (limiteFaixa !== null) {
           errors.participantes = `Restam apenas ${limiteFaixa} vaga(s) disponíveis para esta data.`;
         } else {
@@ -1615,9 +1624,10 @@ export function BookingSection() {
       if (temPet === null) {
         errors.pet = "Informe se vai levar pet.";
       }
+      }
     }
 
-    if (ateEtapa >= 2) {
+    if (ateEtapa >= 4) {
       personalFields.forEach((field) => {
         const fieldError = getPersonalFieldError(field);
         if (fieldError) {
@@ -1677,7 +1687,7 @@ export function BookingSection() {
   };
 
   const validateForm = (
-    ateEtapa: 0 | 1 | 2,
+    ateEtapa: EtapaReserva,
     options?: { scroll?: boolean }
   ) => {
     const errors = getErrorsAteEtapa(ateEtapa);
@@ -1697,30 +1707,64 @@ export function BookingSection() {
       description: "Escolha os pacotes e/ou combos.",
     },
     {
-      title: "Agendamento",
-      description: "Defina data, horário, participantes e preferências.",
+      title: "Data e Horário",
+      description: "Escolha o dia e horário da visita.",
     },
     {
-      title: "Pagamento",
-      description: "Preencha seus dados e finalize a reserva.",
+      title: "Participantes",
+      description: "Informe participantes e se levarÃ¡ pet.",
+    },
+    {
+      title: "Perguntas",
+      description: "Responda as informaÃ§Ãµes adicionais.",
+    },
+    {
+      title: "Resumo e Pagamento",
+      description: "Revise tudo, escolha pagamento e finalize.",
     },
   ] as const;
 
   const handleVoltarEtapa = () => {
-    setEtapa((prev) => (prev > 0 ? ((prev - 1) as 0 | 1 | 2) : prev));
+    setEtapa((prev) => (prev > 0 ? ((prev - 1) as EtapaReserva) : prev));
   };
 
   const handleAvancarEtapa = () => {
     if (etapa === 0) {
-      const { ok } = validateForm(0);
-      if (!ok) return;
+      const validation = validateForm(0);
+      if (!validation.ok) {
+        setEtapa(etapaParaPrimeiroErro(validation.errors));
+        return;
+      }
       setEtapa(1);
       return;
     }
 
     if (etapa === 1) {
-      const { ok } = validateForm(1);
-      if (!ok) return;
+      const validation = validateForm(1);
+      if (!validation.ok) {
+        setEtapa(etapaParaPrimeiroErro(validation.errors));
+        return;
+      }
+      setEtapa(2);
+      return;
+    }
+
+    if (etapa === 2) {
+      const validation = validateForm(2);
+      if (!validation.ok) {
+        setEtapa(etapaParaPrimeiroErro(validation.errors));
+        return;
+      }
+      setEtapa(3);
+      return;
+    }
+
+    if (etapa === 3) {
+      const validation = validateForm(3);
+      if (!validation.ok) {
+        setEtapa(etapaParaPrimeiroErro(validation.errors));
+        return;
+      }
 
       const { erro } = montarRespostasPersonalizadas();
       if (erro) {
@@ -1728,13 +1772,13 @@ export function BookingSection() {
         return;
       }
 
-      setEtapa(2);
+      setEtapa(4);
     }
   };
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (etapa !== 2) {
+    if (etapa !== 4) {
       handleAvancarEtapa();
       return;
     }
@@ -1743,7 +1787,7 @@ export function BookingSection() {
       return;
     }
 
-    const validation = validateForm(2, { scroll: false });
+    const validation = validateForm(4, { scroll: false });
     if (!validation.ok) {
       const etapaComErro = etapaParaPrimeiroErro(validation.errors);
       setEtapa(etapaComErro);
@@ -1757,7 +1801,7 @@ export function BookingSection() {
 
     const { respostas, erro } = montarRespostasPersonalizadas();
     if (erro) {
-      setEtapa(1);
+      setEtapa(3);
       alert(erro);
       return;
     }
@@ -2111,7 +2155,7 @@ export function BookingSection() {
               key={stepInfo.title}
               type="button"
               disabled={!disponivel}
-              onClick={() => disponivel && setEtapa(idx as 0 | 1 | 2)}
+              onClick={() => disponivel && setEtapa(idx as EtapaReserva)}
               className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
                 ativo
                   ? "border-emerald-200 bg-emerald-50"
@@ -2175,7 +2219,7 @@ export function BookingSection() {
                     />
                   </div>
 
-                  <div className="mt-5 hidden grid-cols-3 gap-3 sm:grid lg:hidden">
+                  <div className="mt-5 hidden grid-cols-2 gap-3 sm:grid md:grid-cols-5 lg:hidden">
                     {wizardSteps.map((stepInfo, idx) => {
                       const ativo = idx === etapa;
                       const disponivel = idx <= etapa;
@@ -2185,7 +2229,7 @@ export function BookingSection() {
                           type="button"
                           disabled={!disponivel}
                           onClick={() =>
-                            disponivel && setEtapa(idx as 0 | 1 | 2)
+                            disponivel && setEtapa(idx as EtapaReserva)
                           }
                           className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
                             ativo
@@ -2518,6 +2562,12 @@ export function BookingSection() {
               <p className="mt-2 text-sm text-red-600">{formErrors.horario}</p>
             )}
 
+                  </>
+                )}
+
+                {etapa === 2 && (
+                  <>
+
             {/* Numero de Participantes */}
             <div ref={participantesRef} className="mb-6">
               {typeof limiteParticipantesAtual === "number" && (
@@ -2649,9 +2699,15 @@ export function BookingSection() {
             )}
           </div>
 
+                  </>
+                )}
+
+                {etapa === 3 && (
+                  <>
+
             {/* Perguntas Personalizadas */}
             {selectedPacotes.some(p => (p.perguntasPersonalizadas?.length ?? 0) > 0) && (
-              <div className="mb-6 space-y-5">
+              <div ref={perguntasRef} className="mb-6 space-y-5">
                 {selectedPacotes.map((pacote) => {
                   if (!pacote.id || (pacote.perguntasPersonalizadas?.length ?? 0) === 0) return null;
                   return (
@@ -2789,11 +2845,19 @@ export function BookingSection() {
                 })}
               </div>
             )}
+            {!selectedPacotes.some(p => (p.perguntasPersonalizadas?.length ?? 0) > 0) && (
+              <div ref={perguntasRef} className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-700">Sem perguntas adicionais.</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Os pacotes selecionados não exigem informações extras. Clique em continuar para revisar e pagar.
+                </p>
+              </div>
+            )}
 
                   </>
                 )}
 
-                {etapa === 2 && (
+                {etapa === 4 && (
                   <>
                     {/* Dados Pessoais */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -3190,7 +3254,7 @@ export function BookingSection() {
                   </>
                 )}
 
-                <div className="mb-6 lg:hidden">{resumoCardMobile}</div>
+                {etapa === 4 && <div className="mb-6 lg:hidden">{resumoCardMobile}</div>}
 
                 <div className="mt-8 flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:mt-10 sm:flex-row sm:items-center sm:justify-between">
                   <button
@@ -3202,7 +3266,7 @@ export function BookingSection() {
                     Voltar
                   </button>
 
-                  {etapa < 2 ? (
+                  {etapa < 4 ? (
                     <button
                       type="button"
                       onClick={handleAvancarEtapa}
@@ -3319,7 +3383,7 @@ export function BookingSection() {
 
             <aside className="hidden lg:block">
               <div className="sticky top-6 space-y-4">
-                {resumoCard}
+                {etapa === 4 && resumoCard}
                 {etapasCardDesktop}
               </div>
             </aside>
