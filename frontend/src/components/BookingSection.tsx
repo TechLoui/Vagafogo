@@ -1205,6 +1205,21 @@ export function BookingSection() {
     return mapa;
   }, [combos, diaSelecionadoFechado, disponibilidadePacotesNoDia, pacotesMap, selectedDay]);
 
+  useEffect(() => {
+    const target =
+      etapa === 0
+        ? pacotesRef.current
+        : etapa === 1
+        ? dataRef.current ?? participantesRef.current
+        : nomeRef.current ?? cartaoRef.current;
+
+    if (!target) return;
+    const timeoutId = window.setTimeout(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+    return () => window.clearTimeout(timeoutId);
+  }, [etapa]);
+
   if (loadingPacotes) {
     return (
       <section id="reservas" className="py-10">
@@ -1716,21 +1731,6 @@ export function BookingSection() {
       setEtapa(2);
     }
   };
-
-  useEffect(() => {
-    const target =
-      etapa === 0
-        ? pacotesRef.current
-        : etapa === 1
-        ? dataRef.current ?? participantesRef.current
-        : nomeRef.current ?? cartaoRef.current;
-
-    if (!target) return;
-    const timeoutId = window.setTimeout(() => {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
-    return () => window.clearTimeout(timeoutId);
-  }, [etapa]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
