@@ -379,6 +379,7 @@ export function BookingSection() {
   const [loadingPacotes, setLoadingPacotes] = useState(true);
   const [reservasDia, setReservasDia] = useState<ReservaResumo[]>([]);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
+  const [etapa, setEtapa] = useState<0 | 1 | 2>(0);
 
   // Formulário
   const [nome, setNome] = useState<string>("");
@@ -462,6 +463,7 @@ export function BookingSection() {
   }, [cartaoCvvMaxLength]);
 
   const resetFormulario = () => {
+    setEtapa(0);
     setSelectedPackages([]);
     setNome("");
     setEmail("");
@@ -556,14 +558,14 @@ export function BookingSection() {
   const scrollToErrorField = useCallback((errors: Record<string, string>) => {
     const order = [
       "pacotes",
-      "nome",
-      "email",
-      "cpf",
-      "telefone",
       "data",
       "horario",
       "participantes",
       "pet",
+      "nome",
+      "email",
+      "cpf",
+      "telefone",
       "cartaoNome",
       "cartaoNumero",
       "cartaoValidade",
@@ -1205,15 +1207,18 @@ export function BookingSection() {
 
   if (loadingPacotes) {
     return (
-      <section id="reservas" className="py-16 bg-[#F7FAEF]">
+      <section id="reservas" className="py-10">
         <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto text-center mb-10">
-            <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
-              RESERVE SEU PASSEIO
-            </span>
-            <h2 className="font-heading text-3xl md:text-4xl font-bold text-[#8B4F23] mt-2 mb-1">
+          <div className="mx-auto max-w-3xl rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Reserva
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
               Carregando pacotes...
             </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Aguarde um instante enquanto preparamos o formulário.
+            </p>
           </div>
         </div>
       </section>
@@ -1222,15 +1227,18 @@ export function BookingSection() {
 
   if (pacotes.length === 0) {
     return (
-      <section id="reservas" className="py-16 bg-[#F7FAEF]">
+      <section id="reservas" className="py-10">
         <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto text-center mb-10">
-            <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
-              RESERVE SEU PASSEIO
-            </span>
-            <h2 className="font-heading text-3xl md:text-4xl font-bold text-[#8B4F23] mt-2 mb-1">
-              Nenhum pacote disponível para reserva.
+          <div className="mx-auto max-w-3xl rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Reserva
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
+              Nenhum pacote disponível para reserva
             </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Tente novamente mais tarde ou entre em contato via WhatsApp.
+            </p>
           </div>
         </div>
       </section>
@@ -1479,141 +1487,267 @@ export function BookingSection() {
     return { respostas };
   };
 
-  const validateForm = () => {
+  const errorFocusOrder = [
+    "pacotes",
+    "data",
+    "horario",
+    "participantes",
+    "pet",
+    "nome",
+    "email",
+    "cpf",
+    "telefone",
+    "cartaoNome",
+    "cartaoNumero",
+    "cartaoValidade",
+    "cartaoCvv",
+    "enderecoCep",
+    "enderecoRua",
+    "enderecoNumero",
+    "enderecoBairro",
+    "enderecoCidade",
+    "enderecoEstado",
+  ] as const;
+
+  const etapaParaCampo = (campo: string): 0 | 1 | 2 => {
+    if (campo === "pacotes") return 0;
+    if (["data", "horario", "participantes", "pet"].includes(campo)) return 1;
+    return 2;
+  };
+
+  const etapaParaPrimeiroErro = (errors: Record<string, string>): 0 | 1 | 2 => {
+    for (const key of errorFocusOrder) {
+      if (errors[key]) {
+        return etapaParaCampo(key);
+      }
+    }
+    const fallbackKey = Object.keys(errors)[0];
+    return fallbackKey ? etapaParaCampo(fallbackKey) : 0;
+  };
+
+  const getErrorsAteEtapa = (ateEtapa: 0 | 1 | 2) => {
     const errors: Record<string, string> = {};
 
-    personalFields.forEach((field) => {
-      const fieldError = getPersonalFieldError(field);
-      if (fieldError) {
-        errors[field] = fieldError;
-      }
-    });
-
-    if (selectedPackages.length === 0) {
-      errors.pacotes = "Selecione pelo menos um pacote.";
-    }
-
-    if (selectedPackages.length > 0) {
-      if (!selectedDay) {
-        errors.data = "Selecione uma data disponível.";
-      } else if (diaSelecionadoFechado) {
-        errors.data = "Esta data está indisponível. Escolha outra.";
+    if (ateEtapa >= 0) {
+      if (selectedPackages.length === 0) {
+        errors.pacotes = "Selecione pelo menos um pacote.";
       }
     }
 
-    const possuiHorariosNosPacotes = selectedPacotes.some(
-      (p) => (p.horarios?.length ?? 0) > 0
-    );
-
-    const haHorariosVisiveis = horariosVisiveis.length > 0;
-    const haHorariosComVagas = horariosComVagas.length > 0;
-    const haHorariosDisponiveis = horariosDisponiveis.length > 0;
-
-    if (selectedDay && haHorariosVisiveis && !horario) {
-      errors.horario = haHorariosDisponiveis
-        ? "Escolha um horário disponível."
-        : haHorariosComVagas
-        ? "Nenhum horário comporta a quantidade de participantes selecionada. Reduza os participantes ou escolha outra data."
-        : "Todos os horários estão lotados para os pacotes selecionados.";
-    }
-
-    if (
-      selectedDay &&
-      !haHorariosVisiveis &&
-      !temPacoteFaixa &&
-      possuiHorariosNosPacotes
-    ) {
-      errors.horario = "Não há horários disponíveis para os pacotes selecionados nesta data.";
-    }
-
-    const totalParticipantes = somarMapa(participantesPorTipo) + naoPagante;
-    if (totalParticipantes <= 0) {
-      errors.participantes = "Informe a quantidade de participantes.";
-    }
-
-    const limiteAtual =
-      typeof limiteParticipantesAtual === "number" ? Math.max(limiteParticipantesAtual, 0) : null;
-    if (limiteAtual !== null && totalParticipantes > limiteAtual) {
-      const limiteHorario =
-        typeof limiteHorarioSelecionado === "number" ? Math.max(limiteHorarioSelecionado, 0) : null;
-      const limiteFaixa =
-        typeof vagasRestantesFaixaDia === "number" ? Math.max(vagasRestantesFaixaDia, 0) : null;
-
-      if (limiteHorario !== null && totalParticipantes > limiteHorario) {
-        errors.horario = `Restam apenas ${limiteHorario} vaga(s) para este horário.`;
-      } else if (limiteFaixa !== null) {
-        errors.participantes = `Restam apenas ${limiteFaixa} vaga(s) disponíveis para esta data.`;
-      } else {
-        errors.participantes = `Restam apenas ${limiteAtual} vaga(s) disponíveis.`;
-      }
-    }
-
-    if (temPet === null) {
-      errors.pet = "Informe se vai levar pet.";
-    }
-
-    if (formaPagamento === "CREDIT_CARD") {
-      if (!cartaoNome.trim()) {
-        errors.cartaoNome = "Informe o nome no cartao.";
-      }
-      if (!isValidCardNumber(cartaoNumero)) {
-        errors.cartaoNumero = "Informe um numero de cartao valido.";
-      }
-
-      const validade = parseCardExpiry(cartaoValidade);
-      if (!validade) {
-        errors.cartaoValidade = "Informe a validade (MM/AA).";
-      } else {
-        const hoje = new Date();
-        const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-        const fimMesValidade = new Date(validade.year, validade.month, 0);
-        if (fimMesValidade < inicioMes) {
-          errors.cartaoValidade = "Cartao vencido.";
+    if (ateEtapa >= 1) {
+      if (selectedPackages.length > 0) {
+        if (!selectedDay) {
+          errors.data = "Selecione uma data disponível.";
+        } else if (diaSelecionadoFechado) {
+          errors.data = "Esta data está indisponível. Escolha outra.";
         }
       }
 
-      const cvvDigits = onlyNumbers(cartaoCvv);
-      if (cvvDigits.length < 3 || cvvDigits.length > 4) {
-        errors.cartaoCvv = "Informe o CVV.";
+      const possuiHorariosNosPacotes = selectedPacotes.some(
+        (p) => (p.horarios?.length ?? 0) > 0
+      );
+
+      const haHorariosVisiveis = horariosVisiveis.length > 0;
+      const haHorariosComVagas = horariosComVagas.length > 0;
+      const haHorariosDisponiveis = horariosDisponiveis.length > 0;
+
+      if (selectedDay && haHorariosVisiveis && !horario) {
+        errors.horario = haHorariosDisponiveis
+          ? "Escolha um horário disponível."
+          : haHorariosComVagas
+          ? "Nenhum horário comporta a quantidade de participantes selecionada. Reduza os participantes ou escolha outra data."
+          : "Todos os horários estão lotados para os pacotes selecionados.";
       }
 
-      const cepDigits = onlyNumbers(enderecoCep);
-      if (cepDigits.length !== 8) {
-        errors.enderecoCep = "Informe o CEP.";
+      if (
+        selectedDay &&
+        !haHorariosVisiveis &&
+        !temPacoteFaixa &&
+        possuiHorariosNosPacotes
+      ) {
+        errors.horario =
+          "Não há horários disponíveis para os pacotes selecionados nesta data.";
       }
-      if (!enderecoRua.trim()) {
-        errors.enderecoRua = "Informe o endereco.";
+
+      const totalParticipantes = totalParticipantesSelecionados;
+      if (totalParticipantes <= 0) {
+        errors.participantes = "Informe a quantidade de participantes.";
       }
-      if (!enderecoNumero.trim()) {
-        errors.enderecoNumero = "Informe o numero.";
+
+      const limiteAtual =
+        typeof limiteParticipantesAtual === "number"
+          ? Math.max(limiteParticipantesAtual, 0)
+          : null;
+      if (limiteAtual !== null && totalParticipantes > limiteAtual) {
+        const limiteHorario =
+          typeof limiteHorarioSelecionado === "number"
+            ? Math.max(limiteHorarioSelecionado, 0)
+            : null;
+        const limiteFaixa =
+          typeof vagasRestantesFaixaDia === "number"
+            ? Math.max(vagasRestantesFaixaDia, 0)
+            : null;
+
+        if (limiteHorario !== null && totalParticipantes > limiteHorario) {
+          errors.horario = `Restam apenas ${limiteHorario} vaga(s) para este horário.`;
+        } else if (limiteFaixa !== null) {
+          errors.participantes = `Restam apenas ${limiteFaixa} vaga(s) disponíveis para esta data.`;
+        } else {
+          errors.participantes = `Restam apenas ${limiteAtual} vaga(s) disponíveis.`;
+        }
       }
-      if (!enderecoBairro.trim()) {
-        errors.enderecoBairro = "Informe o bairro.";
-      }
-      if (!enderecoCidade.trim()) {
-        errors.enderecoCidade = "Informe a cidade.";
-      }
-      const estado = enderecoEstado.trim().toUpperCase();
-      if (estado.length !== 2) {
-        errors.enderecoEstado = "Informe o estado (UF).";
+
+      if (temPet === null) {
+        errors.pet = "Informe se vai levar pet.";
       }
     }
 
+    if (ateEtapa >= 2) {
+      personalFields.forEach((field) => {
+        const fieldError = getPersonalFieldError(field);
+        if (fieldError) {
+          errors[field] = fieldError;
+        }
+      });
+
+      if (formaPagamento === "CREDIT_CARD") {
+        if (!cartaoNome.trim()) {
+          errors.cartaoNome = "Informe o nome no cartao.";
+        }
+        if (!isValidCardNumber(cartaoNumero)) {
+          errors.cartaoNumero = "Informe um numero de cartao valido.";
+        }
+
+        const validade = parseCardExpiry(cartaoValidade);
+        if (!validade) {
+          errors.cartaoValidade = "Informe a validade (MM/AA).";
+        } else {
+          const hoje = new Date();
+          const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+          const fimMesValidade = new Date(validade.year, validade.month, 0);
+          if (fimMesValidade < inicioMes) {
+            errors.cartaoValidade = "Cartao vencido.";
+          }
+        }
+
+        const cvvDigits = onlyNumbers(cartaoCvv);
+        if (cvvDigits.length < 3 || cvvDigits.length > 4) {
+          errors.cartaoCvv = "Informe o CVV.";
+        }
+
+        const cepDigits = onlyNumbers(enderecoCep);
+        if (cepDigits.length !== 8) {
+          errors.enderecoCep = "Informe o CEP.";
+        }
+        if (!enderecoRua.trim()) {
+          errors.enderecoRua = "Informe o endereco.";
+        }
+        if (!enderecoNumero.trim()) {
+          errors.enderecoNumero = "Informe o numero.";
+        }
+        if (!enderecoBairro.trim()) {
+          errors.enderecoBairro = "Informe o bairro.";
+        }
+        if (!enderecoCidade.trim()) {
+          errors.enderecoCidade = "Informe a cidade.";
+        }
+        const estado = enderecoEstado.trim().toUpperCase();
+        if (estado.length !== 2) {
+          errors.enderecoEstado = "Informe o estado (UF).";
+        }
+      }
+    }
+
+    return errors;
+  };
+
+  const validateForm = (
+    ateEtapa: 0 | 1 | 2,
+    options?: { scroll?: boolean }
+  ) => {
+    const errors = getErrorsAteEtapa(ateEtapa);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
-      scrollToErrorField(errors);
-      return false;
+      if (options?.scroll !== false) {
+        scrollToErrorField(errors);
+      }
+      return { ok: false, errors };
     }
-    return true;
+    return { ok: true, errors: {} as Record<string, string> };
   };
+
+  const wizardSteps = [
+    {
+      title: "Atividades",
+      description: "Escolha os pacotes e/ou combos.",
+    },
+    {
+      title: "Agendamento",
+      description: "Defina data, horário, participantes e preferências.",
+    },
+    {
+      title: "Pagamento",
+      description: "Preencha seus dados e finalize a reserva.",
+    },
+  ] as const;
+
+  const handleVoltarEtapa = () => {
+    setEtapa((prev) => (prev > 0 ? ((prev - 1) as 0 | 1 | 2) : prev));
+  };
+
+  const handleAvancarEtapa = () => {
+    if (etapa === 0) {
+      const { ok } = validateForm(0);
+      if (!ok) return;
+      setEtapa(1);
+      return;
+    }
+
+    if (etapa === 1) {
+      const { ok } = validateForm(1);
+      if (!ok) return;
+
+      const { erro } = montarRespostasPersonalizadas();
+      if (erro) {
+        alert(erro);
+        return;
+      }
+
+      setEtapa(2);
+    }
+  };
+
+  useEffect(() => {
+    const target =
+      etapa === 0
+        ? pacotesRef.current
+        : etapa === 1
+        ? dataRef.current ?? participantesRef.current
+        : nomeRef.current ?? cartaoRef.current;
+
+    if (!target) return;
+    const timeoutId = window.setTimeout(() => {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+    return () => window.clearTimeout(timeoutId);
+  }, [etapa]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (etapa !== 2) {
+      handleAvancarEtapa();
+      return;
+    }
+
     if (loading || bloqueiaEnvioCartao) {
       return;
     }
 
-    if (!validateForm()) {
+    const validation = validateForm(2, { scroll: false });
+    if (!validation.ok) {
+      const etapaComErro = etapaParaPrimeiroErro(validation.errors);
+      setEtapa(etapaComErro);
+      window.setTimeout(() => scrollToErrorField(validation.errors), 120);
       return;
     }
 
@@ -1623,6 +1757,7 @@ export function BookingSection() {
 
     const { respostas, erro } = montarRespostasPersonalizadas();
     if (erro) {
+      setEtapa(1);
       alert(erro);
       return;
     }
@@ -1836,22 +1971,173 @@ export function BookingSection() {
     }
   }
 
-  return (
-    <section id="reservas" className="py-16 bg-[#F7FAEF]">
-      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto text-center mb-10">
-          <span className="text-green-600 font-semibold text-xs uppercase tracking-widest">
-            RESERVE SEU PASSEIO
-          </span>
-          <h2 className="font-heading text-3xl md:text-4xl font-bold text-[#8B4F23] mt-2 mb-1">
-            Faça sua Reserva Agora
-          </h2>
+  const totalResumo = selectedPackages.length > 0 ? calcularTotal() : 0;
+  const pacotesResumo = selectedPacotes.map((p) => p.nome).filter(Boolean);
+  const faixasResumo = selectedPacotes
+    .filter((p) => p.modoHorario === "intervalo" && p.horarioInicio && p.horarioFim)
+    .map((p) => `${p.horarioInicio}–${p.horarioFim}`);
+  const horarioResumo = horario
+    ? horario
+    : horariosDisponiveis.length > 0
+    ? "Selecione um horário"
+    : faixasResumo.length > 0
+    ? `Faixa: ${faixasResumo.join(" / ")}`
+    : "Sem horário específico";
+
+  const resumoCard = (
+    <div className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-sm backdrop-blur">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+        Resumo
+      </p>
+
+      <div className="mt-4 space-y-4">
+        <div>
+          <p className="text-xs font-semibold uppercase text-slate-500">Atividades</p>
+          {pacotesResumo.length > 0 ? (
+            <ul className="mt-2 space-y-1 text-sm text-slate-700">
+              {pacotesResumo.slice(0, 3).map((nomePacote) => (
+                <li key={nomePacote} className="truncate">
+                  {nomePacote}
+                </li>
+              ))}
+              {pacotesResumo.length > 3 && (
+                <li className="text-slate-500">
+                  + {pacotesResumo.length - 3} outro(s)
+                </li>
+              )}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-slate-600">
+              Selecione os pacotes para continuar.
+            </p>
+          )}
+          {comboAtivo && (
+            <p className="mt-2 text-xs font-semibold text-emerald-700">
+              Combo: {comboAtivo.nome}
+            </p>
+          )}
         </div>
-        
-        <div className="max-w-6xl mx-auto">
-          <form onSubmit={handleSubmit} noValidate className="bg-white rounded-2xl shadow-xl p-6 md:p-8">
-            
-            {combos.length > 0 && (
+
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">Data</p>
+            <p className="mt-1 text-slate-700">
+              {selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">Horário</p>
+            <p className="mt-1 text-slate-700">{selectedDay ? horarioResumo : "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">
+              Participantes
+            </p>
+            <p className="mt-1 text-slate-700">
+              {totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">Pagamento</p>
+            <p className="mt-1 text-slate-700">
+              {formaPagamento === "PIX" ? "PIX" : "Cartão"}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 flex items-baseline justify-between rounded-2xl bg-slate-50 px-4 py-3">
+        <span className="text-sm font-semibold text-slate-700">Total</span>
+        <span className="text-xl font-bold text-emerald-700">
+          {formatCurrency(totalResumo)}
+        </span>
+      </div>
+    </div>
+  );
+
+  return (
+    <section id="reservas" className="py-10">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+            <div>
+              <form
+                onSubmit={handleSubmit}
+                noValidate
+                className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-xl backdrop-blur md:p-8"
+              >
+                <div className="mb-8">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                        Etapa {etapa + 1} de {wizardSteps.length}
+                      </p>
+                      <h2 className="mt-1 text-xl font-bold text-slate-900">
+                        {wizardSteps[etapa].title}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {wizardSteps[etapa].description}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 h-2 w-full rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-emerald-600 transition-all"
+                      style={{
+                        width: `${((etapa + 1) / wizardSteps.length) * 100}%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="mt-5 hidden grid-cols-3 gap-3 sm:grid">
+                    {wizardSteps.map((stepInfo, idx) => {
+                      const ativo = idx === etapa;
+                      const disponivel = idx <= etapa;
+                      return (
+                        <button
+                          key={stepInfo.title}
+                          type="button"
+                          disabled={!disponivel}
+                          onClick={() =>
+                            disponivel && setEtapa(idx as 0 | 1 | 2)
+                          }
+                          className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+                            ativo
+                              ? "border-emerald-200 bg-emerald-50"
+                              : disponivel
+                              ? "border-slate-200 bg-white hover:bg-slate-50"
+                              : "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-400"
+                          }`}
+                        >
+                          <span
+                            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${
+                              ativo || disponivel
+                                ? "bg-emerald-600 text-white"
+                                : "bg-slate-200 text-slate-500"
+                            }`}
+                          >
+                            {idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              {stepInfo.title}
+                            </p>
+                            <p className="truncate text-xs text-slate-500">
+                              {stepInfo.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mb-8 lg:hidden">{resumoCard}</div>
+
+                {etapa === 0 && (
+                  <>
+                    {combos.length > 0 && (
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Combos especiais
@@ -2004,104 +2290,13 @@ export function BookingSection() {
               )}
             </div>
 
-            {/* Dados Pessoais */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Nome Completo *
-                </label>
-                <input
-                  type="text"
-                  value={nome}
-                  onChange={(e) => {
-                    setNome(e.target.value);
-                    setFieldError("nome");
-                  }}
-                  onBlur={() => validatePersonalField("nome")}
-                  className={getInputClasses("nome")}
-                  ref={nomeRef}
-                  autoComplete="name"
-                  required
-                />
-                {formErrors.nome && (
-                  <p className="mt-1 text-sm text-red-600">{formErrors.nome}</p>
+                  </>
                 )}
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email *
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setFieldError("email");
-                  }}
-                  onBlur={() => validatePersonalField("email")}
-                  className={getInputClasses("email")}
-                  ref={emailRef}
-                  autoComplete="email"
-                  required
-                />
-                {formErrors.email && (
-                  <p className="mt-1 text-sm text-red-600">{formErrors.email}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  CPF *
-                </label>
-                <input
-                  type="text"
-                  value={cpf}
-                  onChange={(e) => {
-                    setCpf(formatCpf(e.target.value));
-                    setFieldError("cpf");
-                  }}
-                  onBlur={() => validatePersonalField("cpf")}
-                  className={getInputClasses("cpf")}
-                  ref={cpfRef}
-                  placeholder="000.000.000-00"
-                  inputMode="numeric"
-                  maxLength={14}
-                  autoComplete="off"
-                  required
-                />
-                {formErrors.cpf && (
-                  <p className="mt-1 text-sm text-red-600">{formErrors.cpf}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Telefone
-                </label>
-                <input
-                  type="tel"
-                  value={telefone}
-                  onChange={(e) => {
-                    setTelefone(formatPhone(e.target.value));
-                    setFieldError("telefone");
-                  }}
-                  onBlur={() => validatePersonalField("telefone")}
-                  className={getInputClasses("telefone")}
-                  ref={telefoneRef}
-                  placeholder="(11) 99999-9999"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  maxLength={15}
-                />
-                {formErrors.telefone && (
-                  <p className="mt-1 text-sm text-red-600">{formErrors.telefone}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Selecao de Data */}
-            {selectedPackages.length > 0 && (
+                {etapa === 1 && (
+                  <>
+                    {/* Selecao de Data */}
+                    {selectedPackages.length > 0 && (
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Selecione a Data *
@@ -2512,7 +2707,108 @@ export function BookingSection() {
               </div>
             )}
 
-            {/* Forma de Pagamento */}
+                  </>
+                )}
+
+                {etapa === 2 && (
+                  <>
+                    {/* Dados Pessoais */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Nome Completo *
+                        </label>
+                        <input
+                          type="text"
+                          value={nome}
+                          onChange={(e) => {
+                            setNome(e.target.value);
+                            setFieldError("nome");
+                          }}
+                          onBlur={() => validatePersonalField("nome")}
+                          className={getInputClasses("nome")}
+                          ref={nomeRef}
+                          autoComplete="name"
+                          required
+                        />
+                        {formErrors.nome && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.nome}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Email *
+                        </label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => {
+                            setEmail(e.target.value);
+                            setFieldError("email");
+                          }}
+                          onBlur={() => validatePersonalField("email")}
+                          className={getInputClasses("email")}
+                          ref={emailRef}
+                          autoComplete="email"
+                          required
+                        />
+                        {formErrors.email && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.email}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          CPF *
+                        </label>
+                        <input
+                          type="text"
+                          value={cpf}
+                          onChange={(e) => {
+                            setCpf(formatCpf(e.target.value));
+                            setFieldError("cpf");
+                          }}
+                          onBlur={() => validatePersonalField("cpf")}
+                          className={getInputClasses("cpf")}
+                          ref={cpfRef}
+                          placeholder="000.000.000-00"
+                          inputMode="numeric"
+                          maxLength={14}
+                          autoComplete="off"
+                          required
+                        />
+                        {formErrors.cpf && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.cpf}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Telefone
+                        </label>
+                        <input
+                          type="tel"
+                          value={telefone}
+                          onChange={(e) => {
+                            setTelefone(formatPhone(e.target.value));
+                            setFieldError("telefone");
+                          }}
+                          onBlur={() => validatePersonalField("telefone")}
+                          className={getInputClasses("telefone")}
+                          ref={telefoneRef}
+                          placeholder="(11) 99999-9999"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          maxLength={15}
+                        />
+                        {formErrors.telefone && (
+                          <p className="mt-1 text-sm text-red-600">{formErrors.telefone}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Forma de Pagamento */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-3">
                 Forma de Pagamento
@@ -2808,19 +3104,18 @@ export function BookingSection() {
                 </div>
               </div>
             )}
-{/* Total */}
             {selectedPackages.length > 0 && (
-              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                <div className="flex justify-between items-center">
-                  <span className="text-lg font-semibold text-gray-700">Total:</span>
-                  <span className="text-2xl font-bold text-green-600">
-                    R$ {calcularTotal().toFixed(2)}
+              <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-semibold text-slate-700">Total</span>
+                  <span className="text-xl font-bold text-emerald-700">
+                    {formatCurrency(calcularTotal())}
                   </span>
                 </div>
                 {comboAtivo && (
-                  <p className="text-sm text-green-600 mt-1">
+                  <p className="mt-2 text-xs text-emerald-700">
                     {hasCustomComboPricing(comboAtivo)
-                      ? `Valores do combo ${comboAtivo.nome}: ${describeComboValores(comboAtivo)}.`
+                      ? `Combo ${comboAtivo.nome}: ${describeComboValores(comboAtivo)}.`
                       : comboAtivo.preco && comboAtivo.preco > 0
                       ? `Valor especial do combo ${comboAtivo.nome}.`
                       : comboAtivo.desconto && comboAtivo.desconto > 0
@@ -2831,18 +3126,43 @@ export function BookingSection() {
               </div>
             )}
 
-            {/* Botão de Envio */}
-            <button
-              type="submit"
-              disabled={loading || selectedPackages.length === 0 || bloqueiaEnvioCartao}
-              className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading
-                ? "Processando..."
-                : bloqueiaEnvioCartao
-                ? "Aguardando confirmacao..."
-                : "Fazer Reserva"}
-            </button>
+                  </>
+                )}
+
+                <div className="mt-10 flex flex-col-reverse gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    onClick={handleVoltarEtapa}
+                    disabled={etapa === 0 || loading}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Voltar
+                  </button>
+
+                  {etapa < 2 ? (
+                    <button
+                      type="button"
+                      onClick={handleAvancarEtapa}
+                      className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                    >
+                      Continuar
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={
+                        loading || selectedPackages.length === 0 || bloqueiaEnvioCartao
+                      }
+                      className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {loading
+                        ? "Processando..."
+                        : bloqueiaEnvioCartao
+                        ? "Aguardando confirmação..."
+                        : "Fazer Reserva"}
+                    </button>
+                  )}
+                </div>
           </form>
 
           {/* Resultado do Pagamento */}
@@ -2931,7 +3251,13 @@ export function BookingSection() {
               )}
             </div>
           )}
-              
+
+            </div>
+
+            <aside className="hidden lg:block">
+              <div className="sticky top-6">{resumoCard}</div>
+            </aside>
+          </div>
         </div>
       </div>
     </section>

@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 export function FeatureSection() {
   return (
     <section className="py-16 bg-gray-100">
@@ -21,7 +23,13 @@ export function FeatureSection() {
               </svg>
             </div>
             <h3 className="font-heading text-xl font-bold text-[#8B4F23] mb-3">
-              Brunch Gastronômico – <a href="#reservas" className="inline-flex items-center justify-center rounded-full bg-[#8B4F23] px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-[#A05D2B] focus:ring-2 focus:ring-[#8B4F23] focus:ring-offset-2">Consultar preços atualizados</a>
+              Brunch Gastronômico –{" "}
+              <Link
+                to="/reservar"
+                className="inline-flex items-center justify-center rounded-full bg-[#8B4F23] px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-[#A05D2B] focus:ring-2 focus:ring-[#8B4F23] focus:ring-offset-2"
+              >
+                Consultar preços atualizados
+              </Link>
             </h3>
             <p className="text-gray-600 text-base">
               45 itens e 14 harmonizações únicas com derivados do leite local e frutas do cerrado em manejo sustentável.
@@ -37,7 +45,13 @@ export function FeatureSection() {
               </svg>
             </div>
             <h3 className="font-heading text-xl font-bold text-[#8B4F23] mb-3">
-              Trilha Mãe da Floresta – <a href="#reservas" className="inline-flex items-center justify-center rounded-full bg-[#8B4F23] px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-[#A05D2B] focus:ring-2 focus:ring-[#8B4F23] focus:ring-offset-2">Consultar preços atualizados</a>
+              Trilha Mãe da Floresta –{" "}
+              <Link
+                to="/reservar"
+                className="inline-flex items-center justify-center rounded-full bg-[#8B4F23] px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-[#A05D2B] focus:ring-2 focus:ring-[#8B4F23] focus:ring-offset-2"
+              >
+                Consultar preços atualizados
+              </Link>
             </h3>
             <p className="text-gray-600 text-base">
               1.530m por mata ciliar primária margeando o rio Vagafogo, com 182 espécies de pássaros catalogadas.

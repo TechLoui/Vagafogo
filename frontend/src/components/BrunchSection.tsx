@@ -2,6 +2,7 @@ import BrunchImg from '../assets/hero/hero-2.jpg'
 import laticImg1 from '../assets/brunch/laticinios/brunch-1.jpg'
 import laticImg2 from '../assets/brunch/laticinios/brunch-2.jpg'
 import laticImg3 from '../assets/brunch/laticinios/brunch-3.jpg'
+import { Link } from "react-router-dom"
 export function BrunchSection() {
   return (
     <section
@@ -67,13 +68,13 @@ export function BrunchSection() {
 
         {/* Botão final */}
         <div className="text-center mt-12">
-  <a
-    href="#reservas"
-    className="bg-[#8B4F23] text-white font-semibold px-6 py-3 sm:px-8 sm:py-4 rounded-full shadow-lg hover:bg-[#A05D2B] text-base sm:text-lg transition duration-300 focus:ring-2 focus:ring-offset-2 focus:ring-[#8B4F23] inline-block w-full sm:w-auto max-w-md"
-  >
-    <i className="fas fa-bookmark mr-2"></i> Reservar Experiência Gastronômica
-  </a>
-</div>
+          <Link
+            to="/reservar"
+            className="bg-[#8B4F23] text-white font-semibold px-6 py-3 sm:px-8 sm:py-4 rounded-full shadow-lg hover:bg-[#A05D2B] text-base sm:text-lg transition duration-300 focus:ring-2 focus:ring-offset-2 focus:ring-[#8B4F23] inline-block w-full sm:w-auto max-w-md"
+          >
+            <i className="fas fa-bookmark mr-2"></i> Reservar Experiência Gastronômica
+          </Link>
+        </div>
 
       </div>
      </section>

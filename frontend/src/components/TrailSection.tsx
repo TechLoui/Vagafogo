@@ -1,5 +1,6 @@
 import HeroImg from '../assets/trilhaecologica/trilhaecologica-1.jpg'
 import Trilha from '../assets/trilhaecologica/trilhaecologica-2.jpg'
+import { Link } from "react-router-dom"
 export function TrailSection() {
   return (
     <section
@@ -69,12 +70,12 @@ export function TrailSection() {
                 <span>Placas informativas sobre flora e fauna do cerrado</span>
               </li>
             </ul>
-            <a
-              href="#reservas"
+            <Link
+              to="/reservar"
               className="bg-white text-[#8B4F23] font-semibold px-8 py-3 rounded-full shadow hover:bg-gray-100 text-lg transition duration-300 focus:ring-2 focus:ring-offset-2 focus:ring-white flex items-center justify-center w-max"
             >
               <i className="fas fa-hiking mr-2"></i> Agendar Trilha
-            </a>
+            </Link>
           </div>
         </div>
       </div>

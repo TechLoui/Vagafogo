@@ -1,4 +1,5 @@
 import heroImg from '../assets/hero/hero-1.jpg'
+import { Link } from "react-router-dom"
 export function HeroSection() {
   return (
     <section
@@ -21,15 +22,15 @@ export function HeroSection() {
             Uma experiência gastronômica única, aliada às maravilhas do cerrado brasileiro. Sabores que emocionam com uma natureza que encanta.
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
-            <a
-              href="#reservas"
+            <Link
+              to="/reservar"
               className="flex items-center bg-yellow-600 text-white font-semibold px-8 py-4 rounded-full shadow hover:bg-yellow-700 transition duration-300 text-lg"
             >
               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               Faça sua reserva
-            </a>
+            </Link>
             <a
               href="#brunch"
               className="flex items-center border-2 border-white text-white font-semibold px-8 py-4 rounded-full hover:bg-white hover:text-yellow-700 transition duration-300 text-lg"

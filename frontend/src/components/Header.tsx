@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import logo from "../assets/logo.jpg";
 
 export default function Header() {
@@ -37,12 +38,12 @@ export default function Header() {
         </nav>
 
         {/* Botão Reservar */}
-        <a
-          href="#reservas"
+        <Link
+          to="/reservar"
           className="hidden md:block bg-[#8B4F23] text-white font-bold px-8 py-2 rounded-full text-lg shadow hover:bg-[#A05D2B] transition min-w-[170px] text-center"
         >
           Reservar Agora
-        </a>
+        </Link>
 
         {/* Botão hamburguer mobile */}
         <button
@@ -79,12 +80,13 @@ export default function Header() {
             <a href="#educacao" className="py-2 text-lg font-semibold border-b border-gray-100 text-[#8B4F23]">
               Educação
             </a>
-            <a
-              href="#reservas"
+            <Link
+              to="/reservar"
+              onClick={() => setMenuAberto(false)}
               className="bg-[#8B4F23] text-white font-bold px-6 py-2 rounded-full mt-2 text-center"
             >
               Reservar Agora
-            </a>
+            </Link>
           </div>
         </div>
       )}
