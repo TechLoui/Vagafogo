@@ -2648,11 +2648,6 @@ export function BookingSection() {
                           +
                         </button>
                       </div>
-                      {typeof maximo === "number" && (
-                        <p className="mt-2 text-xs text-slate-500">
-                          Máximo disponível: {maximo}
-                        </p>
-                      )}
                     </div>
                   );
                 })}
