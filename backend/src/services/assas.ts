@@ -97,9 +97,20 @@ const normalizarTexto = (valor: string) =>
 const normalizarStatus = (valor?: string | null) =>
   (valor ?? "").toString().trim().toLowerCase();
 
+const parseHorarioParaMinutos = (valor?: string | null) => {
+  if (!valor) return null;
+  const match = /(\d{1,2})(?:[:hH](\d{2}))?/.exec(valor.toString().trim());
+  if (!match) return null;
+  const horas = Number(match[1]);
+  const minutos = match[2] ? Number(match[2]) : 0;
+  if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
+  if (horas < 0 || horas > 23 || minutos < 0 || minutos > 59) return null;
+  return horas * 60 + minutos;
+};
+
 const reservaContaParaLimite = (reserva: Record<string, any>) => {
   const status = normalizarStatus(reserva.status);
-  if (["pago", "confirmado", "pre_reserva"].includes(status)) {
+  if (["pago", "confirmado", "pre_reserva", "aguardando", "pending", "processing", "processando"].includes(status)) {
     return true;
   }
   return !status && Boolean(reserva.confirmada);
@@ -389,10 +400,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   }
 
   // Impedir reservas em horários que já passaram no dia atual (horário de São Paulo)
-  const horarioMatch = /^(\d{1,2}):(\d{2})$/.exec(horarioFormatado ?? "");
-  if (horarioMatch) {
-    const [_, horaStr, minutoStr] = horarioMatch;
-    const minutosSelecionados = Number(horaStr) * 60 + Number(minutoStr);
+  const minutosSelecionados = parseHorarioParaMinutos(horarioFormatado);
+  if (minutosSelecionados !== null) {
     const hojeSp = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/Sao_Paulo",
     }).format(new Date());
@@ -408,7 +417,6 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         Number(horaAtualStr) * 60 + Number(minutoAtualStr);
 
       if (
-        Number.isFinite(minutosSelecionados) &&
         Number.isFinite(minutosAtual) &&
         minutosSelecionados < minutosAtual
       ) {

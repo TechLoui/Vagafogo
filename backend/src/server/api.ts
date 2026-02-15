@@ -21,7 +21,15 @@ const pacotesRef = collection(db, "pacotes");
 
 router.get("/reservas", async (_req, res) => {
   try {
-    const statusVisiveis = ["pago", "confirmado", "pre_reserva"];
+    const statusVisiveis = [
+      "pago",
+      "confirmado",
+      "pre_reserva",
+      "aguardando",
+      "pending",
+      "processing",
+      "processando",
+    ];
     const reservasQuery = query(reservasRef, where("status", "in", statusVisiveis));
     const snapshot = await getDocs(reservasQuery);
     const reservas = snapshot.docs.map((registro) => ({

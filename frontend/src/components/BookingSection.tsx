@@ -119,7 +119,7 @@ const normalizarStatus = (valor?: string | null) =>
 
 const reservaContaParaVagas = (reserva: Pick<ReservaResumo, "status" | "confirmada">) => {
   const status = normalizarStatus(reserva.status);
-  if (["pago", "confirmado", "pre_reserva"].includes(status)) {
+  if (["pago", "confirmado", "pre_reserva", "aguardando", "pending", "processing", "processando"].includes(status)) {
     return true;
   }
   return !status && Boolean(reserva.confirmada);
@@ -349,11 +349,12 @@ const isValidCardNumber = (value: string): boolean => {
 };
 
 const parseHorarioParaMinutos = (valor: string) => {
-  const match = /^(\d{1,2}):(\d{2})/.exec(valor.trim());
+  const match = /(\d{1,2})(?:[:hH](\d{2}))?/.exec(valor.trim());
   if (!match) return null;
   const horas = Number(match[1]);
-  const minutos = Number(match[2]);
+  const minutos = match[2] ? Number(match[2]) : 0;
   if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
+  if (horas < 0 || horas > 23 || minutos < 0 || minutos > 59) return null;
   return horas * 60 + minutos;
 };
 
