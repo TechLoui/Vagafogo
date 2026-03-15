@@ -5,12 +5,18 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   query,
   updateDoc,
   where,
 } from "firebase/firestore";
 import { db } from "../services/firebase";
+import { reservaEstaConfirmada } from "../services/reservaStatus";
+import {
+  obterCamposRetencaoReservaNaAtualizacao,
+  obterCamposRetencaoReservaNaCriacao,
+} from "../services/reservaRetention";
 
 const router = Router();
 router.use(cors());
@@ -58,6 +64,11 @@ router.get("/pacotes", async (_req, res) => {
 router.post("/reservas", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, any>;
+    const status = typeof body.status === "string" ? body.status : "pre_reserva";
+    const confirmada = reservaEstaConfirmada({
+      status,
+      confirmada: body.confirmada,
+    });
     const {
       numero: _numero,
       cardNumber: _cardNumber,
@@ -81,7 +92,12 @@ router.post("/reservas", async (req, res) => {
 
     const payload = {
       ...safeBody,
-      status: typeof body.status === "string" ? body.status : "pre_reserva",
+      status,
+      confirmada,
+      ...obterCamposRetencaoReservaNaCriacao({
+        status,
+        confirmada,
+      }),
     };
     const novo = await addDoc(reservasRef, payload);
     res.json({ id: novo.id, ...payload });
@@ -102,8 +118,26 @@ router.post("/pacotes", async (req, res) => {
 router.put("/reservas/:id", async (req, res) => {
   try {
     const ref = doc(reservasRef, req.params.id);
-    await updateDoc(ref, req.body);
-    res.json({ id: req.params.id, ...req.body });
+    const snapshot = await getDoc(ref);
+    const atual = snapshot.exists()
+      ? (snapshot.data() as Record<string, any>)
+      : ({} as Record<string, any>);
+    const status =
+      typeof req.body?.status === "string" ? req.body.status : atual.status;
+    const confirmada =
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "confirmada")
+        ? req.body.confirmada
+        : atual.confirmada;
+    const payload = {
+      ...req.body,
+      ...obterCamposRetencaoReservaNaAtualizacao({
+        status,
+        confirmada,
+        criadoEm: atual.criadoEm,
+      }),
+    };
+    await updateDoc(ref, payload);
+    res.json({ id: req.params.id, ...payload });
   } catch (error: any) {
     res.status(500).json({ error: error.message ?? "Erro ao atualizar reserva" });
   }

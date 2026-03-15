@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { criarReserva } from "./reservas";
+import { reservaContaParaOcupacao } from "./reservaStatus";
+import { obterCamposRetencaoReservaNaAtualizacao } from "./reservaRetention";
 import { enviarConfirmacaoWhatsapp } from "./whatsapp";
 import { getDocs, collection, query, where, doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
@@ -94,9 +96,6 @@ const normalizarTexto = (valor: string) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-const normalizarStatus = (valor?: string | null) =>
-  (valor ?? "").toString().trim().toLowerCase();
-
 const parseHorarioParaMinutos = (valor?: string | null) => {
   if (!valor) return null;
   const match = /(\d{1,2})(?:[:hH](\d{2}))?/.exec(valor.toString().trim());
@@ -106,14 +105,6 @@ const parseHorarioParaMinutos = (valor?: string | null) => {
   if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
   if (horas < 0 || horas > 23 || minutos < 0 || minutos > 59) return null;
   return horas * 60 + minutos;
-};
-
-const reservaContaParaLimite = (reserva: Record<string, any>) => {
-  const status = normalizarStatus(reserva.status);
-  if (["pago", "confirmado", "pre_reserva", "aguardando", "pending", "processing", "processando"].includes(status)) {
-    return true;
-  }
-  return !status && Boolean(reserva.confirmada);
 };
 
 const calcularParticipantesReserva = (reserva: Record<string, any>) => {
@@ -493,7 +484,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
       snapshot.forEach((docSnap) => {
         const dados = docSnap.data() as Record<string, any>;
-        if (!reservaContaParaLimite(dados)) return;
+        if (!reservaContaParaOcupacao(dados)) return;
         const horarioReserva = (dados.horario ?? dados.Horario ?? "")
           .toString()
           .trim();
@@ -740,9 +731,19 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     if (pagamentoConfirmado) {
       try {
         const reservaRef = doc(db, "reservas", reservaId);
+        const reservaSnap = await getDoc(reservaRef);
+        const reservaExistente = reservaSnap.exists()
+          ? (reservaSnap.data() as Record<string, any>)
+          : {};
         await updateDoc(reservaRef, {
           status: "pago",
+          confirmada: true,
           dataPagamento: new Date(),
+          ...obterCamposRetencaoReservaNaAtualizacao({
+            status: "pago",
+            confirmada: true,
+            criadoEm: reservaExistente.criadoEm,
+          }),
         });
 
         const resultadoWhatsapp = await enviarConfirmacaoWhatsapp(reservaId, {

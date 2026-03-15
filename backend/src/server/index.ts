@@ -10,6 +10,10 @@ import {
   processarPendentesWhatsapp,
 } from "../services/whatsapp";
 import apiRouter from "./api";
+import {
+  iniciarLimpezaAutomaticaReservas,
+  obterCamposRetencaoReservaNaAtualizacao,
+} from "../services/reservaRetention";
 
 const app = express();
 
@@ -72,13 +76,24 @@ app.post('/test-update-status/:reservaId', async (req, res) => {
     const { reservaId } = req.params;
     const { status } = req.body;
     
-    const { doc, updateDoc } = await import('firebase/firestore');
+    const { doc, getDoc, updateDoc } = await import('firebase/firestore');
     const { db } = await import('../services/firebase');
     
     const reservaRef = doc(db, 'reservas', reservaId);
+    const reservaSnap = await getDoc(reservaRef);
+    const reservaAtual = reservaSnap.exists()
+      ? (reservaSnap.data() as Record<string, any>)
+      : {};
     await updateDoc(reservaRef, {
       status: status || 'pago',
-      dataPagamento: new Date()
+      dataPagamento: new Date(),
+      ...obterCamposRetencaoReservaNaAtualizacao({
+        status: status || 'pago',
+        confirmada: ['pago', 'confirmado'].includes(
+          (status || 'pago').toString().trim().toLowerCase()
+        ),
+        criadoEm: reservaAtual.criadoEm,
+      }),
     });
     
     res.json({ success: true, message: `Status atualizado para: ${status || 'pago'}` });
@@ -183,6 +198,7 @@ const port = process.env.PORT || 3001;
 
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
+  iniciarLimpezaAutomaticaReservas();
 
   const asaasKey = (process.env.ASAAS_API_KEY ?? "").trim();
   const splitWalletId = (process.env.ASAAS_SPLIT_WALLET_ID ?? "").trim();

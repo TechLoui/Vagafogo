@@ -1,7 +1,9 @@
 import { db } from "./firebase";
-import { doc, setDoc, Timestamp } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
 import { v4 as uuidv4 } from "uuid";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
+import { reservaEstaConfirmada } from "./reservaStatus";
+import { obterCamposRetencaoReservaNaCriacao } from "./reservaRetention";
 
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
@@ -88,6 +90,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
 
   const reservaId = uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
+  const camposRetencao = obterCamposRetencaoReservaNaCriacao({ status });
 
   await setDoc(reservaRef, {
     nome,
@@ -107,10 +110,11 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     ...(comboIdNormalizado ? { comboId: comboIdNormalizado } : {}),
     horario,
     status,
+    confirmada: reservaEstaConfirmada({ status }),
     observacao,
     temPet,
     perguntasPersonalizadas: perguntasPersonalizadas ?? [],
-    criadoEm: Timestamp.now(),
+    ...camposRetencao,
   });
 
   return reservaId;

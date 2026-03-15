@@ -2,6 +2,7 @@ import { Router } from "express";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../services/firebase";
 import { enviarConfirmacaoWhatsapp } from "../services/whatsapp";
+import { obterCamposRetencaoReservaNaAtualizacao } from "../services/reservaRetention";
 
 type WebhookPayment = {
   status?: string;
@@ -113,13 +114,21 @@ async function handleWebhook(payload: WebhookPayload) {
     return;
   }
 
+  const reservaExistente = reservaSnap.data() as Record<string, any>;
+
   await updateDoc(reservaRef, {
     status: "pago",
+    confirmada: true,
     dataPagamento: new Date(),
+    ...obterCamposRetencaoReservaNaAtualizacao({
+      status: "pago",
+      confirmada: true,
+      criadoEm: reservaExistente.criadoEm,
+    }),
   });
 
   const reserva: Record<string, any> = {
-    ...(reservaSnap.data() as Record<string, any>),
+    ...reservaExistente,
     status: "pago",
   };
   if (!reserva.whatsappEnviado) {
