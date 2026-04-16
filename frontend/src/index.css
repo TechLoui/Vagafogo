@@ -1,0 +1,146 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* ==========================================
+   VAGAFOGO – Global Styles
+   ========================================== */
+
+/* Scroll suave */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Fonte base */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: #1a1a1a;
+}
+
+/* Seleção de texto com cores da marca */
+::selection {
+  background-color: #8B4F23;
+  color: #fff;
+}
+
+/* Scrollbar personalizada (navegadores Webkit) */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #8B4F23;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A05D2B;
+}
+
+/* ==========================================
+   Utilitários de animação
+   ========================================== */
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ==========================================
+   Focus ring acessível
+   ========================================== */
+:focus-visible {
+  outline: 2px solid #8B4F23;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ==========================================
+   DayPicker – Cores da marca Vagafogo
+   ========================================== */
+.rdp-vagafogo .rdp-day_selected:not(.rdp-day_disabled),
+.rdp-vagafogo .rdp-day_selected:not(.rdp-day_disabled):hover {
+  background-color: #8B4F23 !important;
+  color: #fff !important;
+  border-radius: 9999px;
+}
+
+.rdp-vagafogo .rdp-day:hover:not(.rdp-day_disabled):not(.rdp-day_selected) {
+  background-color: #8B4F23/10 !important;
+  background-color: rgba(139, 79, 35, 0.1) !important;
+  color: #8B4F23 !important;
+  border-radius: 9999px;
+}
+
+.rdp-vagafogo .rdp-day_today:not(.rdp-day_selected) {
+  color: #8B4F23;
+  font-weight: 700;
+}
+
+.rdp-vagafogo .rdp-nav_button:hover {
+  background-color: rgba(139, 79, 35, 0.1);
+  color: #8B4F23;
+}
+
+.rdp-vagafogo .rdp-caption_label {
+  font-weight: 700;
+  color: #2D1E0F;
+}
+
+.rdp-vagafogo .rdp-head_cell {
+  color: #8B4F23;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+/* ==========================================
+   BookingSection – melhorias globais
+   ========================================== */
+.booking-label {
+  @apply block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5;
+}
+
+/* Textarea com mesma aparência dos inputs */
+textarea.booking-input {
+  @apply w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm transition-all duration-200
+         focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23] bg-white resize-none;
+}
