@@ -1298,25 +1298,33 @@ export function BookingSection() {
     const dayStr = day.toISOString().slice(0, 10);
     if (diasBloqueados.has(dayStr)) return false;
 
-    const diaSemana = day.getDay(); // 0=Dom … 6=Sáb
+    const diaSemana = day.getDay();
+    const hoje = new Date();
+    const ehHoje =
+      day.getFullYear() === hoje.getFullYear() &&
+      day.getMonth() === hoje.getMonth() &&
+      day.getDate() === hoje.getDate();
+    const minutosAgora = ehHoje ? hoje.getHours() * 60 + hoje.getMinutes() : -1;
 
     return selectedPacotes.some((pacote) => {
-      // Verifica se o pacote opera neste dia da semana
-      if (pacote.dias && pacote.dias.length > 0 && !pacote.dias.includes(diaSemana)) {
-        return false;
-      }
-      // Verifica datas bloqueadas específicas
+      if (pacote.dias && pacote.dias.length > 0 && !pacote.dias.includes(diaSemana)) return false;
       const datasBloqueadas = pacote.datasBloqueadas ?? [];
       if (datasBloqueadas.includes(dayStr)) return false;
 
       const ehFaixa =
         pacote.modoHorario === "intervalo" || (pacote.horarios?.length ?? 0) === 0;
-
-      // Pacote faixa: disponível se o dia não está bloqueado
       if (ehFaixa) return pacote.modoHorario === "intervalo";
 
-      // Pacote com horários fixos: precisa ter ao menos um horário definido
-      return (pacote.horarios?.length ?? 0) > 0;
+      const horarios = (pacote.horarios ?? []).filter((h) => {
+        if (pacote.id && disponibilidadeHorarios[`${dayStr}-${pacote.id}-${h}`] === false) return false;
+        if (ehHoje) {
+          const min = parseHorarioParaMinutos(h);
+          if (min !== null && min < minutosAgora) return false;
+        }
+        return true;
+      });
+
+      return horarios.length > 0;
     });
   };
 
@@ -1578,13 +1586,14 @@ export function BookingSection() {
         }
       }
 
-      const possuiHorariosNosPacotes = selectedPacotes.some(
-        (p) => (p.horarios?.length ?? 0) > 0
-      );
-
       const haHorariosVisiveis = horariosVisiveis.length > 0;
       const haHorariosComVagas = horariosComVagas.length > 0;
       const haHorariosDisponiveis = horariosDisponiveis.length > 0;
+
+      // Pacotes lista (não-faixa) que têm horários configurados
+      const precisaHorario = selectedPacotes.some(
+        (p) => p.modoHorario !== "intervalo" && (p.horarios?.length ?? 0) > 0
+      );
 
       if (selectedDay && haHorariosVisiveis && !horario) {
         errors.horario = haHorariosDisponiveis
@@ -1594,10 +1603,12 @@ export function BookingSection() {
           : "Todos os horários estão lotados para os pacotes selecionados.";
       }
 
-      if (selectedDay && !haHorariosVisiveis && !temPacoteFaixa) {
-        errors.horario = possuiHorariosNosPacotes
-          ? "Não há horários disponíveis para os pacotes selecionados nesta data. Escolha outra data."
-          : "Nenhum horário configurado para esta data. Escolha outra data.";
+      if (selectedDay && !haHorariosVisiveis) {
+        if (precisaHorario) {
+          errors.horario = "Não há horários disponíveis para os pacotes selecionados nesta data. Escolha outra data.";
+        } else if (!temPacoteFaixa) {
+          errors.horario = "Nenhum horário configurado para esta data. Escolha outra data.";
+        }
       }
 
       if (ateEtapa >= 2) {
