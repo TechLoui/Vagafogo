@@ -788,11 +788,37 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       value: cobrancaData.value
     });
 
-    // Adicionar dados do PIX se for pagamento PIX
-    if (billingType === "PIX" && cobrancaData.pixTransaction) {
-      resposta.cobranca.pixKey = cobrancaData.pixTransaction.payload;
-      resposta.cobranca.qrCodeImage = cobrancaData.pixTransaction.qrCode?.encodedImage;
-      resposta.cobranca.expirationDate = cobrancaData.pixTransaction.expirationDate;
+    // Adicionar dados do PIX: buscar QR code via endpoint dedicado
+    if (billingType === "PIX" && cobrancaData.id) {
+      try {
+        const pixQrCodeResponse = await fetch(
+          `https://api.asaas.com/v3/payments/${cobrancaData.id}/pixQrCode`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              access_token: process.env.ASAAS_API_KEY!,
+            },
+          }
+        );
+        if (pixQrCodeResponse.ok) {
+          const pixData = await pixQrCodeResponse.json();
+          console.log("INFO PIX QR Code obtido:", {
+            hasPayload: Boolean(pixData?.payload),
+            hasImage: Boolean(pixData?.encodedImage),
+            expirationDate: pixData?.expirationDate,
+          });
+          resposta.cobranca.pixKey = pixData.payload || null;
+          resposta.cobranca.qrCodeImage = pixData.encodedImage
+            ? `data:image/png;base64,${pixData.encodedImage}`
+            : null;
+          resposta.cobranca.expirationDate = pixData.expirationDate || null;
+        } else {
+          console.warn("⚠️ Não foi possível obter o QR Code PIX:", pixQrCodeResponse.status);
+        }
+      } catch (pixError) {
+        console.error("⚠️ Erro ao buscar QR Code PIX:", pixError);
+      }
     }
 
     console.log("✅ Resposta enviada:", resposta);
