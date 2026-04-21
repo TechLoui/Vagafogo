@@ -5,6 +5,12 @@ import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { ptBR } from "date-fns/locale";
 import { reservaContaParaOcupacao } from "../utils/reservaStatus";
+import {
+  compararTextoNumericamente,
+  normalizarBloqueiosDisponibilidade,
+  normalizarVagasExtrasDisponibilidade,
+  obterVagasExtrasDisponibilidade,
+} from "../utils/disponibilidade";
 
 type PerguntaCondicional = {
   condicao: "sim" | "nao";
@@ -407,6 +413,7 @@ export function BookingSection() {
   const [enderecoEstado, setEnderecoEstado] = useState<string>("");
   const [respostasPersonalizadas, setRespostasPersonalizadas] = useState<Record<string, { resposta?: string; condicional?: string }>>({});
   const [disponibilidadeHorarios, setDisponibilidadeHorarios] = useState<Record<string, boolean>>({});
+  const [disponibilidadeVagasExtras, setDisponibilidadeVagasExtras] = useState<Record<string, number>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const pacotesRef = useRef<HTMLDivElement | null>(null);
   const nomeRef = useRef<HTMLInputElement | null>(null);
@@ -926,6 +933,7 @@ export function BookingSection() {
   useEffect(() => {
     if (!selectedDay) {
       setDisponibilidadeHorarios({});
+      setDisponibilidadeVagasExtras({});
       setDiaSelecionadoFechado(false);
       return;
     }
@@ -937,16 +945,20 @@ export function BookingSection() {
         const snap = await getDoc(ref);
         if (!ativo) return;
         const dados = snap.exists() ? snap.data() : null;
-        if (dados && typeof dados.horarios === "object") {
-          setDisponibilidadeHorarios(dados.horarios as Record<string, boolean>);
-        } else {
-          setDisponibilidadeHorarios({});
-        }
+        setDisponibilidadeHorarios(
+          normalizarBloqueiosDisponibilidade(dados?.horarios as Record<string, unknown> | null)
+        );
+        setDisponibilidadeVagasExtras(
+          normalizarVagasExtrasDisponibilidade(
+            dados?.vagasExtras as Record<string, unknown> | null
+          )
+        );
         setDiaSelecionadoFechado(Boolean(dados?.fechado) || diasBloqueados.has(dataStr));
       } catch (error) {
         console.error("Erro ao carregar disponibilidade:", error);
         if (ativo) {
           setDisponibilidadeHorarios({});
+          setDisponibilidadeVagasExtras({});
           setDiaSelecionadoFechado(diasBloqueados.has(dataStr));
         }
       }
@@ -982,7 +994,9 @@ export function BookingSection() {
 
   const horariosVisiveis = useMemo(() => {
     if (selectedPacotes.length === 0) return [];
-    const horariosUnicos = [...new Set(selectedPacotes.flatMap((p) => p.horarios || []))];
+    const horariosUnicos = [...new Set(selectedPacotes.flatMap((p) => p.horarios || []))].sort(
+      compararTextoNumericamente
+    );
     if (!selectedDay) return horariosUnicos;
     if (diaSelecionadoFechado) return [];
     const dataStr = selectedDay.toISOString().slice(0, 10);
@@ -1008,12 +1022,14 @@ export function BookingSection() {
       });
     }
 
-    return filtrados;
+    return filtrados.sort(compararTextoNumericamente);
   }, [selectedDay, selectedPacotes, disponibilidadeHorarios, diaSelecionadoFechado]);
 
   const vagasRestantesPorHorario = useMemo(() => {
     const mapa: Record<string, number | null> = {};
     if (selectedPacotes.length === 0) return mapa;
+    const dataStr = selectedDay?.toISOString().slice(0, 10) ?? "";
+
     horariosVisiveis.forEach((horarioLista) => {
       let restante: number | null = null;
       selectedPacotes.forEach((pacote) => {
@@ -1025,16 +1041,31 @@ export function BookingSection() {
         const reservados = ehFaixa
           ? reservasPorPacoteDia[pacote.id] ?? 0
           : reservasPorPacoteHorario[`${pacote.id}__${horarioLista}`] ?? 0;
-        const pacoteRestante = limite - reservados;
+        const vagasExtras = obterVagasExtrasDisponibilidade({
+          dataStr,
+          pacoteId: pacote.id,
+          horario: ehFaixa ? undefined : horarioLista,
+          vagasExtras: disponibilidadeVagasExtras,
+        });
+        const pacoteRestante = limite + vagasExtras - reservados;
         restante = restante === null ? pacoteRestante : Math.min(restante, pacoteRestante);
       });
       mapa[horarioLista] = restante;
     });
     return mapa;
-  }, [horariosVisiveis, reservasPorPacoteDia, reservasPorPacoteHorario, selectedPacotes]);
+  }, [
+    horariosVisiveis,
+    reservasPorPacoteDia,
+    reservasPorPacoteHorario,
+    selectedDay,
+    selectedPacotes,
+    disponibilidadeVagasExtras,
+  ]);
 
   const vagasRestantesFaixaDia = useMemo(() => {
     let restante: number | null = null;
+    const dataStr = selectedDay?.toISOString().slice(0, 10) ?? "";
+
     selectedPacotes.forEach((pacote) => {
       if (!pacote.id) return;
       const ehFaixa =
@@ -1043,11 +1074,16 @@ export function BookingSection() {
       const limite = Number(pacote.limite ?? 0);
       if (!Number.isFinite(limite) || limite <= 0) return;
       const reservados = reservasPorPacoteDia[pacote.id] ?? 0;
-      const pacoteRestante = limite - reservados;
+      const vagasExtras = obterVagasExtrasDisponibilidade({
+        dataStr,
+        pacoteId: pacote.id,
+        vagasExtras: disponibilidadeVagasExtras,
+      });
+      const pacoteRestante = limite + vagasExtras - reservados;
       restante = restante === null ? pacoteRestante : Math.min(restante, pacoteRestante);
     });
     return restante;
-  }, [reservasPorPacoteDia, selectedPacotes]);
+  }, [reservasPorPacoteDia, selectedDay, selectedPacotes, disponibilidadeVagasExtras]);
 
   const totalParticipantesSelecionados = useMemo(
     () => somarMapa(participantesPorTipo) + naoPagante,
@@ -1133,7 +1169,12 @@ export function BookingSection() {
           return;
         }
         const reservados = reservasPorPacoteDia[pacote.id] ?? 0;
-        mapa[pacote.id] = limite - reservados > 0;
+        const vagasExtras = obterVagasExtrasDisponibilidade({
+          dataStr,
+          pacoteId: pacote.id,
+          vagasExtras: disponibilidadeVagasExtras,
+        });
+        mapa[pacote.id] = limite + vagasExtras - reservados > 0;
         return;
       }
 
@@ -1168,7 +1209,13 @@ export function BookingSection() {
 
       mapa[pacote.id] = horariosPacote.some((h) => {
         const reservados = reservasPorPacoteHorario[`${pacote.id}__${h}`] ?? 0;
-        return limite - reservados > 0;
+        const vagasExtras = obterVagasExtrasDisponibilidade({
+          dataStr,
+          pacoteId: pacote.id,
+          horario: h,
+          vagasExtras: disponibilidadeVagasExtras,
+        });
+        return limite + vagasExtras - reservados > 0;
       });
     });
 
@@ -1176,6 +1223,7 @@ export function BookingSection() {
   }, [
     diaSelecionadoFechado,
     disponibilidadeHorarios,
+    disponibilidadeVagasExtras,
     pacotes,
     reservasPorPacoteDia,
     reservasPorPacoteHorario,

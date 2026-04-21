@@ -7,6 +7,8 @@ import { getDocs, collection, query, where, doc, getDoc, updateDoc } from "fireb
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 
+const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
+
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
   return Number.isFinite(numero) ? Math.max(numero, 0) : 0;
@@ -105,6 +107,45 @@ const parseHorarioParaMinutos = (valor?: string | null) => {
   if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
   if (horas < 0 || horas > 23 || minutos < 0 || minutos > 59) return null;
   return horas * 60 + minutos;
+};
+
+const normalizarVagasExtrasDisponibilidade = (mapa?: Record<string, unknown> | null) =>
+  Object.entries(mapa ?? {}).reduce<Record<string, number>>((acc, [chave, valor]) => {
+    const quantidade = normalizarNumero(valor);
+    if (quantidade > 0) {
+      acc[chave] = quantidade;
+    }
+    return acc;
+  }, {});
+
+const obterVagasExtrasDisponibilidade = ({
+  dataStr,
+  pacoteId,
+  horario,
+  vagasExtras,
+}: {
+  dataStr: string;
+  pacoteId: string;
+  horario?: string | null;
+  vagasExtras?: Record<string, number> | null;
+}) => {
+  const extrasDiaGeral = normalizarNumero(
+    vagasExtras?.[`${PREFIXO_VAGAS_EXTRAS_GERAIS}${dataStr}`]
+  );
+  const extrasHorarioGeral =
+    horario && horario.trim()
+      ? normalizarNumero(
+          vagasExtras?.[
+            `${PREFIXO_VAGAS_EXTRAS_GERAIS}${dataStr}::${horario.trim()}`
+          ]
+        )
+      : 0;
+  const extrasDia = normalizarNumero(vagasExtras?.[`${dataStr}-${pacoteId}`]);
+  const extrasHorario =
+    horario && horario.trim()
+      ? normalizarNumero(vagasExtras?.[`${dataStr}-${pacoteId}-${horario.trim()}`])
+      : 0;
+  return extrasDiaGeral + extrasHorarioGeral + extrasDia + extrasHorario;
 };
 
 const calcularParticipantesReserva = (reserva: Record<string, any>) => {
@@ -437,6 +478,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       disponibilidadeDados && typeof disponibilidadeDados.horarios === "object"
         ? (disponibilidadeDados.horarios as Record<string, boolean>)
         : null;
+    const disponibilidadeVagasExtras = normalizarVagasExtrasDisponibilidade(
+      disponibilidadeDados && typeof disponibilidadeDados.vagasExtras === "object"
+        ? (disponibilidadeDados.vagasExtras as Record<string, unknown>)
+        : null
+    );
 
     // Validar limite por pacote (por horário ou por dia)
     const pacotesSnapshot = await getDocs(collection(db, "pacotes"));
@@ -533,7 +579,13 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         const reservados = ehFaixa
           ? reservasPorPacoteDia[pacoteId] ?? 0
           : reservasPorPacoteHorario[pacoteId] ?? 0;
-        const restante = limite - reservados;
+        const vagasExtras = obterVagasExtrasDisponibilidade({
+          dataStr: data,
+          pacoteId,
+          horario: ehFaixa ? undefined : horarioFormatado,
+          vagasExtras: disponibilidadeVagasExtras,
+        });
+        const restante = limite + vagasExtras - reservados;
         if (participantesConsiderados > restante) {
           res.status(400).json({
             status: "erro",

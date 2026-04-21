@@ -12,6 +12,17 @@ import {
   reservaEhPreReserva as reservaTemStatusPreReserva,
   reservaEstaConfirmada,
 } from '../utils/reservaStatus';
+import {
+  compararHorariosComIndefinidosNoFim,
+  compararTextoNumericamente,
+  montarChaveVagasExtrasDia,
+  montarChaveVagasExtrasDiaGeral,
+  montarChaveVagasExtrasHorario,
+  montarChaveVagasExtrasHorarioGeral,
+  normalizarBloqueiosDisponibilidade,
+  normalizarVagasExtrasDisponibilidade,
+  obterVagasExtrasDisponibilidade,
+} from '../utils/disponibilidade';
 
 import dayjs from 'dayjs';
 
@@ -82,6 +93,8 @@ const whatsappPlaceholders = [
   '{valor}',
   '{status}',
 ];
+
+const opcoesAjusteRapidoVagas = [1, 5, 10];
 
 const normalizarDataReserva = (data?: unknown) => {
   if (!data) return '';
@@ -1050,11 +1063,7 @@ const calcularValorPacotesSelecionados = (
     return totalPacotes + subtotalPacote;
   }, 0);
 
-const ordenarHorarios = (lista: string[]) => (
-
-  [...lista].sort((a, b) => a.localeCompare(b))
-
-);
+const ordenarHorarios = (lista: string[]) => [...lista].sort(compararTextoNumericamente);
 
 
 
@@ -1258,6 +1267,8 @@ export default function AdminDashboard() {
   >({});
 
   const [reservasDataEmEdicao, setReservasDataEmEdicao] = useState<Reserva[]>([]);
+  const [vagasExtrasDisponibilidadeEmEdicao, setVagasExtrasDisponibilidadeEmEdicao] =
+    useState<Record<string, number>>({});
 
   const [mesas, setMesas] = useState<Mesa[]>([]);
 
@@ -1492,6 +1503,7 @@ export default function AdminDashboard() {
   const [salvandoCombo, setSalvandoCombo] = useState(false);
 
   const [disponibilidadeData, setDisponibilidadeData] = useState<Record<string, boolean>>({});
+  const [vagasExtrasDisponibilidade, setVagasExtrasDisponibilidade] = useState<Record<string, number>>({});
 
   const [carregandoDisponibilidade, setCarregandoDisponibilidade] = useState(false);
 
@@ -1510,6 +1522,60 @@ export default function AdminDashboard() {
 
 
   const [pacotesDisponibilidadeAbertos, setPacotesDisponibilidadeAbertos] = useState<Record<string, boolean>>({});
+
+  const atualizarVagasExtrasDisponibilidade = useCallback((chave: string, valor: string) => {
+    if (!chave) return;
+
+    setVagasExtrasDisponibilidade((prev) => {
+      const proximo = { ...prev };
+      const valorLimpo = valor.trim();
+      const quantidade = Number(valorLimpo);
+
+      if (!valorLimpo || !Number.isFinite(quantidade) || quantidade <= 0) {
+        delete proximo[chave];
+        return proximo;
+      }
+
+      proximo[chave] = Math.max(Math.trunc(quantidade), 0);
+      return proximo;
+    });
+  }, []);
+
+  const somarVagasExtrasDisponibilidade = useCallback((chave: string, incremento: number) => {
+    if (!chave || !Number.isFinite(incremento) || incremento === 0) return;
+
+    setVagasExtrasDisponibilidade((prev) => {
+      const atual = Number(prev[chave] ?? 0);
+      const proximoValor = Math.max(Math.trunc(atual + incremento), 0);
+      if (proximoValor <= 0) {
+        const proximo = { ...prev };
+        delete proximo[chave];
+        return proximo;
+      }
+      return {
+        ...prev,
+        [chave]: proximoValor,
+      };
+    });
+  }, []);
+
+  const horariosDisponibilidadeGerais = useMemo(
+    () =>
+      ordenarHorarios(
+        Array.from(
+          new Set(
+            pacotes.flatMap((pacote) =>
+              Array.isArray(pacote.horarios)
+                ? pacote.horarios
+                    .map((horario) => horario?.toString().trim())
+                    .filter((horario): horario is string => Boolean(horario))
+                : []
+            )
+          )
+        )
+      ),
+    [pacotes]
+  );
 
   // Tipos de clientes
 
@@ -1881,6 +1947,7 @@ export default function AdminDashboard() {
   const vagasRestantesPorHorarioEmEdicao = useMemo(() => {
     const mapa: Record<string, number | null> = {};
     if (pacotesSelecionadosEmEdicao.length === 0) return mapa;
+    const dataStr = normalizarDataReserva(editReserva?.data);
 
     horariosDisponiveisPacotesEmEdicao.forEach((horarioLista) => {
       let restante: number | null = null;
@@ -1896,7 +1963,13 @@ export default function AdminDashboard() {
         const reservados = ehFaixa
           ? reservasPorPacoteDiaEmEdicao[pacote.id] ?? 0
           : reservasPorPacoteHorarioEmEdicao[`${pacote.id}__${horarioLista}`] ?? 0;
-        const pacoteRestante = limite - reservados;
+        const vagasExtras = obterVagasExtrasDisponibilidade({
+          dataStr,
+          pacoteId: pacote.id,
+          horario: ehFaixa ? undefined : horarioLista,
+          vagasExtras: vagasExtrasDisponibilidadeEmEdicao,
+        });
+        const pacoteRestante = limite + vagasExtras - reservados;
 
         restante = restante === null ? pacoteRestante : Math.min(restante, pacoteRestante);
       });
@@ -1906,14 +1979,17 @@ export default function AdminDashboard() {
 
     return mapa;
   }, [
+    editReserva?.data,
     horariosDisponiveisPacotesEmEdicao,
     pacotesSelecionadosEmEdicao,
     reservasPorPacoteDiaEmEdicao,
     reservasPorPacoteHorarioEmEdicao,
+    vagasExtrasDisponibilidadeEmEdicao,
   ]);
 
   const vagasRestantesFaixaDiaEmEdicao = useMemo(() => {
     let restante: number | null = null;
+    const dataStr = normalizarDataReserva(editReserva?.data);
 
     pacotesSelecionadosEmEdicao.forEach((pacote) => {
       if (!pacote.id) return;
@@ -1926,13 +2002,23 @@ export default function AdminDashboard() {
       if (!Number.isFinite(limite) || limite <= 0) return;
 
       const reservados = reservasPorPacoteDiaEmEdicao[pacote.id] ?? 0;
-      const pacoteRestante = limite - reservados;
+      const vagasExtras = obterVagasExtrasDisponibilidade({
+        dataStr,
+        pacoteId: pacote.id,
+        vagasExtras: vagasExtrasDisponibilidadeEmEdicao,
+      });
+      const pacoteRestante = limite + vagasExtras - reservados;
 
       restante = restante === null ? pacoteRestante : Math.min(restante, pacoteRestante);
     });
 
     return restante;
-  }, [pacotesSelecionadosEmEdicao, reservasPorPacoteDiaEmEdicao]);
+  }, [
+    editReserva?.data,
+    pacotesSelecionadosEmEdicao,
+    reservasPorPacoteDiaEmEdicao,
+    vagasExtrasDisponibilidadeEmEdicao,
+  ]);
 
   const requerHorarioEspecificoEmEdicao = pacotesComHorarioEspecificoEmEdicao.length > 0;
   const conflitoHorarioPacotesEmEdicao =
@@ -3115,6 +3201,46 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [editReserva?.data, modalReserva]);
 
   useEffect(() => {
+    if (!modalReserva || !editReserva?.data) {
+      setVagasExtrasDisponibilidadeEmEdicao({});
+      return;
+    }
+
+    const dataStr = normalizarDataReserva(editReserva.data);
+    if (!dataStr) {
+      setVagasExtrasDisponibilidadeEmEdicao({});
+      return;
+    }
+
+    let ativo = true;
+
+    const carregarDisponibilidadeEmEdicao = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'disponibilidade', dataStr));
+        if (!ativo) return;
+
+        const dados = snap.exists() ? snap.data() : null;
+        setVagasExtrasDisponibilidadeEmEdicao(
+          normalizarVagasExtrasDisponibilidade(
+            dados?.vagasExtras as Record<string, unknown> | null
+          )
+        );
+      } catch (error) {
+        console.error('Erro ao carregar vagas extras da data em edicao:', error);
+        if (ativo) {
+          setVagasExtrasDisponibilidadeEmEdicao({});
+        }
+      }
+    };
+
+    void carregarDisponibilidadeEmEdicao();
+
+    return () => {
+      ativo = false;
+    };
+  }, [editReserva?.data, modalReserva]);
+
+  useEffect(() => {
     if (aba !== 'dashboard') return;
 
     const inicio = dayjs(dashboardInicio);
@@ -3709,7 +3835,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
       }
 
-      return [...listaBase, ...extras].filter((item) => item.quantidade > 0);
+      return [...listaBase, ...extras]
+        .filter((item) => item.quantidade > 0)
+        .sort((a, b) => compararTextoNumericamente(a.label, b.label));
 
     },
 
@@ -3791,7 +3919,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-    return Array.from(new Set(nomes.filter(Boolean)));
+    return Array.from(new Set(nomes.filter(Boolean))).sort((a, b) =>
+      compararTextoNumericamente(a, b)
+    );
 
   };
 
@@ -5647,59 +5777,14 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-        if (dados && typeof dados.horarios === 'object') {
-
-
-
-          const normalizado = Object.entries(dados.horarios as Record<string, boolean>).reduce(
-
-
-
-            (acc, [key, value]) => {
-
-
-
-              if (value === false) {
-
-
-
-                acc[key] = false;
-
-
-
-              }
-
-
-
-              return acc;
-
-
-
-            },
-
-
-
-            {} as Record<string, boolean>
-
-
-
-          );
-
-
-
-          setDisponibilidadeData(normalizado);
-
-
-
-        } else {
-
-
-
-          setDisponibilidadeData({});
-
-
-
-        }
+        setDisponibilidadeData(
+          normalizarBloqueiosDisponibilidade(dados?.horarios as Record<string, unknown> | null)
+        );
+        setVagasExtrasDisponibilidade(
+          normalizarVagasExtrasDisponibilidade(
+            dados?.vagasExtras as Record<string, unknown> | null
+          )
+        );
 
 
 
@@ -5708,6 +5793,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
         setDisponibilidadeData({});
+        setVagasExtrasDisponibilidade({});
 
 
 
@@ -5728,6 +5814,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
       setDisponibilidadeData({});
+      setVagasExtrasDisponibilidade({});
 
 
 
@@ -5762,8 +5849,9 @@ const totalParticipantesDoDia = useMemo(() => {
       const ref = doc(db, 'disponibilidade', dataStr);
 
       const temBloqueiosPorHorario = Object.keys(disponibilidadeData).length > 0;
+      const temVagasExtras = Object.keys(vagasExtrasDisponibilidade).length > 0;
 
-      const precisaManterRegistro = temBloqueiosPorHorario || diaFechado;
+      const precisaManterRegistro = temBloqueiosPorHorario || temVagasExtras || diaFechado;
 
       if (precisaManterRegistro) {
 
@@ -5776,6 +5864,16 @@ const totalParticipantesDoDia = useMemo(() => {
         } else {
 
           payload.horarios = deleteField();
+
+        }
+
+        if (temVagasExtras) {
+
+          payload.vagasExtras = vagasExtrasDisponibilidade;
+
+        } else {
+
+          payload.vagasExtras = deleteField();
 
         }
 
@@ -5922,6 +6020,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
       setFechamentoFim(dataStr);
 
+
+      setVagasExtrasDisponibilidade({});
 
       setPacotesDisponibilidadeAbertos({});
 
@@ -7954,7 +8054,7 @@ const totalParticipantesDoDia = useMemo(() => {
                             const bIndefinido = b.toLowerCase().includes('especificado');
                             if (aIndefinido && !bIndefinido) return 1;
                             if (!aIndefinido && bIndefinido) return -1;
-                            return a.localeCompare(b);
+                            return compararHorariosComIndefinidosNoFim(a, b);
                           })
                           .map((horario) => {
                             const reservasPorHorario = reservas[horario];
@@ -8271,7 +8371,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                           if (!aIndefinido && bIndefinido) return -1;
 
-                          return a.localeCompare(b);
+                          return compararHorariosComIndefinidosNoFim(a, b);
 
                         })
 
@@ -8740,7 +8840,7 @@ const totalParticipantesDoDia = useMemo(() => {
                       const bIndefinido = b.toLowerCase().includes('especificado');
                       if (aIndefinido && !bIndefinido) return 1;
                       if (!aIndefinido && bIndefinido) return -1;
-                      return a.localeCompare(b);
+                      return compararHorariosComIndefinidosNoFim(a, b);
                     })
                     .map((horario) => {
                       const reservasPorHorario = reservas[horario];
@@ -8989,7 +9089,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                       if (!aIndefinido && bIndefinido) return -1;
 
-                      return a.localeCompare(b);
+                      return compararHorariosComIndefinidosNoFim(a, b);
 
                     })
 
@@ -9347,7 +9447,7 @@ const totalParticipantesDoDia = useMemo(() => {
               const bIndef = b.toLowerCase().includes('especificado');
               if (aIndef && !bIndef) return 1;
               if (!aIndef && bIndef) return -1;
-              return a.localeCompare(b);
+              return compararHorariosComIndefinidosNoFim(a, b);
             });
             const totalReservas = Object.values(reservas).reduce((s, l) => s + l.length, 0);
             const totalPax = Object.values(reservas).reduce((s, l) => s + l.reduce((ss, r) => ss + calcularParticipantes(r), 0), 0);
@@ -9387,7 +9487,18 @@ const totalParticipantesDoDia = useMemo(() => {
                     ) : (
                       <div className="flex h-full gap-0 divide-x divide-slate-100">
                         {horariosOrdenados.map((horario) => {
-                          const lista = reservas[horario] ?? [];
+                          const lista = [...(reservas[horario] ?? [])].sort((a, b) => {
+                            const diferencaParticipantes =
+                              calcularParticipantes(b) - calcularParticipantes(a);
+                            if (diferencaParticipantes !== 0) {
+                              return diferencaParticipantes;
+                            }
+
+                            return compararTextoNumericamente(
+                              (a.nome ?? '').toString(),
+                              (b.nome ?? '').toString()
+                            );
+                          });
                           const paxHorario = lista.reduce((s, r) => s + calcularParticipantes(r), 0);
                           return (
                             <div key={horario} className="flex min-w-[10rem] flex-1 flex-col">
@@ -11698,6 +11809,205 @@ const totalParticipantesDoDia = useMemo(() => {
                             </p>
                           </div>
 
+                          {(() => {
+                            const dataStr = dayjs(selectedDate).format('YYYY-MM-DD');
+                            const chaveExtraDiaGeral = montarChaveVagasExtrasDiaGeral(dataStr);
+                            const vagasExtrasDiaGeral =
+                              vagasExtrasDisponibilidade[chaveExtraDiaGeral] ?? 0;
+                            const totalVagasExtrasHorarioGeral =
+                              horariosDisponibilidadeGerais.reduce((total, horario) => {
+                                const chaveHorario = montarChaveVagasExtrasHorarioGeral(
+                                  dataStr,
+                                  horario
+                                );
+                                return total + (vagasExtrasDisponibilidade[chaveHorario] ?? 0);
+                              }, 0);
+
+                            return (
+                              <div className="rounded-xl border border-blue-200 bg-white p-4">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    Adicionar vagas extras
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    Ajuste geral para esta data ou para um horario especifico.
+                                    Esse valor soma com o ajuste especifico de cada pacote.
+                                  </p>
+                                </div>
+
+                                <div className="mt-4 space-y-4">
+                                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-semibold text-blue-900">
+                                          Vagas extras gerais do dia
+                                        </p>
+                                        <p className="text-xs text-blue-800/80">
+                                          Vale para todos os pacotes nesta data.
+                                        </p>
+                                      </div>
+                                      <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-blue-700">
+                                        Atual: +{vagasExtrasDiaGeral}
+                                      </span>
+                                    </div>
+                                    <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-blue-900">
+                                      Quantidade
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={vagasExtrasDiaGeral > 0 ? vagasExtrasDiaGeral : ''}
+                                        onChange={(e) =>
+                                          atualizarVagasExtrasDisponibilidade(
+                                            chaveExtraDiaGeral,
+                                            e.target.value
+                                          )
+                                        }
+                                        className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        placeholder="0"
+                                      />
+                                    </label>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {opcoesAjusteRapidoVagas.map((incremento) => (
+                                        <button
+                                          key={`geral-dia-${incremento}`}
+                                          type="button"
+                                          onClick={() =>
+                                            somarVagasExtrasDisponibilidade(
+                                              chaveExtraDiaGeral,
+                                              incremento
+                                            )
+                                          }
+                                          className="rounded-full border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-blue-700 transition hover:border-blue-300 hover:text-blue-900"
+                                        >
+                                          +{incremento} vaga{incremento !== 1 ? 's' : ''}
+                                        </button>
+                                      ))}
+                                      {vagasExtrasDiaGeral > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            atualizarVagasExtrasDisponibilidade(
+                                              chaveExtraDiaGeral,
+                                              ''
+                                            )
+                                          }
+                                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                                        >
+                                          Limpar ajuste
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-sm font-semibold text-slate-900">
+                                          Vagas extras por horario
+                                        </p>
+                                        <p className="text-xs text-slate-500">
+                                          Use quando precisar reforcar apenas horarios pontuais.
+                                        </p>
+                                      </div>
+                                      <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                        Total: +{totalVagasExtrasHorarioGeral}
+                                      </span>
+                                    </div>
+
+                                    {horariosDisponibilidadeGerais.length === 0 ? (
+                                      <p className="mt-3 text-xs text-slate-500">
+                                        Nenhum horario fixo cadastrado nos pacotes para ajustar aqui.
+                                      </p>
+                                    ) : (
+                                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                        {horariosDisponibilidadeGerais.map((horario) => {
+                                          const chaveHorario = montarChaveVagasExtrasHorarioGeral(
+                                            dataStr,
+                                            horario
+                                          );
+                                          const vagasExtrasHorario =
+                                            vagasExtrasDisponibilidade[chaveHorario] ?? 0;
+
+                                          return (
+                                            <div
+                                              key={`geral-${horario}`}
+                                              className="rounded-lg border border-slate-200 bg-white p-3"
+                                            >
+                                              <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                  <p className="text-sm font-semibold text-slate-900">
+                                                    {horario}
+                                                  </p>
+                                                  <p className="text-xs text-slate-500">
+                                                    Ajuste geral deste horario.
+                                                  </p>
+                                                </div>
+                                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                                  +{vagasExtrasHorario}
+                                                </span>
+                                              </div>
+                                              <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                                Quantidade
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  step="1"
+                                                  value={
+                                                    vagasExtrasHorario > 0 ? vagasExtrasHorario : ''
+                                                  }
+                                                  onChange={(e) =>
+                                                    atualizarVagasExtrasDisponibilidade(
+                                                      chaveHorario,
+                                                      e.target.value
+                                                    )
+                                                  }
+                                                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                                  placeholder="0"
+                                                />
+                                              </label>
+                                              <div className="mt-3 flex flex-wrap gap-2">
+                                                {opcoesAjusteRapidoVagas.map((incremento) => (
+                                                  <button
+                                                    key={`geral-${horario}-${incremento}`}
+                                                    type="button"
+                                                    onClick={() =>
+                                                      somarVagasExtrasDisponibilidade(
+                                                        chaveHorario,
+                                                        incremento
+                                                      )
+                                                    }
+                                                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                                                  >
+                                                    +{incremento}
+                                                  </button>
+                                                ))}
+                                                {vagasExtrasHorario > 0 && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      atualizarVagasExtrasDisponibilidade(
+                                                        chaveHorario,
+                                                        ''
+                                                      )
+                                                    }
+                                                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                                                  >
+                                                    Limpar
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                         </div>
 
                         <div className="space-y-4">
@@ -11716,9 +12026,31 @@ const totalParticipantesDoDia = useMemo(() => {
                                 const aberto = pacotesDisponibilidadeAbertos[pacoteId] ?? false;
                                 const horariosPacote = pacote.horarios ?? [];
                                 const totalHorarios = horariosPacote.length;
+                                const chaveExtraDia = pacoteId
+                                  ? montarChaveVagasExtrasDia(dataStr, pacoteId)
+                                  : '';
+                                const vagasExtrasDia = chaveExtraDia
+                                  ? vagasExtrasDisponibilidade[chaveExtraDia] ?? 0
+                                  : 0;
                                 const bloqueados = horariosPacote.filter(
                                   (horario) => disponibilidadeData[`${pacoteKey}-${horario}`] === false
                                 ).length;
+                                const vagasExtrasHorarios = horariosPacote.reduce((total, horario) => {
+                                  if (!pacoteId) return total;
+                                  const chaveHorario = montarChaveVagasExtrasHorario(
+                                    dataStr,
+                                    pacoteId,
+                                    horario
+                                  );
+                                  return total + (vagasExtrasDisponibilidade[chaveHorario] ?? 0);
+                                }, 0);
+                                const totalVagasExtrasPacote = vagasExtrasDia + vagasExtrasHorarios;
+                                const resumoDisponibilidadePacote =
+                                  pacote.modoHorario === 'intervalo'
+                                    ? 'Faixa de horario por dia'
+                                    : totalHorarios > 0
+                                      ? `${bloqueados} bloqueados de ${totalHorarios} horarios`
+                                      : 'Sem horarios configurados';
                                 const indicador =
                                   pacote.emoji ||
                                   (pacote.nome ? pacote.nome.trim().charAt(0).toUpperCase() : '') ||
@@ -11734,9 +12066,10 @@ const totalParticipantesDoDia = useMemo(() => {
                                         <div>
                                           <h5 className="font-semibold text-slate-900">{pacote.nome}</h5>
                                           <p className="text-xs text-slate-500">
-                                            {totalHorarios > 0
-                                              ? `${bloqueados} bloqueados de ${totalHorarios} horarios`
-                                              : 'Sem horarios configurados'}
+                                            {resumoDisponibilidadePacote}
+                                            {totalVagasExtrasPacote > 0
+                                              ? ` · +${totalVagasExtrasPacote} vaga(s) extras no pacote`
+                                              : ''}
                                           </p>
                                         </div>
                                       </div>
@@ -11765,46 +12098,187 @@ const totalParticipantesDoDia = useMemo(() => {
                                     {aberto && (
                                       <div className="mt-4 space-y-3">
                                         {pacote.modoHorario === 'intervalo' ? (
-                                          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+                                          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 space-y-3">
                                             <p className="text-sm text-yellow-700">
                                               Este pacote funciona em faixa de horario ({pacote.horarioInicio} - {pacote.horarioFim}).
-                                              Para bloquear, adicione a data nas "Datas sem disponibilidade" do pacote.
+                                              Ajuste aqui as vagas extras apenas para {dayjs(selectedDate).format('DD/MM/YYYY')}. Para bloquear,
+                                              continue usando as "Datas sem disponibilidade" do pacote.
+                                            </p>
+                                            <label className="block text-xs font-semibold uppercase text-yellow-800">
+                                              Vagas extras deste pacote no dia
+                                              <input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={vagasExtrasDia > 0 ? vagasExtrasDia : ''}
+                                                onChange={(e) =>
+                                                  atualizarVagasExtrasDisponibilidade(
+                                                    chaveExtraDia,
+                                                    e.target.value
+                                                  )
+                                                }
+                                                className="mt-1 w-full rounded-lg border border-yellow-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-yellow-500 focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                                placeholder="0"
+                                              />
+                                            </label>
+                                            <div className="flex flex-wrap gap-2">
+                                              {opcoesAjusteRapidoVagas.map((incremento) => (
+                                                <button
+                                                  key={`${pacoteId}-dia-${incremento}`}
+                                                  type="button"
+                                                  onClick={() =>
+                                                    somarVagasExtrasDisponibilidade(
+                                                      chaveExtraDia,
+                                                      incremento
+                                                    )
+                                                  }
+                                                  className="rounded-full border border-yellow-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-yellow-700 transition hover:border-yellow-300 hover:text-yellow-900"
+                                                >
+                                                  +{incremento} vaga{incremento !== 1 ? 's' : ''}
+                                                </button>
+                                              ))}
+                                              {vagasExtrasDia > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    atualizarVagasExtrasDisponibilidade(
+                                                      chaveExtraDia,
+                                                      ''
+                                                    )
+                                                  }
+                                                  className="rounded-full border border-yellow-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-yellow-700 transition hover:border-yellow-300 hover:text-yellow-900"
+                                                >
+                                                  Limpar ajuste
+                                                </button>
+                                              )}
+                                            </div>
+                                            <p className="text-xs text-yellow-700/80">
+                                              Limite regular: {pacote.limite} vaga(s). Este ajuste
+                                              e especifico do pacote e se soma ao ajuste geral da
+                                              data, quando existir.
                                             </p>
                                           </div>
                                         ) : (
-                                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+                                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                                             {pacote.horarios.map((horario) => {
                                               const horarioKey = `${pacoteKey}-${horario}`;
                                               const isDisponivel =
                                                 disponibilidadeData[horarioKey] !== false;
+                                              const chaveExtraHorario = pacoteId
+                                                ? montarChaveVagasExtrasHorario(
+                                                    dataStr,
+                                                    pacoteId,
+                                                    horario
+                                                  )
+                                                : '';
+                                              const vagasExtrasHorario = chaveExtraHorario
+                                                ? vagasExtrasDisponibilidade[chaveExtraHorario] ?? 0
+                                                : 0;
 
                                               return (
-                                                <button
+                                                <div
                                                   key={horario}
-                                                  type="button"
-                                                  onClick={() => {
-                                                    setDisponibilidadeData((prev) => {
-                                                      const proximo = { ...prev };
-                                                      if (isDisponivel) {
-                                                        proximo[horarioKey] = false;
-                                                      } else {
-                                                        delete proximo[horarioKey];
-                                                      }
-                                                      return proximo;
-                                                    });
-                                                  }}
-                                                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                                                  className={`rounded-xl border p-3 transition ${
                                                     isDisponivel
-                                                      ? 'bg-green-100 text-green-700 border-green-200'
-                                                      : 'bg-red-100 text-red-700 border-red-200'
+                                                      ? 'border-green-200 bg-green-50/80'
+                                                      : 'border-red-200 bg-red-50/80'
                                                   }`}
                                                 >
-                                                  {horario}
-                                                  <br />
-                                                  <span className="text-xs">
-                                                    {isDisponivel ? 'Disponivel' : 'Bloqueado'}
-                                                  </span>
-                                                </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setDisponibilidadeData((prev) => {
+                                                        const proximo = { ...prev };
+                                                        if (isDisponivel) {
+                                                          proximo[horarioKey] = false;
+                                                        } else {
+                                                          delete proximo[horarioKey];
+                                                        }
+                                                        return proximo;
+                                                      });
+                                                    }}
+                                                    className="flex w-full items-start justify-between gap-3 text-left"
+                                                  >
+                                                    <div>
+                                                      <p
+                                                        className={`text-sm font-semibold ${
+                                                          isDisponivel ? 'text-green-800' : 'text-red-800'
+                                                        }`}
+                                                      >
+                                                        {horario}
+                                                      </p>
+                                                      <p
+                                                        className={`text-xs ${
+                                                          isDisponivel ? 'text-green-700' : 'text-red-700'
+                                                        }`}
+                                                      >
+                                                        {isDisponivel ? 'Disponivel' : 'Bloqueado'}
+                                                      </p>
+                                                    </div>
+                                                    <span
+                                                      className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                                        isDisponivel
+                                                          ? 'bg-green-100 text-green-700'
+                                                          : 'bg-red-100 text-red-700'
+                                                      }`}
+                                                    >
+                                                      {isDisponivel ? 'Aberto' : 'Fechado'}
+                                                    </span>
+                                                  </button>
+                                                  <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                                    Vagas extras deste pacote
+                                                    <input
+                                                      type="number"
+                                                      min="0"
+                                                      step="1"
+                                                      value={vagasExtrasHorario > 0 ? vagasExtrasHorario : ''}
+                                                      onChange={(e) =>
+                                                        atualizarVagasExtrasDisponibilidade(
+                                                          chaveExtraHorario,
+                                                          e.target.value
+                                                        )
+                                                      }
+                                                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                                      placeholder="0"
+                                                    />
+                                                  </label>
+                                                  <div className="mt-3 flex flex-wrap gap-2">
+                                                    {opcoesAjusteRapidoVagas.map((incremento) => (
+                                                      <button
+                                                        key={`${pacoteId}-${horario}-${incremento}`}
+                                                        type="button"
+                                                        onClick={() =>
+                                                          somarVagasExtrasDisponibilidade(
+                                                            chaveExtraHorario,
+                                                            incremento
+                                                          )
+                                                        }
+                                                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                                                      >
+                                                        +{incremento}
+                                                      </button>
+                                                    ))}
+                                                    {vagasExtrasHorario > 0 && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                          atualizarVagasExtrasDisponibilidade(
+                                                            chaveExtraHorario,
+                                                            ''
+                                                          )
+                                                        }
+                                                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                                                      >
+                                                        Limpar
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                  <p className="mt-2 text-[11px] text-slate-500">
+                                                    Limite regular: {pacote.limite} vaga(s) neste
+                                                    horario. O ajuste deste pacote soma com o ajuste
+                                                    geral do horario, quando houver.
+                                                  </p>
+                                                </div>
                                               );
                                             })}
                                           </div>
