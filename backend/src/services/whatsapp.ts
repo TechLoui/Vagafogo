@@ -428,7 +428,7 @@ function registrarHandlersClient(): void {
   });
 
   client.on("remote_session_saved" as any, () => {
-    console.log("[whatsapp] Sessão sincronizada com MongoDB");
+    console.log("[whatsapp] Sessao sincronizada com Firebase Storage");
   });
 }
 
