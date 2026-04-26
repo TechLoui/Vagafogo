@@ -1,9 +1,13 @@
 import { App, cert, getApps, initializeApp } from "firebase-admin/app";
 import { Firestore, getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 let adminApp: App | null = null;
 let adminFirestore: Firestore | null = null;
 let adminInitAttempted = false;
+
+const STORAGE_BUCKET =
+  process.env.FIREBASE_STORAGE_BUCKET?.trim() || "banco-vagafogo.firebasestorage.app";
 
 const lerServiceAccount = () => {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
@@ -48,6 +52,7 @@ const inicializarAdminApp = () => {
       getApps()[0] ??
       initializeApp({
         credential: cert(serviceAccount),
+        storageBucket: STORAGE_BUCKET,
       });
     return adminApp;
   } catch (error) {
@@ -69,4 +74,15 @@ export const obterFirestoreAdmin = () => {
 
   adminFirestore = getFirestore(app);
   return adminFirestore;
+};
+
+export const obterStorageBucketAdmin = () => {
+  const app = inicializarAdminApp();
+  if (!app) return null;
+  try {
+    return getStorage(app).bucket();
+  } catch (error) {
+    console.error("[firebase-admin] Falha ao obter bucket de Storage:", error);
+    return null;
+  }
 };
