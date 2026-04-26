@@ -1,8 +1,11 @@
-import { Client, LocalAuth } from "whatsapp-web.js";
+import { Client, LocalAuth, RemoteAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
 import { rm } from "fs/promises";
 import path from "path";
+import mongoose from "mongoose";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { MongoStore } = require("wwebjs-mongo");
 import { db } from "./firebase";
 
 type PuppeteerPage = {
@@ -70,8 +73,31 @@ const WHATSAPP_AUTH_PATH = (process.env.WHATSAPP_AUTH_PATH ?? ".wwebjs_auth").tr
 const WHATSAPP_AUTH_SESSION_PATH = path.resolve(
   process.cwd(),
   WHATSAPP_AUTH_PATH,
-  `session-${WHATSAPP_CLIENT_ID}`
+  `RemoteAuth-${WHATSAPP_CLIENT_ID}`
 );
+const MONGODB_URI = (process.env.MONGODB_URI ?? "").trim();
+const REMOTE_BACKUP_INTERVAL_MS = parseNumber(
+  process.env.WHATSAPP_REMOTE_BACKUP_MS,
+  300000 // 5 min
+);
+
+let mongoConnection: typeof mongoose | null = null;
+let mongoStore: any = null;
+
+const conectarMongo = async () => {
+  if (!MONGODB_URI) return false;
+  if (mongoConnection && mongoose.connection.readyState === 1) return true;
+  try {
+    mongoConnection = await mongoose.connect(MONGODB_URI);
+    mongoStore = new MongoStore({ mongoose });
+    return true;
+  } catch (error) {
+    console.error("[whatsapp] Falha ao conectar MongoDB:", error);
+    mongoConnection = null;
+    mongoStore = null;
+    return false;
+  }
+};
 
 let client: Client | null = null;
 let status: WhatsappStatus = "idle";
@@ -275,16 +301,45 @@ export function iniciarWhatsApp(): void {
   status = "initializing";
   lastError = null;
 
-  client = new Client({
-    authStrategy: new LocalAuth({
-      clientId: WHATSAPP_CLIENT_ID,
-      dataPath: WHATSAPP_AUTH_PATH,
-    }),
-    puppeteer: {
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-      ...(executablePath ? { executablePath } : {}),
-    },
-  });
+  void (async () => {
+    const usarRemoteAuth = await conectarMongo();
+    if (MONGODB_URI && !usarRemoteAuth) {
+      // Mongo configurado mas falhou — não cria client com LocalAuth pra evitar perder a sessão
+      handleInitFailure(new Error("mongo_indisponivel"));
+      return;
+    }
+
+    const authStrategy = usarRemoteAuth
+      ? new RemoteAuth({
+          clientId: WHATSAPP_CLIENT_ID,
+          dataPath: WHATSAPP_AUTH_PATH,
+          store: mongoStore,
+          backupSyncIntervalMs: Math.max(60000, REMOTE_BACKUP_INTERVAL_MS),
+        })
+      : new LocalAuth({
+          clientId: WHATSAPP_CLIENT_ID,
+          dataPath: WHATSAPP_AUTH_PATH,
+        });
+
+    client = new Client({
+      authStrategy,
+      puppeteer: {
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        ...(executablePath ? { executablePath } : {}),
+      },
+    });
+
+    registrarHandlersClient();
+
+    client.initialize().catch((error: any) => {
+      console.error("[whatsapp] Falha ao inicializar:", error);
+      handleInitFailure(error);
+    });
+  })();
+}
+
+function registrarHandlersClient(): void {
+  if (!client) return;
 
   client.on("qr", async (qr) => {
     status = "qr";
@@ -347,9 +402,8 @@ export function iniciarWhatsApp(): void {
     }
   });
 
-  client.initialize().catch((error: any) => {
-    console.error("[whatsapp] Falha ao inicializar:", error);
-    handleInitFailure(error);
+  client.on("remote_session_saved" as any, () => {
+    console.log("[whatsapp] Sessão sincronizada com MongoDB");
   });
 }
 
