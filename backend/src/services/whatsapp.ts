@@ -6,6 +6,10 @@ import path from "path";
 import { db } from "./firebase";
 import { obterStorageBucketAdmin } from "./firebaseAdmin";
 
+// O whatsapp-web.js v1.34 passa `session` como caminho absoluto em `save`
+// (ex: "/app/.wwebjs_auth/RemoteAuth-vagafogo") mas como nome puro em
+// sessionExists/extract/delete (ex: "RemoteAuth-vagafogo"). Sempre extraimos
+// o basename pra normalizar o destino no bucket.
 class FirebaseStore {
   private bucket: any;
 
@@ -13,13 +17,47 @@ class FirebaseStore {
     this.bucket = bucket;
   }
 
-  private filePath(session: string) {
-    return `whatsapp-sessions/${session}.zip`;
+  private destinationFor(session: string) {
+    return `whatsapp-sessions/${path.basename(session)}.zip`;
+  }
+
+  private legacyPathsFor(session: string): string[] {
+    const base = path.basename(session);
+    // Caminhos antigos que ja existem no bucket por causa do bug anterior
+    return [
+      `app/.wwebjs_auth/${base}.zip`,
+      `.wwebjs_auth/${base}.zip`,
+    ];
+  }
+
+  private async migrarLegacy(session: string) {
+    const destino = this.destinationFor(session);
+    for (const legacy of this.legacyPathsFor(session)) {
+      const legacyFile = this.bucket.file(legacy);
+      const [existe] = await legacyFile.exists();
+      if (!existe) continue;
+      console.log(`[whatsapp][store] Migrando sessao legacy ${legacy} -> ${destino}`);
+      try {
+        await legacyFile.copy(this.bucket.file(destino));
+        await legacyFile.delete().catch(() => undefined);
+        return true;
+      } catch (error) {
+        console.error(`[whatsapp][store] Falha ao migrar ${legacy}:`, error);
+      }
+    }
+    return false;
   }
 
   async sessionExists({ session }: { session: string }) {
     try {
-      const [exists] = await this.bucket.file(this.filePath(session)).exists();
+      const destino = this.destinationFor(session);
+      let [exists] = await this.bucket.file(destino).exists();
+      if (!exists) {
+        const migrou = await this.migrarLegacy(session);
+        if (migrou) {
+          [exists] = await this.bucket.file(destino).exists();
+        }
+      }
       console.log(`[whatsapp][store] sessionExists(${session}) -> ${exists}`);
       return exists;
     } catch (error) {
@@ -29,34 +67,36 @@ class FirebaseStore {
   }
 
   async save({ session }: { session: string }) {
+    // session pode ser caminho absoluto; ${session}.zip eh o arquivo LOCAL gerado pelo RemoteAuth
+    const localZip = `${session}.zip`;
+    const destino = this.destinationFor(session);
     try {
-      console.log(`[whatsapp][store] save(${session}) iniciando upload...`);
-      await this.bucket.upload(`${session}.zip`, {
-        destination: this.filePath(session),
-        resumable: false,
-      });
-      console.log(`[whatsapp][store] save(${session}) concluido com sucesso`);
+      console.log(`[whatsapp][store] save: subindo ${localZip} -> ${destino}`);
+      await this.bucket.upload(localZip, { destination: destino, resumable: false });
+      console.log(`[whatsapp][store] save concluido`);
     } catch (error) {
-      console.error(`[whatsapp][store] save(${session}) FALHOU:`, error);
+      console.error(`[whatsapp][store] save FALHOU:`, error);
       throw error;
     }
   }
 
   async extract({ session, path: destino }: { session: string; path: string }) {
+    const remoto = this.destinationFor(session);
     try {
-      console.log(`[whatsapp][store] extract(${session}) baixando para ${destino}...`);
-      await this.bucket.file(this.filePath(session)).download({ destination: destino });
-      console.log(`[whatsapp][store] extract(${session}) concluido`);
+      console.log(`[whatsapp][store] extract: baixando ${remoto} -> ${destino}`);
+      await this.bucket.file(remoto).download({ destination: destino });
+      console.log(`[whatsapp][store] extract concluido`);
     } catch (error) {
-      console.error(`[whatsapp][store] extract(${session}) FALHOU:`, error);
+      console.error(`[whatsapp][store] extract FALHOU:`, error);
       throw error;
     }
   }
 
   async delete({ session }: { session: string }) {
+    const destino = this.destinationFor(session);
     try {
-      await this.bucket.file(this.filePath(session)).delete();
-      console.log(`[whatsapp][store] delete(${session}) concluido`);
+      await this.bucket.file(destino).delete();
+      console.log(`[whatsapp][store] delete(${destino}) concluido`);
     } catch (error: any) {
       if (error?.code !== 404) {
         console.warn("[whatsapp][store] Falha ao remover sessao no Storage:", error);
