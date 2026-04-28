@@ -212,9 +212,6 @@ export function MinhaReserva() {
 
       <main className="mx-auto w-full max-w-screen-md px-4 sm:px-6 lg:px-8 pt-10 pb-16">
         <div className="text-center mb-8">
-          <span className="inline-block text-[11px] font-bold uppercase tracking-[0.32em] text-[#8B4F23] bg-[#8B4F23]/10 px-4 py-1.5 rounded-full mb-4 border border-[#8B4F23]/15">
-            Minha Reserva
-          </span>
           <h1 className="text-3xl md:text-4xl font-bold text-[#2D1E0F] leading-tight tracking-tight">
             Consulte sua reserva
           </h1>
@@ -408,20 +405,6 @@ export function MinhaReserva() {
           </div>
         )}
 
-        {!pesquisaRealizada && (
-          <div className="mt-8 text-center text-xs text-slate-500">
-            Está com dúvidas? Fale com a gente pelo{" "}
-            <a
-              href="https://wa.me/5562992225471"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#8B4F23] font-semibold hover:underline"
-            >
-              WhatsApp (62) 99222-5471
-            </a>
-            .
-          </div>
-        )}
       </main>
 
       <div className="border-t border-[#8B4F23]/10 py-6 text-center">
