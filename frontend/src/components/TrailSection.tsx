@@ -1,6 +1,7 @@
 import HeroImg from '../assets/trilhaecologica/trilhaecologica-1.jpg'
 import Trilha from '../assets/trilhaecologica/trilhaecologica-2.jpg'
 import { Link } from "react-router-dom"
+import { useReveal } from "../hooks/useReveal"
 
 const features = [
   "Espaços estratégicos para descanso e meditação",
@@ -11,67 +12,93 @@ const features = [
 ];
 
 export function TrailSection() {
+  const { ref: headRef, revealed: headRevealed } = useReveal<HTMLDivElement>();
+  const { ref: imgRef, revealed: imgRevealed } = useReveal<HTMLDivElement>();
+  const { ref: textRef, revealed: textRevealed } = useReveal<HTMLDivElement>();
+
   return (
     <section
       id="trilha"
-      className="py-16 md:py-24 relative overflow-hidden"
-      style={{
-        background: `linear-gradient(rgba(20,40,20,0.85), rgba(20,40,20,0.85)), url(${HeroImg})`,
-        backgroundPosition: "center",
-        backgroundSize: "cover",
-        backgroundAttachment: "fixed",
-      }}
+      className="relative overflow-hidden py-20 md:py-28 cv-auto"
     >
-      <div className="mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8">
+      <div className="absolute inset-0">
+        <img
+          src={HeroImg}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[rgba(15,30,15,0.88)] via-[rgba(20,40,20,0.85)] to-[rgba(10,25,10,0.94)]" />
+      </div>
 
-        {/* Header */}
-        <div className="max-w-3xl mx-auto text-center mb-12">
-          <span className="inline-block text-xs font-bold uppercase tracking-widest text-green-400 bg-green-400/15 px-3 py-1 rounded-full mb-3">
+      <div className="relative mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8">
+        <div ref={headRef} className={`mx-auto max-w-3xl text-center mb-14 ${headRevealed ? "animate-reveal" : "opacity-0"}`}>
+          <span className="inline-block text-[11px] font-bold uppercase tracking-[0.32em] text-emerald-300 bg-emerald-400/10 px-4 py-1.5 rounded-full mb-4 border border-emerald-400/20">
             Conexão com a Natureza
           </span>
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mt-2 leading-tight">
-            Trilha Ecológica
+          <h2 className="text-3xl md:text-5xl lg:text-6xl font-bold text-white leading-[1.1] tracking-tight mb-3">
+            Trilha <span className="text-emerald-300">Ecológica</span>
           </h2>
+          <p className="text-gray-200/80 text-base md:text-lg leading-relaxed max-w-2xl mx-auto">
+            Mata ciliar primária preservada margeando o Rio Vagafogo.
+          </p>
         </div>
 
         <div className="flex flex-col lg:flex-row items-center gap-10 lg:gap-16 max-w-6xl mx-auto">
-
-          {/* Imagem */}
-          <div className="lg:w-1/2 w-full flex-shrink-0">
-            <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+          <div
+            ref={imgRef}
+            className={`lg:w-1/2 w-full flex-shrink-0 ${imgRevealed ? "animate-reveal" : "opacity-0"}`}
+          >
+            <div className="relative rounded-3xl overflow-hidden shadow-2xl border border-white/10 group">
               <img
                 src={Trilha}
                 alt="Trilha Mãe da Floresta - Santuário Vagafogo"
-                className="w-full h-72 lg:h-96 object-cover"
+                loading="lazy"
+                decoding="async"
+                className="w-full h-72 lg:h-[440px] object-cover transition-transform duration-[1500ms] group-hover:scale-105"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
 
-              {/* Badge */}
-              <div className="absolute bottom-4 left-4 right-4">
-                <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/10">
+              <div className="absolute bottom-5 left-5 right-5">
+                <div className="bg-black/60 backdrop-blur-md rounded-2xl px-5 py-4 border border-white/10">
                   <h3 className="font-bold text-white text-base">Trilha Mãe da Floresta</h3>
-                  <p className="text-green-300 text-xs mt-0.5">Mata ciliar primária preservada · 1.530m</p>
+                  <p className="text-emerald-300 text-xs mt-1 tracking-wide">
+                    Mata ciliar primária preservada · 1.530m
+                  </p>
                 </div>
+              </div>
+
+              {/* Selo decorativo */}
+              <div className="absolute top-5 right-5 flex items-center gap-2 rounded-full bg-emerald-500/90 backdrop-blur-sm px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg">
+                <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                Aberto hoje
               </div>
             </div>
           </div>
 
-          {/* Texto */}
-          <div className="lg:w-1/2 text-white">
-            <h3 className="text-2xl font-bold mb-3 leading-snug">Caminhada Imersiva de 1.530m</h3>
-            <p className="mb-6 text-gray-300 leading-relaxed">
+          <div
+            ref={textRef}
+            className={`lg:w-1/2 text-white ${textRevealed ? "animate-reveal" : "opacity-0"}`}
+            style={{ animationDelay: textRevealed ? "120ms" : undefined }}
+          >
+            <h3 className="text-2xl lg:text-3xl font-bold mb-4 leading-tight">
+              Caminhada Imersiva de 1.530m
+            </h3>
+            <p className="mb-6 text-gray-300/90 leading-relaxed">
               Nossa trilha ecológica atravessa uma belíssima mata ciliar primária preservada, margeando o Rio Vagafogo. A trilha é completamente protegida por madeiramento, oferecendo conforto e segurança ao visitante.
             </p>
 
-            <ul className="space-y-3 mb-8">
+            <ul className="space-y-3.5 mb-8">
               {features.map((item, i) => (
-                <li key={i} className="flex items-start gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-green-500/20 border border-green-400/40 flex items-center justify-center mt-0.5">
-                    <svg className="w-3 h-3 text-green-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <li key={i} className="flex items-start gap-3 group">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mt-0.5 transition-all duration-300 group-hover:bg-emerald-500/30 group-hover:border-emerald-400">
+                    <svg className="w-3 h-3 text-emerald-300" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </span>
-                  <span className="text-gray-200 text-sm leading-relaxed">{item}</span>
+                  <span className="text-gray-200/90 text-sm leading-relaxed pt-0.5">{item}</span>
                 </li>
               ))}
             </ul>
@@ -79,16 +106,19 @@ export function TrailSection() {
             <div className="flex flex-wrap gap-3">
               <Link
                 to="/reservar"
-                className="inline-flex items-center gap-2 bg-white text-[#2D1E0F] font-bold px-7 py-3.5 rounded-full shadow-lg hover:bg-gray-100 text-sm transition-all duration-200 hover:shadow-xl"
+                className="group inline-flex items-center gap-2 bg-white text-[#2D1E0F] font-semibold px-7 py-3.5 rounded-full shadow-xl hover:bg-gray-50 text-sm transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 Agendar Trilha
+                <svg className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
               </Link>
               <a
                 href="#educacao"
-                className="inline-flex items-center gap-2 border border-white/30 text-white font-medium px-7 py-3.5 rounded-full hover:bg-white/10 text-sm transition-all duration-200"
+                className="inline-flex items-center gap-2 border border-white/30 bg-white/5 backdrop-blur-sm text-white font-medium px-7 py-3.5 rounded-full hover:bg-white/10 hover:border-white/50 text-sm transition-all duration-300"
               >
                 Educação Ambiental
               </a>

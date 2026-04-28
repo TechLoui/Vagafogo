@@ -46,16 +46,40 @@ body {
 
 @layer utilities {
   .animate-fade-in {
-    animation: fadeIn 0.4s ease-out;
+    animation: fadeIn 0.6s ease-out both;
   }
 
   .animate-slide-up {
-    animation: slideUp 0.4s ease-out;
+    animation: slideUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .animate-scale-in {
-    animation: scaleIn 0.3s ease-out;
+    animation: scaleIn 0.3s ease-out both;
   }
+
+  .animate-reveal {
+    animation: revealUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Performance: pula renderização de seções fora do viewport */
+  .cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 800px;
+  }
+}
+
+/* Ken Burns sutil na hero ativa */
+.hero-image-active {
+  animation: heroKenBurns 12s ease-out forwards;
+}
+@keyframes heroKenBurns {
+  from { transform: scale(1.02); }
+  to   { transform: scale(1.08); }
+}
+
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes fadeIn {

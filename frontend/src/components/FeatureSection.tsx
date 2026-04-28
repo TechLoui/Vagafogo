@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useReveal } from "../hooks/useReveal";
 
 const features = [
   {
@@ -43,45 +44,52 @@ const features = [
 ];
 
 export function FeatureSection() {
-  return (
-    <section className="py-16 md:py-24 bg-[#F7FAEF]">
-      <div className="mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8">
+  const { ref: headRef, revealed: headRevealed } = useReveal<HTMLDivElement>();
+  const { ref: cardsRef, revealed: cardsRevealed } = useReveal<HTMLDivElement>();
+  const { ref: statsRef, revealed: statsRevealed } = useReveal<HTMLDivElement>();
 
-        {/* Header */}
-        <div className="text-center mb-12">
-          <span className="inline-block text-xs font-bold uppercase tracking-widest text-[#8B4F23] bg-[#8B4F23]/10 px-3 py-1 rounded-full mb-3">
+  return (
+    <section className="relative py-20 md:py-28 bg-gradient-to-b from-[#F7FAEF] via-[#F7FAEF] to-[#F1F4E5] cv-auto overflow-hidden">
+      {/* Decorativo sutil */}
+      <div className="pointer-events-none absolute -top-40 -right-32 h-96 w-96 rounded-full bg-[#E0B13C]/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 -left-32 h-96 w-96 rounded-full bg-[#8B4F23]/10 blur-3xl" />
+
+      <div className="relative mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8">
+        <div ref={headRef} className={`text-center mb-14 ${headRevealed ? "animate-reveal" : "opacity-0"}`}>
+          <span className="inline-block text-[11px] font-bold uppercase tracking-[0.32em] text-[#8B4F23] bg-[#8B4F23]/10 px-4 py-1.5 rounded-full mb-4 border border-[#8B4F23]/15">
             Por que escolher o Vagafogo
           </span>
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-[#2D1E0F] mt-2 leading-tight">
-            Uma Experiência que Transforma
+          <h2 className="text-3xl md:text-5xl lg:text-6xl font-bold text-[#2D1E0F] leading-[1.1] tracking-tight">
+            Uma Experiência <span className="text-[#8B4F23]">que Transforma</span>
           </h2>
-          <p className="mt-4 text-gray-600 text-base md:text-lg max-w-2xl mx-auto">
+          <p className="mt-5 text-gray-600 text-base md:text-lg max-w-2xl mx-auto leading-relaxed">
             Gastronomia de excelência, natureza preservada e educação ambiental em um só lugar.
           </p>
         </div>
 
-        {/* Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+        <div ref={cardsRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-7">
           {features.map((feature, i) => (
             <div
               key={i}
-              className="group bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg hover:-translate-y-1 transition-all duration-300 flex flex-col"
+              className={`group relative bg-white rounded-3xl shadow-sm border border-gray-100/80 overflow-hidden hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-500 flex flex-col ${cardsRevealed ? "animate-reveal" : "opacity-0"}`}
+              style={{ animationDelay: cardsRevealed ? `${100 + i * 100}ms` : undefined }}
             >
-              {/* Accent bar */}
-              <div className="h-1 w-full" style={{ backgroundColor: feature.accent }} />
+              <div className="h-1 w-full transition-all duration-500 group-hover:h-1.5" style={{ backgroundColor: feature.accent }} />
 
               <div className="p-7 flex flex-col flex-1">
-                {/* Ícone + tag */}
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-12 h-12 rounded-xl bg-[#8B4F23]/8 flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${feature.accent}18` }}>
+                  <div
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform duration-300 group-hover:scale-110"
+                    style={{ backgroundColor: `${feature.accent}18` }}
+                  >
                     {feature.icon}
                   </div>
-                  <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-gray-400">
                     {feature.tag}
                   </span>
                 </div>
 
-                <h3 className="text-lg font-bold text-[#2D1E0F] mb-3 leading-snug">
+                <h3 className="text-xl font-bold text-[#2D1E0F] mb-3 leading-tight">
                   {feature.title}
                 </h3>
 
@@ -89,15 +97,14 @@ export function FeatureSection() {
                   {feature.description}
                 </p>
 
-                {/* CTA */}
-                <div className="mt-6">
+                <div className="mt-6 pt-5 border-t border-gray-100">
                   {feature.cta.type === "link" ? (
                     <Link
                       to={feature.cta.href}
                       className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8B4F23] hover:text-[#A05D2B] transition-colors group/link"
                     >
                       {feature.cta.label}
-                      <svg className="w-4 h-4 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 transition-transform duration-200 group-hover/link:translate-x-1" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
                     </Link>
@@ -109,7 +116,7 @@ export function FeatureSection() {
                       className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8B4F23] hover:text-[#A05D2B] transition-colors group/link"
                     >
                       {feature.cta.label}
-                      <svg className="w-4 h-4 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 transition-transform duration-200 group-hover/link:translate-x-1" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
                     </a>
@@ -120,17 +127,23 @@ export function FeatureSection() {
           ))}
         </div>
 
-        {/* Stats bar */}
-        <div className="mt-14 grid grid-cols-2 md:grid-cols-4 gap-6 bg-white rounded-2xl shadow-sm border border-gray-100 p-6 lg:p-8">
+        <div
+          ref={statsRef}
+          className={`mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 bg-white/80 backdrop-blur-sm rounded-3xl shadow-md border border-white/60 p-7 lg:p-9 ${statsRevealed ? "animate-reveal" : "opacity-0"}`}
+        >
           {[
             { value: "45+", label: "Itens no Brunch" },
             { value: "182", label: "Espécies de Aves" },
             { value: "1.530m", label: "Trilha Ecológica" },
             { value: "14", label: "Harmonizações Únicas" },
           ].map((stat, i) => (
-            <div key={i} className="text-center">
-              <p className="text-2xl md:text-3xl font-bold text-[#8B4F23]">{stat.value}</p>
-              <p className="text-xs md:text-sm text-gray-500 mt-1">{stat.label}</p>
+            <div key={i} className="text-center group">
+              <p className="text-3xl md:text-4xl font-bold text-[#8B4F23] tracking-tight transition-transform duration-300 group-hover:scale-105">
+                {stat.value}
+              </p>
+              <p className="text-[11px] md:text-xs text-gray-500 mt-2 uppercase tracking-[0.18em] font-medium">
+                {stat.label}
+              </p>
             </div>
           ))}
         </div>
