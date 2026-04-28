@@ -18,27 +18,48 @@ class FirebaseStore {
   }
 
   async sessionExists({ session }: { session: string }) {
-    const [exists] = await this.bucket.file(this.filePath(session)).exists();
-    return exists;
+    try {
+      const [exists] = await this.bucket.file(this.filePath(session)).exists();
+      console.log(`[whatsapp][store] sessionExists(${session}) -> ${exists}`);
+      return exists;
+    } catch (error) {
+      console.error(`[whatsapp][store] sessionExists falhou:`, error);
+      return false;
+    }
   }
 
   async save({ session }: { session: string }) {
-    await this.bucket.upload(`${session}.zip`, {
-      destination: this.filePath(session),
-      resumable: false,
-    });
+    try {
+      console.log(`[whatsapp][store] save(${session}) iniciando upload...`);
+      await this.bucket.upload(`${session}.zip`, {
+        destination: this.filePath(session),
+        resumable: false,
+      });
+      console.log(`[whatsapp][store] save(${session}) concluido com sucesso`);
+    } catch (error) {
+      console.error(`[whatsapp][store] save(${session}) FALHOU:`, error);
+      throw error;
+    }
   }
 
   async extract({ session, path: destino }: { session: string; path: string }) {
-    await this.bucket.file(this.filePath(session)).download({ destination: destino });
+    try {
+      console.log(`[whatsapp][store] extract(${session}) baixando para ${destino}...`);
+      await this.bucket.file(this.filePath(session)).download({ destination: destino });
+      console.log(`[whatsapp][store] extract(${session}) concluido`);
+    } catch (error) {
+      console.error(`[whatsapp][store] extract(${session}) FALHOU:`, error);
+      throw error;
+    }
   }
 
   async delete({ session }: { session: string }) {
     try {
       await this.bucket.file(this.filePath(session)).delete();
+      console.log(`[whatsapp][store] delete(${session}) concluido`);
     } catch (error: any) {
       if (error?.code !== 404) {
-        console.warn("[whatsapp] Falha ao remover sessao no Storage:", error);
+        console.warn("[whatsapp][store] Falha ao remover sessao no Storage:", error);
       }
     }
   }
@@ -113,7 +134,7 @@ const WHATSAPP_AUTH_SESSION_PATH = path.resolve(
 );
 const REMOTE_BACKUP_INTERVAL_MS = parseNumber(
   process.env.WHATSAPP_REMOTE_BACKUP_MS,
-  300000 // 5 min
+  60000 // 1 min — minimo permitido pelo whatsapp-web.js
 );
 
 let firebaseStore: FirebaseStore | null = null;

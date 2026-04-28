@@ -78,9 +78,14 @@ export const obterFirestoreAdmin = () => {
 
 export const obterStorageBucketAdmin = () => {
   const app = inicializarAdminApp();
-  if (!app) return null;
+  if (!app) {
+    console.warn("[firebase-admin] obterStorageBucketAdmin: admin app nao inicializado (FIREBASE_SERVICE_ACCOUNT ausente?)");
+    return null;
+  }
   try {
-    return getStorage(app).bucket();
+    const bucket = getStorage(app).bucket();
+    console.log(`[firebase-admin] Storage bucket obtido: ${bucket.name}`);
+    return bucket;
   } catch (error) {
     console.error("[firebase-admin] Falha ao obter bucket de Storage:", error);
     return null;
