@@ -4,6 +4,7 @@ import { LoginAdmin } from "./pages/LoginAdmin"
 import { Admin } from "./pages/Admin"
 import { ProtectedRoute } from "./components/ProtectedRoute"
 import { Reserva } from "./pages/Reserva"
+import { MinhaReserva } from "./pages/MinhaReserva"
 
 export const router = createBrowserRouter([
   {
@@ -13,6 +14,10 @@ export const router = createBrowserRouter([
   {
     path: "/reservar",
     element: <Reserva />
+  },
+  {
+    path: "/minha-reserva",
+    element: <MinhaReserva />
   },
   {
     path: "/login",

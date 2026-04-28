@@ -73,6 +73,12 @@ export function Footer() {
                   Fazer Reserva
                 </Link>
               </li>
+              <li>
+                <Link to="/minha-reserva" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
+                  <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
+                  Consultar Minha Reserva
+                </Link>
+              </li>
             </ul>
           </div>
 

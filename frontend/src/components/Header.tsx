@@ -54,16 +54,27 @@ export default function Header() {
           ))}
         </nav>
 
-        {/* Botão Reservar Desktop */}
-        <Link
-          to="/reservar"
-          className="hidden md:inline-flex items-center gap-2 bg-[#8B4F23] text-white font-semibold px-6 py-2.5 rounded-full text-sm shadow-sm hover:bg-[#A05D2B] hover:shadow-md transition-all duration-200 min-w-[150px] justify-center"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          Reservar Agora
-        </Link>
+        {/* Botões desktop */}
+        <div className="hidden md:flex items-center gap-2">
+          <Link
+            to="/minha-reserva"
+            className="inline-flex items-center gap-1.5 text-[#8B4F23] font-medium px-4 py-2 rounded-full text-sm hover:bg-[#8B4F23]/10 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            Minha reserva
+          </Link>
+          <Link
+            to="/reservar"
+            className="inline-flex items-center gap-2 bg-[#8B4F23] text-white font-semibold px-6 py-2.5 rounded-full text-sm shadow-sm hover:bg-[#A05D2B] hover:shadow-md transition-all duration-200 min-w-[150px] justify-center"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Reservar Agora
+          </Link>
+        </div>
 
         {/* Botão hambúrguer mobile */}
         <button
@@ -102,6 +113,16 @@ export default function Header() {
               {label}
             </a>
           ))}
+          <Link
+            to="/minha-reserva"
+            onClick={fecharMenu}
+            className="mt-2 w-full flex items-center justify-center gap-2 border border-[#8B4F23]/20 text-[#8B4F23] font-medium px-6 py-3 rounded-full hover:bg-[#8B4F23]/10 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            Consultar minha reserva
+          </Link>
           <Link
             to="/reservar"
             onClick={fecharMenu}
