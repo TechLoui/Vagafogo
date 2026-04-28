@@ -58,7 +58,6 @@ class FirebaseStore {
           [exists] = await this.bucket.file(destino).exists();
         }
       }
-      console.log(`[whatsapp][store] sessionExists(${session}) -> ${exists}`);
       return exists;
     } catch (error) {
       console.error(`[whatsapp][store] sessionExists falhou:`, error);
@@ -67,13 +66,10 @@ class FirebaseStore {
   }
 
   async save({ session }: { session: string }) {
-    // session pode ser caminho absoluto; ${session}.zip eh o arquivo LOCAL gerado pelo RemoteAuth
     const localZip = `${session}.zip`;
     const destino = this.destinationFor(session);
     try {
-      console.log(`[whatsapp][store] save: subindo ${localZip} -> ${destino}`);
       await this.bucket.upload(localZip, { destination: destino, resumable: false });
-      console.log(`[whatsapp][store] save concluido`);
     } catch (error) {
       console.error(`[whatsapp][store] save FALHOU:`, error);
       throw error;
@@ -83,9 +79,7 @@ class FirebaseStore {
   async extract({ session, path: destino }: { session: string; path: string }) {
     const remoto = this.destinationFor(session);
     try {
-      console.log(`[whatsapp][store] extract: baixando ${remoto} -> ${destino}`);
       await this.bucket.file(remoto).download({ destination: destino });
-      console.log(`[whatsapp][store] extract concluido`);
     } catch (error) {
       console.error(`[whatsapp][store] extract FALHOU:`, error);
       throw error;
@@ -96,7 +90,6 @@ class FirebaseStore {
     const destino = this.destinationFor(session);
     try {
       await this.bucket.file(destino).delete();
-      console.log(`[whatsapp][store] delete(${destino}) concluido`);
     } catch (error: any) {
       if (error?.code !== 404) {
         console.warn("[whatsapp][store] Falha ao remover sessao no Storage:", error);
@@ -174,7 +167,7 @@ const WHATSAPP_AUTH_SESSION_PATH = path.resolve(
 );
 const REMOTE_BACKUP_INTERVAL_MS = parseNumber(
   process.env.WHATSAPP_REMOTE_BACKUP_MS,
-  60000 // 1 min — minimo permitido pelo whatsapp-web.js
+  300000 // 5 min
 );
 
 let firebaseStore: FirebaseStore | null = null;
