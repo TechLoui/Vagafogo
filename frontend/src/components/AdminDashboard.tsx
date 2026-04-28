@@ -28,7 +28,7 @@ import dayjs from 'dayjs';
 
 import 'dayjs/locale/pt-br';
 
-import { FaChevronLeft, FaChevronRight, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar, FaFilePdf, FaEye, FaEyeSlash, FaSun, FaMoon, FaColumns, FaGripLines, FaUserCircle, FaUser, FaGraduationCap, FaPhoneAlt, FaIdCard, FaPaw, FaMoneyBillWave, FaClock, FaClipboardList, FaListUl } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaChevronDown, FaChevronUp, FaTrash, FaEdit, FaPlus, FaWhatsapp, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar, FaFilePdf, FaEye, FaEyeSlash, FaSun, FaMoon, FaColumns, FaGripLines, FaUserCircle, FaUser, FaGraduationCap, FaPhoneAlt, FaIdCard, FaPaw, FaMoneyBillWave, FaClock, FaClipboardList, FaListUl } from 'react-icons/fa';
 import logo from '../assets/logo.jpg';
 import './AdminDashboardTheme.css';
 
@@ -669,6 +669,9 @@ function AdminTabHeader({
   metricsTitle,
   metricsSubtitle,
   centerMetrics = false,
+  collapsibleMetrics = false,
+  metricsStorageKey,
+  defaultMetricsCollapsed = false,
 }: {
   title: string;
   description?: string;
@@ -682,8 +685,32 @@ function AdminTabHeader({
   metricsTitle?: string;
   metricsSubtitle?: string;
   centerMetrics?: boolean;
+  collapsibleMetrics?: boolean;
+  metricsStorageKey?: string;
+  defaultMetricsCollapsed?: boolean;
 }) {
   const resolvedMetricsClassName = metricsClassName || 'xl:grid-cols-4';
+
+  const storageKey = metricsStorageKey ? `admin-metrics-collapsed:${metricsStorageKey}` : null;
+  const [metricsCollapsed, setMetricsCollapsed] = useState<boolean>(() => {
+    if (!collapsibleMetrics) return false;
+    if (storageKey && typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+    }
+    return defaultMetricsCollapsed;
+  });
+
+  const toggleMetricsCollapsed = () => {
+    setMetricsCollapsed((prev) => {
+      const next = !prev;
+      if (storageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(storageKey, String(next));
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="admin-tab-hero-card">
@@ -722,13 +749,37 @@ function AdminTabHeader({
 
         {metrics.length > 0 && (
           <div className={metricsContainerClassName}>
-            {(metricsTitle || metricsSubtitle) ? (
-              <div className="admin-tab-hero__section-head">
-                {metricsTitle ? <p className="admin-tab-hero__section-label">{metricsTitle}</p> : null}
-                {metricsSubtitle ? <p className="admin-tab-hero__section-caption">{metricsSubtitle}</p> : null}
+            {(metricsTitle || metricsSubtitle || collapsibleMetrics) ? (
+              <div className="admin-tab-hero__section-head flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {metricsTitle ? <p className="admin-tab-hero__section-label">{metricsTitle}</p> : null}
+                  {metricsSubtitle ? <p className="admin-tab-hero__section-caption">{metricsSubtitle}</p> : null}
+                </div>
+                {collapsibleMetrics ? (
+                  <button
+                    type="button"
+                    onClick={toggleMetricsCollapsed}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                    aria-expanded={!metricsCollapsed}
+                    title={metricsCollapsed ? 'Mostrar painel' : 'Recolher painel'}
+                  >
+                    {metricsCollapsed ? (
+                      <>
+                        <FaChevronDown className="h-3 w-3" />
+                        <span>Mostrar</span>
+                      </>
+                    ) : (
+                      <>
+                        <FaChevronUp className="h-3 w-3" />
+                        <span>Recolher</span>
+                      </>
+                    )}
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
+            {!metricsCollapsed && (
             <div className={`grid gap-3 sm:grid-cols-2 ${resolvedMetricsClassName}`.trim()}>
               {metrics.map(({ metricKey, label, value, hint, icon: MetricIcon, tone = 'sky', cardClassName = '', renderContent }) => {
                 const toneClassName = ADMIN_TAB_TONE_CLASSES[tone];
@@ -771,6 +822,7 @@ function AdminTabHeader({
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
@@ -7567,6 +7619,8 @@ const totalParticipantesDoDia = useMemo(() => {
             metricsTitle="Painel do dia"
             metricsContainerClassName="admin-tab-hero__section-shell admin-tab-hero__section-shell--soft"
             metricsClassName="xl:grid-cols-4"
+            collapsibleMetrics
+            metricsStorageKey="reservas-painel-do-dia"
             toolbar={false && (
               <div className="admin-tab-hero__section-shell admin-tab-hero__section-shell--soft xl:mx-auto xl:w-full xl:max-w-5xl">
                 <div className="admin-tab-hero__section-head">
