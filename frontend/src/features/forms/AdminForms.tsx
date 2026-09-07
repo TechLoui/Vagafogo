@@ -10,6 +10,7 @@ import {
   FaCopy,
   FaDownload,
   FaEdit,
+  FaExclamationTriangle,
   FaExternalLinkAlt,
   FaEye,
   FaFileCsv,
@@ -344,13 +345,15 @@ function validateDraft(draft: FormDraft, publishing: boolean) {
   if (draft.title.trim().length > 160) return 'O título deve ter no máximo 160 caracteres.';
   if (publishing && draft.fields.length === 0) return 'Adicione pelo menos uma pergunta antes de publicar.';
   if (draft.fields.length > 50) return 'O formulário pode ter no máximo 50 perguntas.';
-  const invalidField = draft.fields.find((field) => !field.label.trim());
-  if (invalidField) return 'Todas as perguntas precisam de um título.';
-  const invalidOptions = draft.fields.find(
-    (field) => (field.type === 'single_choice' || field.type === 'multiple_choice')
-      && (field.options ?? []).filter((option) => option.trim()).length < 2,
-  );
-  if (invalidOptions) return `A pergunta “${invalidOptions.label}” precisa de pelo menos duas opções.`;
+  if (publishing) {
+    const invalidField = draft.fields.find((field) => !field.label.trim());
+    if (invalidField) return 'Todas as perguntas precisam de um título.';
+    const invalidOptions = draft.fields.find(
+      (field) => (field.type === 'single_choice' || field.type === 'multiple_choice')
+        && (field.options ?? []).filter((option) => option.trim()).length < 2,
+    );
+    if (invalidOptions) return `A pergunta “${invalidOptions.label}” precisa de pelo menos duas opções.`;
+  }
   const tooManyOptions = draft.fields.find((field) => (field.options?.length ?? 0) > 100);
   if (tooManyOptions) return `A pergunta “${tooManyOptions.label}” pode ter no máximo 100 opções.`;
   const repeatedOptions = draft.fields.find((field) => {
@@ -375,6 +378,22 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
   const [draft, setDraft] = useState<FormDraft>(() => ({ ...initial, fields: initial.fields.map((field) => ({ ...field, options: field.options ? [...field.options] : undefined })) }));
   const [error, setError] = useState('');
   const [hasConflict, setHasConflict] = useState(false);
+  const [errorFocusRequest, setErrorFocusRequest] = useState(0);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!error || errorFocusRequest === 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      errorRef.current?.focus({ preventScroll: true });
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [error, errorFocusRequest]);
+
+  const showError = (message: string) => {
+    setError(message);
+    setErrorFocusRequest((current) => current + 1);
+  };
 
   const updateField = (index: number, next: FormField) => setDraft((current) => ({ ...current, fields: current.fields.map((field, fieldIndex) => fieldIndex === index ? next : field) }));
   const moveField = (index: number, direction: -1 | 1) => setDraft((current) => {
@@ -388,7 +407,8 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
   const submit = async (status: FormStatus) => {
     const validation = validateDraft(draft, status === 'published');
     if (validation) {
-      setError(validation);
+      setHasConflict(false);
+      showError(validation);
       return;
     }
     setError('');
@@ -398,14 +418,14 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
     } catch (saveError) {
       if (isFormsApiError(saveError, 'FORM_EDIT_CONFLICT')) {
         setHasConflict(true);
-        setError(
+        showError(
           saveError.currentRevision
             ? `Este formulário já está na revisão ${saveError.currentRevision} porque foi alterado em outra sessão. Suas mudanças locais não foram salvas.`
             : 'Este formulário foi alterado em outra sessão. Suas mudanças locais não foram salvas.',
         );
         return;
       }
-      setError(getErrorMessage(saveError, 'Não foi possível salvar o formulário.'));
+      showError(getErrorMessage(saveError, 'Não foi possível salvar o formulário.'));
     }
   };
 
@@ -444,7 +464,7 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
       <div className="grid gap-6 p-5 sm:p-7 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
         <div className="space-y-5">
           {error ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700" role="alert">
+            <div ref={errorRef} tabIndex={-1} className="scroll-mt-28 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 outline-none" role="alert">
               <p>{error}</p>
               {hasConflict ? (
                 <button type="button" onClick={reloadCurrentVersion} className="mt-3 rounded-full border border-rose-300 bg-white px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100">
@@ -510,9 +530,27 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
 function QrDialog({ form, onClose, onNotice }: { form: ManagedForm; onClose: () => void; onNotice: (notice: Notice) => void }) {
   const publicUrl = getPublicFormUrl(form.publicId);
   const [qrState, setQrState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const publicUrlInputRef = useRef<HTMLInputElement>(null);
   const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(publicUrl);
+      let copied = false;
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(publicUrl);
+          copied = true;
+        } catch {
+          // Alguns navegadores expõem a API, mas bloqueiam seu uso fora de HTTPS.
+        }
+      }
+      if (!copied && publicUrlInputRef.current) {
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        publicUrlInputRef.current.focus();
+        publicUrlInputRef.current.select();
+        publicUrlInputRef.current.setSelectionRange(0, publicUrl.length);
+        copied = document.execCommand('copy');
+        previousFocus?.focus();
+      }
+      if (!copied) throw new Error('Copy unavailable');
       onNotice({ type: 'success', message: 'Link copiado para a área de transferência.' });
     } catch {
       onNotice({ type: 'error', message: 'Não foi possível copiar o link.' });
@@ -542,7 +580,7 @@ function QrDialog({ form, onClose, onNotice }: { form: ManagedForm; onClose: () 
           <p className="mt-2 text-sm leading-6 text-slate-500">Este QR usa um identificador imutável. Você pode editar, pausar e reabrir o formulário sem precisar imprimir outro código.</p>
           <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 pl-3">
             <FaLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <input readOnly value={publicUrl} className="min-w-0 flex-1 bg-transparent text-xs text-slate-600 outline-none" aria-label="Link público" />
+            <input ref={publicUrlInputRef} readOnly value={publicUrl} className="min-w-0 flex-1 bg-transparent text-xs text-slate-600 outline-none" aria-label="Link público" />
             <button type="button" onClick={copyLink} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">Copiar</button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -565,9 +603,10 @@ const renderAnswer = (value: unknown) => {
 };
 
 const RESPONSE_PAGE_SIZE = 50;
-// Respostas podem ser grandes; lotes menores evitam picos de memoria antes
-// de o limite cumulativo da exportacao ser verificado no navegador.
-const RESPONSE_EXPORT_PAGE_SIZE = 20;
+// Lotes de 100 reduzem as viagens de rede e ainda mantêm cada resposta HTTP
+// abaixo de ~70 MB no pior caso aceito pelo backend. Com 1.000 páginas, o teto
+// continua alinhado ao limite cumulativo de 100 mil respostas.
+const RESPONSE_EXPORT_PAGE_SIZE = 100;
 const MAX_RESPONSE_EXPORT_PAGES = 1_000;
 const MAX_RESPONSE_EXPORT_ITEMS = 100_000;
 const MAX_RESPONSE_EXPORT_BYTES = 128 * 1024 * 1024;
@@ -589,6 +628,7 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
   const [exportProgress, setExportProgress] = useState({ pages: 0, responses: 0 });
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<FormResponse | null>(null);
+  const [deletingResponseId, setDeletingResponseId] = useState<string | null>(null);
   const requestedCursorsRef = useRef(new Set<string>());
   const exportAbortRef = useRef<AbortController | null>(null);
   const exportCancelledByUserRef = useRef(false);
@@ -754,7 +794,9 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
   }, [form, responses, search]);
 
   const removeResponse = async (response: FormResponse) => {
+    if (deletingResponseId) return;
     if (!window.confirm('Excluir esta resposta permanentemente? Esta ação não pode ser desfeita.')) return;
+    setDeletingResponseId(response.id);
     try {
       await deleteFormResponse(form.id, response.id);
       setResponses((current) => current.filter((item) => item.id !== response.id));
@@ -764,7 +806,13 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
     } catch (error) {
       console.error(error);
       onNotice({ type: 'error', message: getErrorMessage(error, 'Não foi possível excluir a resposta.') });
+    } finally {
+      if (mountedRef.current) setDeletingResponseId(null);
     }
+  };
+
+  const closeSelectedResponse = () => {
+    if (!deletingResponseId) setSelected(null);
   };
 
   return (
@@ -852,11 +900,11 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
       </div>
 
       {selected ? (
-        <Modal onClose={() => setSelected(null)} label="Detalhes da resposta" nested>
+        <Modal onClose={closeSelectedResponse} label="Detalhes da resposta" nested>
           <div className="max-h-[85vh] overflow-y-auto rounded-3xl bg-white">
-            <div className="sticky top-0 flex items-start justify-between border-b border-slate-100 bg-white px-5 py-4"><div><h3 className="font-semibold text-slate-900">Resposta completa</h3><p className="mt-1 text-xs text-slate-500">Enviada em {formatFormDate(selected.submittedAt)} · {selected.schemaVersion ? `versão ${selected.schemaVersion}` : 'versão legada'}</p></div><button type="button" onClick={() => setSelected(null)} className="rounded-full p-2 text-slate-400 hover:bg-slate-100" aria-label="Fechar detalhes da resposta"><FaTimes /></button></div>
+            <div className="sticky top-0 flex items-start justify-between border-b border-slate-100 bg-white px-5 py-4"><div><h3 className="font-semibold text-slate-900">Resposta completa</h3><p className="mt-1 text-xs text-slate-500">Enviada em {formatFormDate(selected.submittedAt)} · {selected.schemaVersion ? `versão ${selected.schemaVersion}` : 'versão legada'}</p></div><button type="button" onClick={closeSelectedResponse} disabled={deletingResponseId !== null} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-40" aria-label="Fechar detalhes da resposta"><FaTimes /></button></div>
             <div className="space-y-4 p-5">{getResponseHistoricalAnswers(selected, form).map((answer, index) => <div key={`${answer.fieldId}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{answer.label}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{renderAnswer(answer.value)}</p></div>)}</div>
-            <div className="flex justify-between border-t border-slate-100 px-5 py-4"><button type="button" onClick={() => void removeResponse(selected)} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"><FaTrash className="h-3.5 w-3.5" /> Excluir resposta</button><button type="button" onClick={() => setSelected(null)} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Fechar</button></div>
+            <div className="flex justify-between border-t border-slate-100 px-5 py-4"><button type="button" onClick={() => void removeResponse(selected)} disabled={deletingResponseId !== null} aria-busy={deletingResponseId === selected.id} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-wait disabled:opacity-50">{deletingResponseId === selected.id ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" /> : <FaTrash className="h-3.5 w-3.5" />} {deletingResponseId === selected.id ? 'Excluindo...' : 'Excluir resposta'}</button><button type="button" onClick={closeSelectedResponse} disabled={deletingResponseId !== null} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-50">Fechar</button></div>
           </div>
         </Modal>
       ) : null}
@@ -867,6 +915,7 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
 export function AdminForms() {
   const [forms, setForms] = useState<ManagedForm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -886,9 +935,12 @@ export function AdminForms() {
     setLoading(true);
     try {
       setForms(await listForms());
+      setListError(null);
     } catch (error) {
       console.error(error);
-      setNotice({ type: 'error', message: getErrorMessage(error, 'Não foi possível carregar os formulários.') });
+      const message = getErrorMessage(error, 'Não foi possível carregar os formulários.');
+      setListError(message);
+      setNotice({ type: 'error', message });
     } finally {
       setLoading(false);
     }
@@ -1027,8 +1079,19 @@ export function AdminForms() {
         </div>
       </div>
 
-      {loading ? (
+      {listError && forms.length > 0 ? (
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between" role="alert">
+          <p><span className="font-semibold">Não foi possível atualizar a lista.</span> {listError} Os dados abaixo são da última carga concluída.</p>
+          <button type="button" onClick={() => void load()} disabled={loading} className="shrink-0 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-wait disabled:opacity-50">
+            {loading ? 'Tentando...' : 'Tentar novamente'}
+          </button>
+        </div>
+      ) : null}
+
+      {loading && forms.length === 0 ? (
         <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-sm text-slate-500"><FaSyncAlt className="mr-2 animate-spin" /> Carregando formulários...</div>
+      ) : listError && forms.length === 0 ? (
+        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 text-center" role="alert"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-100 text-rose-600"><FaExclamationTriangle className="h-6 w-6" /></span><h3 className="mt-4 text-lg font-semibold text-rose-900">Não foi possível carregar os formulários</h3><p className="mt-2 max-w-md text-sm leading-6 text-rose-700">{listError}</p><button type="button" onClick={() => void load()} disabled={loading} className="mt-5 inline-flex items-center gap-2 rounded-full bg-rose-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:cursor-wait disabled:opacity-50"><FaSyncAlt className={loading ? 'animate-spin' : ''} /> {loading ? 'Tentando...' : 'Tentar novamente'}</button></div>
       ) : filtered.length === 0 ? (
         <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-5 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><FaClipboardList className="h-6 w-6" /></span><h3 className="mt-4 text-lg font-semibold text-slate-800">{forms.length === 0 ? 'Crie seu primeiro formulário' : 'Nenhum formulário encontrado'}</h3><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">{forms.length === 0 ? 'Monte as perguntas, publique e compartilhe o QR Code com seus clientes.' : 'Ajuste os filtros ou tente outro termo de busca.'}</p>{forms.length === 0 ? <button type="button" onClick={() => setEditor(createEmptyForm())} className="mt-5 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"><FaPlus /> Novo formulário</button> : null}</div>
       ) : (

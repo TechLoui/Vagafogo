@@ -221,6 +221,7 @@ export const normalizarFormularioAdminPayload = (
     return normalizarFormularioPublico(
       { ...payload, publicId, status, schemaVersion: 1 },
       publicId,
+      { allowIncompleteDraftFields: status === "draft" },
     );
   } catch (error) {
     if (

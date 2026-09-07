@@ -83,6 +83,64 @@ test('normaliza rascunho administrativo e rejeita publicacao sem campos', () => 
   );
 });
 
+test('permite somente label e quantidade de opcoes incompletos em rascunhos', () => {
+  const incompleteFields = [
+    {
+      id: 'sem_titulo',
+      type: 'short_text',
+      label: '',
+      required: false,
+    },
+    {
+      id: 'sem_opcoes',
+      type: 'single_choice',
+      label: 'Escolha sem opcoes',
+      required: false,
+    },
+    {
+      id: 'uma_opcao',
+      type: 'multiple_choice',
+      label: 'Escolha com uma opcao',
+      required: false,
+      options: ['Unica'],
+    },
+  ];
+  const draft = normalizarFormularioAdminPayload(
+    { ...baseForm, fields: incompleteFields },
+    baseForm.publicId,
+  );
+
+  assert.equal(draft.fields[0].label, '');
+  assert.deepEqual(draft.fields[1].options, []);
+  assert.deepEqual(draft.fields[2].options, ['Unica']);
+
+  for (const status of ['published', 'closed']) {
+    expectCode(
+      () => normalizarFormularioAdminPayload(
+        { ...baseForm, status, fields: incompleteFields },
+        baseForm.publicId,
+      ),
+      'INVALID_FORM_SCHEMA',
+      422,
+    );
+  }
+
+  expectCode(
+    () => normalizarFormularioAdminPayload({
+      ...baseForm,
+      fields: [{
+        id: 'opcao_vazia',
+        type: 'single_choice',
+        label: 'Opcao vazia',
+        required: false,
+        options: [''],
+      }],
+    }, baseForm.publicId),
+    'INVALID_FORM_SCHEMA',
+    422,
+  );
+});
+
 test('autorizacao administrativa e fail-closed por padrao', () => {
   assert.equal(usuarioPodeAdministrarFormulario({}, ''), false);
   assert.equal(politicaAdminFormularioConfigurada(''), false);

@@ -507,6 +507,7 @@ export function FormularioPublico() {
     answers: Record<string, FormAnswerValue>;
   } | null>(null);
   const successRef = useRef<HTMLDivElement>(null);
+  const submitErrorRef = useRef<HTMLDivElement>(null);
 
   const endpoint = useMemo(
     () => `${API_BASE}/api/formularios/publico/${encodeURIComponent(publicId)}`,
@@ -614,13 +615,27 @@ export function FormularioPublico() {
     };
   }, [endpoint, loadAttempt, publicId]);
 
-  const answeredCount = useMemo(
-    () => form?.fields.filter((field) => isAnswered(answers[field.id])).length ?? 0,
-    [answers, form],
-  );
-  const progress = form && form.fields.length > 0
-    ? Math.round((answeredCount / form.fields.length) * 100)
+  const progressSummary = useMemo(() => {
+    const allFields = form?.fields ?? [];
+    const requiredFields = allFields.filter((field) => field.required);
+    const trackedFields = requiredFields.length > 0 ? requiredFields : allFields;
+    return {
+      answered: trackedFields.filter((field) => isAnswered(answers[field.id])).length,
+      total: trackedFields.length,
+      tracksRequired: requiredFields.length > 0,
+    };
+  }, [answers, form]);
+  const progress = progressSummary.total > 0
+    ? Math.round((progressSummary.answered / progressSummary.total) * 100)
     : 0;
+
+  const showSubmitError = (message: string) => {
+    setSubmitError(message);
+    window.requestAnimationFrame(() => {
+      submitErrorRef.current?.focus({ preventScroll: true });
+      submitErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
 
   const validateField = (field: FormField, value = answers[field.id]) => {
     if (field.required && !isAnswered(value)) {
@@ -792,6 +807,7 @@ export function FormularioPublico() {
         || (response.status === 409 && apiCode === 'FORM_CLOSED')
       ) {
         setPageState('closed');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
 
@@ -829,7 +845,7 @@ export function FormularioPublico() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       window.requestAnimationFrame(() => successRef.current?.focus());
     } catch (error) {
-      setSubmitError(
+      showSubmitError(
         error instanceof DOMException && error.name === 'AbortError'
           ? 'O envio demorou mais que o esperado. Tente novamente; sua resposta não será duplicada.'
           : error instanceof Error
@@ -964,14 +980,18 @@ export function FormularioPublico() {
           <div
             className="mt-6"
             role="progressbar"
-            aria-label="Progresso do formulário"
+            aria-label={progressSummary.tracksRequired ? 'Progresso dos campos obrigatórios' : 'Progresso do formulário'}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progress}
           >
             <div className="flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
               <span>Seu progresso</span>
-              <span className="tabular-nums">{answeredCount} de {form.fields.length} respondidas</span>
+              <span className="tabular-nums">
+                {progressSummary.tracksRequired
+                  ? `${progressSummary.answered} de ${progressSummary.total} campos obrigatórios concluídos`
+                  : `${progressSummary.answered} de ${progressSummary.total} perguntas respondidas`}
+              </span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
               <div
@@ -1004,57 +1024,59 @@ export function FormularioPublico() {
           ) : null}
 
           {submitError ? (
-            <div className="mb-5 flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700" role="alert">
+            <div ref={submitErrorRef} tabIndex={-1} className="scroll-mt-6 mb-5 flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700 outline-none" role="alert">
               <FaExclamationTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{submitError}</span>
             </div>
           ) : null}
 
-          <div className="space-y-4">
-            {form.fields.map((field, index) => (
-              <FieldCard
-                key={field.id}
-                field={field}
-                index={index}
-                value={answers[field.id]}
-                error={errors[field.id]}
-                onChange={(value) => updateAnswer(field, value)}
-                onBlur={() => validateOnBlur(field)}
-              />
-            ))}
-          </div>
+          <fieldset disabled={submitting} aria-busy={submitting} className={`min-w-0 border-0 p-0 transition-opacity ${submitting ? 'pointer-events-none opacity-70' : ''}`}>
+            <div className="space-y-4">
+              {form.fields.map((field, index) => (
+                <FieldCard
+                  key={field.id}
+                  field={field}
+                  index={index}
+                  value={answers[field.id]}
+                  error={errors[field.id]}
+                  onChange={(value) => updateAnswer(field, value)}
+                  onBlur={() => validateOnBlur(field)}
+                />
+              ))}
+            </div>
 
-          <div className="mt-7 rounded-2xl border border-[#8B4F23]/10 bg-[#8B4F23]/[0.035] p-4 sm:p-5">
-            {form.privacyMessage ? (
-              <div className="flex items-start gap-3 text-sm leading-6 text-slate-600">
-                <FaLock className="mt-1 h-3.5 w-3.5 shrink-0 text-[#8B4F23]" aria-hidden="true" />
-                <p className="whitespace-pre-line">{form.privacyMessage}</p>
-              </div>
-            ) : (
-              <div className="flex items-start gap-3 text-sm leading-6 text-slate-600">
-                <FaLock className="mt-1 h-3.5 w-3.5 shrink-0 text-[#8B4F23]" aria-hidden="true" />
-                <p>As informações enviadas serão usadas apenas pela equipe Vagafogo para a finalidade deste formulário.</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#8B4F23] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8B4F23]/15 transition hover:-translate-y-0.5 hover:bg-[#70401c] hover:shadow-xl disabled:cursor-wait disabled:translate-y-0 disabled:bg-slate-400 sm:w-auto sm:min-w-52"
-            >
-              {submitting ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
-                  Enviando...
-                </>
+            <div className="mt-7 rounded-2xl border border-[#8B4F23]/10 bg-[#8B4F23]/[0.035] p-4 sm:p-5">
+              {form.privacyMessage ? (
+                <div className="flex items-start gap-3 text-sm leading-6 text-slate-600">
+                  <FaLock className="mt-1 h-3.5 w-3.5 shrink-0 text-[#8B4F23]" aria-hidden="true" />
+                  <p className="whitespace-pre-line">{form.privacyMessage}</p>
+                </div>
               ) : (
-                <>
-                  <FaPaperPlane className="h-3.5 w-3.5" aria-hidden="true" />
-                  {form.submitButtonLabel}
-                </>
+                <div className="flex items-start gap-3 text-sm leading-6 text-slate-600">
+                  <FaLock className="mt-1 h-3.5 w-3.5 shrink-0 text-[#8B4F23]" aria-hidden="true" />
+                  <p>As informações enviadas serão usadas apenas pela equipe Vagafogo para a finalidade deste formulário.</p>
+                </div>
               )}
-            </button>
-          </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#8B4F23] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8B4F23]/15 transition hover:-translate-y-0.5 hover:bg-[#70401c] hover:shadow-xl disabled:cursor-wait disabled:translate-y-0 disabled:bg-slate-400 sm:w-auto sm:min-w-52"
+              >
+                {submitting ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+                    Enviando...
+                  </>
+                ) : (
+                  <>
+                    <FaPaperPlane className="h-3.5 w-3.5" aria-hidden="true" />
+                    {form.submitButtonLabel}
+                  </>
+                )}
+              </button>
+            </div>
+          </fieldset>
         </form>
       </article>
     );

@@ -18,6 +18,11 @@ const MAX_PUBLIC_ID_LENGTH = 128;
 // propriedades e a duplicacao necessaria no snapshot historico das respostas.
 const MAX_SERIALIZED_FORM_BYTES = 750_000;
 const MAX_SERIALIZED_ANSWERS_BYTES = 700_000;
+// A serializacao canonica roda antes da validacao completa para compor hashes de
+// idempotencia. Limites proprios impedem que um JSON pequeno, mas profundamente
+// aninhado ou excessivamente fragmentado, esgote a pilha/CPU do processo.
+const MAX_CANONICAL_DEPTH = 64;
+const MAX_CANONICAL_NODES = 10_000;
 const FIELD_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const RESERVED_FIELD_IDS = new Set(["__proto__", "constructor", "prototype"]);
@@ -140,16 +145,28 @@ const readOptionalFiniteNumber = (value: unknown, name: string) => {
   return value;
 };
 
-const normalizeOptions = (value: unknown, fieldId: string) => {
-  if (!Array.isArray(value) || value.length < 2 || value.length > MAX_OPTIONS) {
+const normalizeOptions = (
+  value: unknown,
+  fieldId: string,
+  allowIncomplete: boolean,
+) => {
+  const rawOptions = allowIncomplete && value === undefined ? [] : value;
+  const minimumOptions = allowIncomplete ? 0 : 2;
+  if (
+    !Array.isArray(rawOptions) ||
+    rawOptions.length < minimumOptions ||
+    rawOptions.length > MAX_OPTIONS
+  ) {
     throw new FormularioValidationError(
       "FORM_CONFIGURATION_INVALID",
-      `O campo ${fieldId} deve possuir entre 2 e ${MAX_OPTIONS} opcoes.`,
+      allowIncomplete
+        ? `O campo ${fieldId} deve possuir no maximo ${MAX_OPTIONS} opcoes.`
+        : `O campo ${fieldId} deve possuir entre 2 e ${MAX_OPTIONS} opcoes.`,
       500,
     );
   }
 
-  const options = value.map((option) => {
+  const options = rawOptions.map((option) => {
     if (typeof option !== "string") {
       throw new FormularioValidationError(
         "FORM_CONFIGURATION_INVALID",
@@ -180,7 +197,11 @@ const normalizeOptions = (value: unknown, fieldId: string) => {
   return options;
 };
 
-const normalizeField = (value: unknown, index: number): FormField => {
+const normalizeField = (
+  value: unknown,
+  index: number,
+  allowIncomplete: boolean,
+): FormField => {
   if (!isRecord(value)) {
     throw new FormularioValidationError(
       "FORM_CONFIGURATION_INVALID",
@@ -220,7 +241,9 @@ const normalizeField = (value: unknown, index: number): FormField => {
   const field: FormField = {
     id,
     type,
-    label: readString(value.label, `fields[${index}].label`, 180, { required: true }),
+    label: readString(value.label, `fields[${index}].label`, 180, {
+      required: !allowIncomplete,
+    }),
     required: type === "consent" ? true : value.required === true,
   };
 
@@ -230,7 +253,7 @@ const normalizeField = (value: unknown, index: number): FormField => {
   if (placeholder && type !== "consent") field.placeholder = placeholder;
 
   if (type === "single_choice" || type === "multiple_choice") {
-    field.options = normalizeOptions(value.options, id);
+    field.options = normalizeOptions(value.options, id, allowIncomplete);
   }
 
   if (type === "short_text" || type === "long_text") {
@@ -294,6 +317,7 @@ export const normalizarIdentificadorPublico = (value: unknown) => {
 export const normalizarFormularioPublico = (
   data: unknown,
   publicIdEsperado: string,
+  options: { allowIncompleteDraftFields?: boolean } = {},
 ): FormularioPublico => {
   if (!isRecord(data)) {
     throw new FormularioValidationError(
@@ -320,6 +344,8 @@ export const normalizarFormularioPublico = (
     );
   }
   const status = data.status as FormStatus;
+  const allowIncompleteFields =
+    status === "draft" && options.allowIncompleteDraftFields === true;
 
   if (!Array.isArray(data.fields) || data.fields.length > MAX_FIELDS) {
     throw new FormularioValidationError(
@@ -336,7 +362,9 @@ export const normalizarFormularioPublico = (
     );
   }
 
-  const fields = data.fields.map(normalizeField);
+  const fields = data.fields.map((field, index) =>
+    normalizeField(field, index, allowIncompleteFields),
+  );
   if (new Set(fields.map((field) => field.id)).size !== fields.length) {
     throw new FormularioValidationError(
       "FORM_CONFIGURATION_INVALID",
@@ -627,7 +655,25 @@ export const normalizarChaveIdempotencia = (value: unknown) => {
   return key;
 };
 
-export const stringifyCanonico = (value: unknown): string => {
+type CanonicalTraversalState = { nodes: number };
+
+const throwCanonicalComplexityError = (): never => {
+  throw new FormularioValidationError(
+    "INVALID_PAYLOAD",
+    "A requisicao excede os limites de profundidade ou complexidade.",
+    400,
+  );
+};
+
+const stringifyCanonicoInterno = (
+  value: unknown,
+  depth: number,
+  state: CanonicalTraversalState,
+): string => {
+  if (depth > MAX_CANONICAL_DEPTH) return throwCanonicalComplexityError();
+  state.nodes += 1;
+  if (state.nodes > MAX_CANONICAL_NODES) return throwCanonicalComplexityError();
+
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return JSON.stringify(value);
   }
@@ -642,13 +688,22 @@ export const stringifyCanonico = (value: unknown): string => {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stringifyCanonico(item)).join(",")}]`;
+    return `[${value
+      .map((item) => stringifyCanonicoInterno(item, depth + 1, state))
+      .join(",")}]`;
   }
   if (isRecord(value)) {
     const entries = Object.keys(value)
       .filter((key) => value[key] !== undefined)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stringifyCanonico(value[key])}`);
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stringifyCanonicoInterno(
+            value[key],
+            depth + 1,
+            state,
+          )}`,
+      );
     return `{${entries.join(",")}}`;
   }
   throw new FormularioValidationError(
@@ -657,3 +712,6 @@ export const stringifyCanonico = (value: unknown): string => {
     400,
   );
 };
+
+export const stringifyCanonico = (value: unknown): string =>
+  stringifyCanonicoInterno(value, 0, { nodes: 0 });

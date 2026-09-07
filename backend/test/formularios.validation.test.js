@@ -123,6 +123,19 @@ test('rejeita configuracoes publicadas inconsistentes', () => {
   );
 });
 
+test('mantem a normalizacao publica estrita para rascunhos incompletos', () => {
+  expectValidationError(
+    () => normalizarFormularioPublico(
+      rawForm([
+        field('sem_titulo', 'short_text', { label: '' }),
+        field('sem_opcoes', 'single_choice', { options: [] }),
+      ], { status: 'draft' }),
+      PUBLIC_ID,
+    ),
+    { code: 'FORM_CONFIGURATION_INVALID', status: 500 },
+  );
+});
+
 test('rejeita identificadores de campo que colidem com propriedades de objeto', () => {
   for (const unsafeId of ['__proto__', 'constructor', 'prototype']) {
     expectValidationError(
@@ -300,6 +313,22 @@ test('serializacao canonica independe da ordem das propriedades', () => {
   assert.equal(first, '{"a":[2,1],"nested":{"a":"texto","b":true},"z":1}');
   expectValidationError(
     () => stringifyCanonico(Number.POSITIVE_INFINITY),
+    { code: 'INVALID_PAYLOAD', status: 400 },
+  );
+});
+
+test('rejeita serializacao canonica profunda ou excessivamente complexa com erro de validacao', () => {
+  let deeplyNested = 'fim';
+  for (let index = 0; index < 20_000; index += 1) {
+    deeplyNested = { next: deeplyNested };
+  }
+
+  expectValidationError(
+    () => stringifyCanonico(deeplyNested),
+    { code: 'INVALID_PAYLOAD', status: 400 },
+  );
+  expectValidationError(
+    () => stringifyCanonico(Array.from({ length: 20_000 }, () => null)),
     { code: 'INVALID_PAYLOAD', status: 400 },
   );
 });

@@ -179,7 +179,9 @@ const serializeForm = (id: string, data: Record<string, unknown>) => {
   let form;
   try {
     const publicId = normalizarPublicIdAdministravel(data.publicId);
-    form = normalizarFormularioPublico(data, publicId);
+    form = normalizarFormularioPublico(data, publicId, {
+      allowIncompleteDraftFields: data.status === "draft",
+    });
   } catch (error) {
     if (error instanceof FormularioValidationError) {
       throw new FormularioAdminServiceError(
@@ -509,7 +511,9 @@ export const atualizarFormularioAdmin = async (
     const publicId = normalizarPublicIdAdministravel(current.publicId);
     garantirPublicIdImutavel(payload, publicId);
     const form = normalizarFormularioAdminPayload(payload, publicId);
-    const currentForm = normalizarFormularioPublico(current, publicId);
+    const currentForm = normalizarFormularioPublico(current, publicId, {
+      allowIncompleteDraftFields: current.status === "draft",
+    });
     const nextSchemaVersion = calcularVersaoSchemaSeguinte(
       currentForm.fields,
       form.fields,
@@ -587,13 +591,14 @@ export const atualizarStatusFormularioAdmin = async (
     );
     assertExpectedRevision(expectedRevision, currentRevision);
 
-    if (status === "published") {
-      // Reutiliza a validacao completa para impedir que um rascunho incompleto
-      // seja publicado apenas pela rota de status.
-      const publicId = normalizarPublicIdAdministravel(current.publicId);
-      const currentForm = normalizarFormularioPublico(current, publicId);
-      normalizarFormularioAdminPayload({ ...currentForm, status }, publicId);
-    }
+    // Le o estado atual com a unica tolerancia permitida para rascunhos e valida
+    // novamente no contexto do status de destino. Published e closed passam,
+    // portanto, obrigatoriamente pelo schema estrito.
+    const publicId = normalizarPublicIdAdministravel(current.publicId);
+    const currentForm = normalizarFormularioPublico(current, publicId, {
+      allowIncompleteDraftFields: current.status === "draft",
+    });
+    normalizarFormularioAdminPayload({ ...currentForm, status }, publicId);
 
     const now = FieldValue.serverTimestamp();
     transaction.update(formRef, {

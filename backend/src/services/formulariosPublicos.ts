@@ -185,9 +185,11 @@ export const obterFormularioPublico = async (rawPublicId: unknown) => {
   const publicId = normalizarIdentificadorPublico(rawPublicId);
   const firestore = exigirFirestoreAdmin();
   const found = await localizarFormulario(firestore, publicId);
-  const formulario = normalizarFormularioPublico(found.data, publicId);
 
-  if (formulario.status === "draft") {
+  // Rascunhos podem conter perguntas ainda incompletas no painel. Eles precisam
+  // permanecer indistinguiveis de um ID inexistente antes da validacao publica,
+  // que continua estrita para qualquer estado acessivel pelo link.
+  if (found.data.status === "draft") {
     throw new FormularioPublicoServiceError(
       "FORM_NOT_AVAILABLE",
       "Formulario nao encontrado.",
@@ -195,6 +197,7 @@ export const obterFormularioPublico = async (rawPublicId: unknown) => {
     );
   }
 
+  const formulario = normalizarFormularioPublico(found.data, publicId);
   return formulario;
 };
 
@@ -274,14 +277,18 @@ export const registrarRespostaFormulario = async (
       );
     }
 
-    const formulario = normalizarFormularioPublico(currentFormData, publicId);
-    if (formulario.status !== "published") {
+    // Um rascunho pode estar legitimamente incompleto. Verifica o estado bruto
+    // antes do schema publico estrito para responder como formulario fechado,
+    // sem transformar uma tentativa de envio em erro interno de configuracao.
+    if (currentFormData.status !== "published") {
       throw new FormularioPublicoServiceError(
         "FORM_CLOSED",
         "Este formulario nao esta aceitando novas respostas.",
         409,
       );
     }
+
+    const formulario = normalizarFormularioPublico(currentFormData, publicId);
     if (formulario.schemaVersion !== requestedSchemaVersion) {
       throw new FormularioPublicoServiceError(
         "FORM_SCHEMA_CHANGED",
