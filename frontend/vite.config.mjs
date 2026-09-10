@@ -8,6 +8,7 @@ export default defineConfig({
     host: true
   },
   build: {
+    manifest: true,
     chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {

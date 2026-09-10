@@ -13,9 +13,12 @@ export function FloatingButtons() {
   return (
     <div
       className={`fixed bottom-6 right-5 z-40 flex flex-col items-end gap-3 transition-all duration-500 ${
-        visivel ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6 pointer-events-none"
+        visivel
+          ? "visible opacity-100 translate-y-0"
+          : "invisible opacity-0 translate-y-6 pointer-events-none"
       }`}
       aria-label="Ações rápidas"
+      aria-hidden={!visivel}
     >
       {/* WhatsApp */}
       <a

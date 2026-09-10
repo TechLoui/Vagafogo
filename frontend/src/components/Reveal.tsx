@@ -38,6 +38,9 @@ export function Reveal({
   style,
 }: RevealProps) {
   const { ref, revealed } = useReveal<HTMLElement>({ once, threshold });
+  const setRef = (element: HTMLElement | null) => {
+    ref.current = element;
+  };
 
   const inlineStyle: CSSProperties = {
     transitionDelay: `${delay}ms`,
@@ -47,7 +50,7 @@ export function Reveal({
 
   return (
     <Tag
-      ref={ref as any}
+      ref={setRef}
       className={`reveal ${variantClass[variant]} ${revealed ? "is-visible" : ""} ${className}`}
       style={inlineStyle}
     >

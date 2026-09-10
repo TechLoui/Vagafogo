@@ -1,7 +1,7 @@
-import BrunchImg from '../assets/hero/hero-2.jpg'
-import laticImg1 from '../assets/brunch/laticinios/brunch-1.jpg'
-import laticImg2 from '../assets/brunch/laticinios/brunch-2.jpg'
-import laticImg3 from '../assets/brunch/laticinios/brunch-3.jpg'
+import BrunchImg from '../assets/hero/hero-2.webp'
+import laticImg1 from '../assets/brunch/laticinios/brunch-1.webp'
+import laticImg2 from '../assets/brunch/laticinios/brunch-2.webp'
+import laticImg3 from '../assets/brunch/laticinios/brunch-3.webp'
 import { Link } from "react-router-dom"
 import { Reveal } from "./Reveal"
 import { Spotlight } from "./Spotlight"
@@ -22,7 +22,7 @@ const cards = [
   {
     img: laticImg3,
     title: "Harmonizações Exclusivas",
-    description: "14 combinações únicas criadas pelo nosso chef, que exaltam os sabores locais em experiências gastronômicas memoráveis.",
+    description: "14 combinações que aproximam laticínios, frutas e outros sabores produzidos ou preparados na fazenda.",
   },
 ];
 
@@ -57,7 +57,7 @@ export function BrunchSection() {
             Brunch <span className="text-[#E0B13C]">Vagafogo</span>
           </Reveal>
           <Reveal variant="up" delay={240} as="p" className="text-gray-200/90 text-base md:text-lg leading-relaxed max-w-2xl mx-auto">
-            Um festival gastronômico com <strong className="text-[#E0B13C] font-semibold">45 itens</strong> e derivados do leite produzido na fazenda, além de frutas do cerrado cultivadas no local em manejo sustentável.
+            Um festival gastronômico com <strong className="text-[#E0B13C] font-semibold">45 itens</strong>, derivados do leite produzido na fazenda e preparos que valorizam frutas e sabores do Cerrado.
           </Reveal>
         </div>
 
@@ -92,20 +92,28 @@ export function BrunchSection() {
         </div>
 
         <Reveal variant="up" delay={200} className="text-center mt-14 block">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <Magnetic strength={0.2}>
           <Link
-            to="/reservar"
+            to="/brunch"
             className="btn-glow group inline-flex items-center gap-2.5 bg-[#8B4F23] text-white font-semibold px-8 py-4 rounded-full shadow-xl shadow-black/30 hover:bg-[#A05D2B] text-base transition-all duration-300 hover:shadow-2xl"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            Reservar Experiência Gastronômica
+            Conhecer o Brunch
             <svg className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </Link>
           </Magnetic>
+          <Link
+            to="/reservar?experiencia=brunch"
+            className="inline-flex items-center gap-2.5 border border-white/30 bg-white/5 text-white font-semibold px-8 py-4 rounded-full hover:bg-white/10 hover:border-white/50 text-base transition-all duration-300"
+          >
+            Reservar Brunch
+          </Link>
+          </div>
           {config.textoFuncionamento && (
             <p className="text-gray-400 text-sm mt-4 flex items-center justify-center gap-2">
               <span className="inline-block h-1 w-1 rounded-full bg-[#E0B13C]" />

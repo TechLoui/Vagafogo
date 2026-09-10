@@ -1,15 +1,81 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+  ErrorDocument 404 /404/index.html
 
-  # Uma unica origem canonica mantem links e QR Codes permanentes.
+  # Uma unica origem HTTPS e sem www mantem links e QR Codes permanentes.
   RewriteCond %{HTTP_HOST} ^www\.vagafogopiri\.com\.br$ [NC]
   RewriteRule ^ https://vagafogopiri.com.br%{REQUEST_URI} [R=301,L]
 
+  # Evita loop quando a hospedagem informa o HTTPS por proxy reverso.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+  RewriteRule ^ https://vagafogopiri.com.br%{REQUEST_URI} [R=301,L]
+
+  RewriteCond %{THE_REQUEST} \s/+index\.html(?:[\s?]) [NC]
+  RewriteRule ^index\.html$ / [R=301,L]
   RewriteRule ^index\.html$ - [L]
 
-  # SPA fallback (React Router)
+  # Remove /index.html das URLs publicas sem afetar as reescritas internas.
+  RewriteCond %{THE_REQUEST} \s/+(?:brunch|trilha|planeje-sua-visita|educacao-ambiental|historia|historia/pirenopolis|reservar)/index\.html(?:[\s?]) [NC]
+  RewriteRule ^(brunch|trilha|planeje-sua-visita|educacao-ambiental|historia|historia/pirenopolis|reservar)/index\.html$ /$1 [R=301,L,NE]
+
+  # Mantem uma URL canonica sem barra final nas paginas da aplicacao.
+  RewriteRule ^(brunch|trilha|planeje-sua-visita|educacao-ambiental|historia|historia/pirenopolis|reservar|admin|login|minha-reserva|formulario/[^/]+)/$ /$1 [R=301,L]
+
+  # HTML com metadados proprios, gerado no postbuild. A reescrita acontece
+  # antes do teste de diretorio para evitar o redirect automatico /rota/.
+  RewriteRule ^(brunch|trilha|planeje-sua-visita|educacao-ambiental|historia|historia/pirenopolis|reservar|admin|login|minha-reserva)$ $1/index.html [L]
+
+  # A URL tecnica do documento de erro nunca deve ser indexada como pagina valida.
+  # Precisa vir antes do teste de diretorio, pois /404 existe fisicamente no build.
+  RewriteRule ^404/?$ - [R=404,L]
+
+  # Arquivos reais (assets, robots.txt, sitemap.xml etc.).
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Formularios publicos com identificador dinamico sao resolvidos pelo React Router.
+  RewriteRule ^formulario/[^/]+$ /index.html [L]
+
+  # URLs desconhecidas renderizam a pagina React de 404 mantendo status HTTP 404.
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule . /index.html [L]
+  RewriteRule ^ - [R=404,L]
+</IfModule>
+
+# Usa Brotli quando disponivel e recorre a Gzip quando o modulo Brotli nao existe.
+# A exclusao mutua evita encadear dois filtros de compressao na mesma resposta.
+<IfModule mod_filter.c>
+  <IfModule mod_brotli.c>
+    AddOutputFilterByType BROTLI_COMPRESS text/html text/plain text/css text/javascript text/xml application/javascript application/json application/manifest+json application/xml application/xhtml+xml application/rss+xml application/atom+xml image/svg+xml
+  </IfModule>
+
+  <IfModule !mod_brotli.c>
+    <IfModule mod_deflate.c>
+      AddOutputFilterByType DEFLATE text/html text/plain text/css text/javascript text/xml application/javascript application/json application/manifest+json application/xml application/xhtml+xml application/rss+xml application/atom+xml image/svg+xml
+    </IfModule>
+  </IfModule>
+</IfModule>
+
+<IfModule mod_setenvif.c>
+  SetEnvIf Request_URI "^/(admin|login|minha-reserva)(/|$)" VAGAFOGO_NOINDEX=1
+  SetEnvIf Request_URI "^/formulario/" VAGAFOGO_NOINDEX=1
+  SetEnvIf Request_URI "^/assets/" VAGAFOGO_VERSIONED_ASSET=1
+  SetEnvIf Request_URI "^/(robots\.txt|sitemap\.xml)$" VAGAFOGO_DISCOVERY_FILE=1
+  <IfModule mod_headers.c>
+    Header always set X-Robots-Tag "noindex, follow" env=VAGAFOGO_NOINDEX
+    Header always set Cache-Control "public, max-age=31536000, immutable" env=VAGAFOGO_VERSIONED_ASSET
+    Header always set Cache-Control "public, max-age=3600, must-revalidate" env=VAGAFOGO_DISCOVERY_FILE
+  </IfModule>
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Os shells HTML devem ser revalidados para publicar metadados e rotas novos sem atraso.
+  <FilesMatch "\.html?$">
+    Header always set Cache-Control "no-cache, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
 </IfModule>

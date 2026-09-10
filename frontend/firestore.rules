@@ -20,6 +20,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Chaves de pagamento sao controladas exclusivamente pelo backend.
+    match /_payment_idempotency/{document=**} {
+      allow read, write: if false;
+    }
+
     // Reserva defensiva caso respostas sejam migradas para uma colecao raiz.
     match /respostas/{document=**} {
       allow read, write: if false;

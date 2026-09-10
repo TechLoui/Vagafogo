@@ -6,6 +6,8 @@
     "dev": "vite",
     "dev:3000": "vite --host --port 3000",
     "build": "tsc -b && vite build",
+    "postbuild": "node scripts/generate-seo-pages.cjs",
+    "optimize:images": "node scripts/optimize-marketing-images.cjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "preview:3000": "vite preview --host --port 3000",

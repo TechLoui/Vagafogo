@@ -5,17 +5,22 @@ const path = require("path");
 const PORT = Number(process.env.PORT ?? 3000);
 const DIST_DIR = path.join(__dirname, "dist");
 const INDEX_FILE = path.join(DIST_DIR, "index.html");
+const NOT_FOUND_FILE = path.join(DIST_DIR, "404", "index.html");
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
   ".ico": "image/x-icon",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
   ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".wav": "audio/wav",
@@ -36,9 +41,9 @@ function safeJoin(baseDir, requestPath) {
   return joined;
 }
 
-const MEDIA_EXT = new Set([".mp4", ".webm", ".mp3", ".wav", ".jpg", ".jpeg", ".png", ".svg", ".ico", ".woff", ".woff2"]);
+const MEDIA_EXT = new Set([".mp4", ".webm", ".mp3", ".wav", ".jpg", ".jpeg", ".webp", ".avif", ".png", ".svg", ".ico", ".woff", ".woff2"]);
 
-function serveFile(filePath, res) {
+function serveFile(filePath, res, statusCode = 200) {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] ?? "application/octet-stream";
   const relativePath = path.relative(DIST_DIR, filePath).replace(/\\/g, "/");
@@ -57,7 +62,7 @@ function serveFile(filePath, res) {
       res.end("Erro interno do servidor");
       return;
     }
-    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": cacheControl });
+    res.writeHead(statusCode, { "Content-Type": contentType, "Cache-Control": cacheControl });
     res.end(content);
   });
 }
@@ -83,10 +88,10 @@ const server = http.createServer((req, res) => {
       const dirIndex = path.join(filePath, "index.html");
       fs.stat(dirIndex, (dirErr, dirStat) => {
         if (!dirErr && dirStat.isFile()) {
-          serveFile(dirIndex, res);
+          serveFile(dirIndex, res, rawPath.replace(/\/+$/, "") === "/404" ? 404 : 200);
           return;
         }
-        serveFile(INDEX_FILE, res);
+        serveFile(NOT_FOUND_FILE, res, 404);
       });
       return;
     }
@@ -102,8 +107,12 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // SPA fallback
-    serveFile(INDEX_FILE, res);
+    if (/^formulario\/[^/]+$/.test(requestPath)) {
+      serveFile(INDEX_FILE, res);
+      return;
+    }
+
+    serveFile(NOT_FOUND_FILE, res, 404);
   });
 });
 

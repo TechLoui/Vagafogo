@@ -13,7 +13,7 @@ const features = [
     title: "Brunch Gastronômico",
     description:
       "45 itens e 14 harmonizações exclusivas com laticínios artesanais produzidos na fazenda e frutas do cerrado em manejo sustentável.",
-    cta: { type: "link" as const, href: "/reservar", label: "Ver pacotes" },
+    cta: { type: "link" as const, href: "/brunch", label: "Conhecer o brunch" },
     accent: "#E0B13C",
   },
   {
@@ -26,7 +26,7 @@ const features = [
     title: "Trilha Mãe da Floresta",
     description:
       "1.530m por mata ciliar primária margeando o Rio Vagafogo, com 182 espécies de pássaros catalogadas. Piscina natural e cachoeira.",
-    cta: { type: "link" as const, href: "/reservar", label: "Agendar trilha" },
+    cta: { type: "link" as const, href: "/trilha", label: "Conhecer a trilha" },
     accent: "#4CAF50",
   },
   {
@@ -129,7 +129,7 @@ export function FeatureSection() {
         <Reveal variant="up" delay={200} className="mt-16 block">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 bg-white/80 backdrop-blur-sm rounded-3xl shadow-md border border-white/60 p-7 lg:p-9">
             {[
-              { value: "45+", label: "Itens no Brunch" },
+              { value: "45", label: "Itens no Brunch" },
               { value: "182", label: "Espécies de Aves" },
               { value: "1.530m", label: "Trilha Ecológica" },
               { value: "14", label: "Harmonizações Únicas" },

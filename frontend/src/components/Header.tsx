@@ -1,20 +1,23 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { Link, useLocation } from "react-router-dom";
 import logo from "../assets/logo.jpg";
 
 type NavLink = { href: string; label: string; type: "anchor" | "route" };
 
 const NAV_LINKS: NavLink[] = [
   { href: "/#inicio", label: "Início", type: "anchor" },
-  { href: "/#brunch", label: "Brunch", type: "anchor" },
-  { href: "/#trilha", label: "Trilha", type: "anchor" },
-  { href: "/#educacao", label: "Educação", type: "anchor" },
+  { href: "/brunch", label: "Brunch", type: "route" },
+  { href: "/trilha", label: "Trilha", type: "route" },
+  { href: "/educacao-ambiental", label: "Educação", type: "route" },
   { href: "/historia", label: "História", type: "route" },
+  { href: "/planeje-sua-visita", label: "Visite", type: "route" },
 ];
 
 export default function Header() {
+  const { pathname } = useLocation();
   const [menuAberto, setMenuAberto] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const botaoMenuRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 60);
@@ -23,8 +26,33 @@ export default function Header() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  useEffect(() => {
+    if (!menuAberto) return;
+
+    const fecharComEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuAberto(false);
+      window.requestAnimationFrame(() => botaoMenuRef.current?.focus());
+    };
+
+    document.addEventListener("keydown", fecharComEscape);
+    return () => document.removeEventListener("keydown", fecharComEscape);
+  }, [menuAberto]);
+
   const fecharMenu = () => setMenuAberto(false);
   const transparente = !scrolled;
+  const currentPath = pathname === "/" ? pathname : pathname.replace(/\/+$/, "");
+  const linkEstaAtivo = (href: string, type: NavLink["type"]) => {
+    if (type === "anchor") {
+      return currentPath === "/";
+    }
+
+    if (href === "/historia") {
+      return currentPath === href || currentPath.startsWith(`${href}/`);
+    }
+
+    return currentPath === href;
+  };
 
   return (
     <header className={`fixed top-0 left-0 w-full z-50 transition-all duration-500 ${
@@ -32,6 +60,13 @@ export default function Header() {
         ? "bg-transparent"
         : "bg-white/95 backdrop-blur-md shadow-md"
     }`}>
+      <a
+        href="#conteudo-principal"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-white focus:px-4 focus:py-3 focus:font-semibold focus:text-[#2D1E0F] focus:shadow-xl"
+      >
+        Pular para o conteúdo
+      </a>
+
       {/* Scrim gradiente — só visível quando transparente */}
       {transparente && (
         <div className="absolute inset-0 header-scrim pointer-events-none" />
@@ -58,21 +93,22 @@ export default function Header() {
         </Link>
 
         {/* Nav Desktop */}
-        <nav className="hidden lg:flex flex-1 justify-center gap-8">
+        <nav aria-label="Navegação principal" className="hidden lg:flex flex-1 justify-center gap-8">
           {NAV_LINKS.map(({ href, label, type }) => {
+            const ativo = linkEstaAtivo(href, type);
             const classes = `relative font-medium text-base py-1 transition-colors duration-500
-                after:absolute after:bottom-0 after:left-0 after:w-0 after:h-0.5
-                after:transition-all after:duration-300 hover:after:w-full ${
+                after:absolute after:bottom-0 after:left-0 after:h-0.5
+                after:transition-all after:duration-300 hover:after:w-full ${ativo ? "font-semibold after:w-full" : "after:w-0"} ${
                 transparente
                   ? "text-white/90 hover:text-white after:bg-white drop-shadow-sm"
                   : "text-[#8B4F23] after:bg-[#8B4F23]"
               }`;
             return type === "route" ? (
-              <Link key={href} to={href} className={classes}>
+              <Link key={href} to={href} className={classes} aria-current={ativo ? "page" : undefined}>
                 {label}
               </Link>
             ) : (
-              <a key={href} href={href} className={classes}>
+              <a key={href} href={href} className={classes} aria-current={ativo ? "page" : undefined}>
                 {label}
               </a>
             );
@@ -111,12 +147,14 @@ export default function Header() {
 
         {/* Hambúrguer Mobile */}
         <button
+          ref={botaoMenuRef}
           onClick={() => setMenuAberto(!menuAberto)}
           className={`lg:hidden p-2 rounded-lg transition-colors ${
             transparente ? "text-white hover:bg-white/15" : "text-[#8B4F23] hover:bg-[#8B4F23]/10"
           }`}
           aria-label={menuAberto ? "Fechar menu" : "Abrir menu"}
           aria-expanded={menuAberto}
+          aria-controls="menu-principal-mobile"
         >
           <div className="w-6 h-5 flex flex-col justify-between">
             <span className={`block h-0.5 transition-all duration-300 origin-center ${
@@ -133,18 +171,27 @@ export default function Header() {
       </div>
 
       {/* Menu Mobile */}
-      <div className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out ${
-        menuAberto ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
+      <nav
+        id="menu-principal-mobile"
+        aria-label="Navegação principal"
+        aria-hidden={!menuAberto}
+        className={`lg:hidden transition-[max-height,opacity,visibility] duration-300 ease-in-out ${
+        menuAberto
+          ? "visible max-h-[calc(100vh-76px)] overflow-y-auto opacity-100"
+          : "invisible max-h-0 overflow-hidden opacity-0 pointer-events-none"
       }`}>
-        <div className="bg-white/97 backdrop-blur-md border-t border-[#8B4F23]/10 px-4 py-4 flex flex-col gap-1">
+        <div className="bg-white/[0.98] backdrop-blur-md border-t border-[#8B4F23]/10 px-4 py-4 flex flex-col gap-1">
           {NAV_LINKS.map(({ href, label, type }) => {
-            const mobileClass = "py-3 px-3 text-base font-medium text-[#8B4F23] rounded-lg hover:bg-[#8B4F23]/5 border-b border-[#8B4F23]/5 transition-colors";
+            const ativo = linkEstaAtivo(href, type);
+            const mobileClass = `py-3 px-3 text-base font-medium text-[#8B4F23] rounded-lg hover:bg-[#8B4F23]/5 border-b border-[#8B4F23]/5 transition-colors ${
+              ativo ? "bg-[#8B4F23]/10 font-semibold" : ""
+            }`;
             return type === "route" ? (
-              <Link key={href} to={href} onClick={fecharMenu} className={mobileClass}>
+              <Link key={href} to={href} onClick={fecharMenu} className={mobileClass} aria-current={ativo ? "page" : undefined}>
                 {label}
               </Link>
             ) : (
-              <a key={href} href={href} onClick={fecharMenu} className={mobileClass}>
+              <a key={href} href={href} onClick={fecharMenu} className={mobileClass} aria-current={ativo ? "page" : undefined}>
                 {label}
               </a>
             );
@@ -170,7 +217,7 @@ export default function Header() {
             Reservar Agora
           </Link>
         </div>
-      </div>
+      </nav>
     </header>
   );
 }

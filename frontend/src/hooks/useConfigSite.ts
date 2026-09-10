@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../../firebase";
 
 export interface ConfigSite {
   textoFuncionamento?: string;
@@ -12,13 +10,19 @@ let _promise: Promise<ConfigSite> | null = null;
 async function carregarConfigSite(): Promise<ConfigSite> {
   if (_cache !== null) return _cache;
   if (!_promise) {
-    _promise = getDoc(doc(db, "configuracoes", "site")).then((snap) => {
-      _cache = snap.exists() ? (snap.data() as ConfigSite) : {};
-      return _cache;
-    }).catch(() => {
-      _promise = null;
-      return {};
-    });
+    _promise = Promise.all([
+      import("firebase/firestore"),
+      import("../../firebase"),
+    ])
+      .then(([{ doc, getDoc }, { db }]) => getDoc(doc(db, "configuracoes", "site")))
+      .then((snap) => {
+        _cache = snap.exists() ? (snap.data() as ConfigSite) : {};
+        return _cache;
+      })
+      .catch(() => {
+        _promise = null;
+        return {};
+      });
   }
   return _promise;
 }
@@ -34,10 +38,20 @@ export function useConfigSite() {
 
   useEffect(() => {
     if (_cache !== null) return;
-    carregarConfigSite().then((c) => {
-      setConfig(c);
-      setCarregando(false);
-    });
+
+    let ativo = true;
+    const timeoutId = window.setTimeout(() => {
+      carregarConfigSite().then((c) => {
+        if (!ativo) return;
+        setConfig(c);
+        setCarregando(false);
+      });
+    }, 1200);
+
+    return () => {
+      ativo = false;
+      window.clearTimeout(timeoutId);
+    };
   }, []);
 
   return { config, carregando };

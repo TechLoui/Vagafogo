@@ -68,8 +68,8 @@ export function TrailSection() {
               </div>
 
               <div className="absolute top-5 right-5 flex items-center gap-2 rounded-full bg-emerald-500/90 backdrop-blur-sm px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg">
-                <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                Aberto hoje
+                <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                Natureza preservada
               </div>
             </div>
           </Reveal>
@@ -79,7 +79,7 @@ export function TrailSection() {
               Caminhada Imersiva de 1.530m
             </h3>
             <p className="mb-6 text-gray-300/90 leading-relaxed">
-              Nossa trilha ecológica atravessa uma belíssima mata ciliar primária preservada, margeando o Rio Vagafogo. A trilha é completamente protegida por madeiramento, oferecendo conforto e segurança ao visitante.
+              Nossa trilha ecológica atravessa uma mata ciliar primária preservada, margeando o Rio Vagafogo. Há madeiramento ao longo do percurso e corrimões nos trechos mais íngremes para apoiar a passagem.
             </p>
 
             <ul className="space-y-3 mb-8">
@@ -96,24 +96,24 @@ export function TrailSection() {
             <Reveal variant="up" delay={700} className="flex flex-wrap gap-3">
               <Magnetic strength={0.2}>
               <Link
-                to="/reservar"
+                to="/trilha"
                 className="btn-glow group inline-flex items-center gap-2 bg-white text-[#2D1E0F] font-semibold px-7 py-3.5 rounded-full shadow-xl hover:bg-gray-50 text-sm transition-all duration-300 hover:shadow-2xl"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                Agendar Trilha
+                Conhecer a Trilha
                 <svg className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
               </Magnetic>
-              <a
-                href="#educacao"
+              <Link
+                to="/reservar?experiencia=trilha"
                 className="inline-flex items-center gap-2 border border-white/30 bg-white/5 backdrop-blur-sm text-white font-medium px-7 py-3.5 rounded-full hover:bg-white/10 hover:border-white/50 text-sm transition-all duration-300"
               >
-                Educação Ambiental
-              </a>
+                Reservar Trilha
+              </Link>
             </Reveal>
           </Reveal>
         </div>

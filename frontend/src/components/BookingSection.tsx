@@ -67,7 +67,7 @@ type TipoClientePreco = Record<string, number>;
 type Pacote = {
   id?: string;
   nome: string;
-  tipo: "brunch" | "trilha" | "experiencia";
+  tipo: string;
   emoji?: string;
   precoAdulto: number;
   precoCrianca: number;
@@ -153,6 +153,13 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
+const criarChaveIdempotenciaPagamento = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `payment-${crypto.randomUUID()}`;
+  }
+  return `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 
 const normalizarTexto = (valor: string) =>
   valor
@@ -161,6 +168,19 @@ const normalizarTexto = (valor: string) =>
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+type ExperienceSlug = "brunch" | "trilha";
+
+const pacoteCorrespondeExperiencia = (pacote: Pacote, experiencia: ExperienceSlug) => {
+  const tipo = normalizarTexto(pacote.tipo ?? "");
+  const nome = normalizarTexto(pacote.nome);
+
+  if (experiencia === "brunch") {
+    return tipo.includes("brunch") || tipo.includes("gastronom") || nome.includes("brunch");
+  }
+
+  return tipo.includes("trilha") || tipo.includes("natureza") || nome.includes("trilha");
+};
 
 const obterChaveTipo = (tipo: TipoCliente) => tipo.id ?? normalizarTexto(tipo.nome);
 
@@ -442,7 +462,12 @@ const calcularParticipantesReserva = (reserva: ReservaResumo) => {
   return Math.max(total, participantesDeclarados);
 };
 
-export function BookingSection() {
+type BookingSectionProps = {
+  initialExperience?: ExperienceSlug;
+  initialPackageId?: string;
+};
+
+export function BookingSection({ initialExperience, initialPackageId }: BookingSectionProps = {}) {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -450,6 +475,7 @@ export function BookingSection() {
   const [reservasDia, setReservasDia] = useState<ReservaResumo[]>([]);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
   const [etapa, setEtapa] = useState<EtapaReserva>(0);
+  const initialSelectionAppliedRef = useRef<string | null>(null);
 
   // Formulário
   const [nome, setNome] = useState<string>("");
@@ -474,6 +500,8 @@ export function BookingSection() {
   const [naoPagante] = useState<number>(0);
   const [temPet, setTemPet] = useState<boolean | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const paymentSubmissionLockRef = useRef(false);
+  const paymentIdempotencyKeyRef = useRef<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>("CREDIT_CARD");
   const [modalReembolsoAberto, setModalReembolsoAberto] = useState<boolean>(false);
@@ -482,7 +510,7 @@ export function BookingSection() {
   const [cartaoValidade, setCartaoValidade] = useState<string>("");
   const [cartaoCvv, setCartaoCvv] = useState<string>("");
   const [cartaoResultado, setCartaoResultado] = useState<{
-    status: "success" | "pending" | "processing" | "error";
+    status: "success" | "pending" | "processing" | "retry" | "error";
     message: string;
   } | null>(null);
   const [enderecoCep, setEnderecoCep] = useState<string>("");
@@ -550,6 +578,7 @@ export function BookingSection() {
   }, [cartaoCvvMaxLength]);
 
   const resetFormulario = () => {
+    paymentIdempotencyKeyRef.current = null;
     setEtapa(0);
     setSelectedPackages([]);
     setNome("");
@@ -892,6 +921,39 @@ export function BookingSection() {
     }
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (loadingPacotes || pacotes.length === 0) return;
+
+    const selectionKey = `${initialPackageId ?? ""}:${initialExperience ?? ""}`;
+    if (selectionKey === ":" || initialSelectionAppliedRef.current === selectionKey) return;
+    const linkAnterior = initialSelectionAppliedRef.current;
+
+    const pacoteInicial =
+      (initialPackageId ? pacotes.find((pacote) => pacote.id === initialPackageId) : undefined) ??
+      (initialExperience
+        ? pacotes.find((pacote) => pacote.id && pacoteCorrespondeExperiencia(pacote, initialExperience))
+        : undefined);
+
+    if (!pacoteInicial?.id) return;
+    initialSelectionAppliedRef.current = selectionKey;
+
+    const linkFoiTrocado = linkAnterior !== null;
+    setSelectedPackages((atuais) =>
+      linkFoiTrocado || atuais.length === 0 ? [pacoteInicial.id!] : atuais
+    );
+
+    if (linkFoiTrocado) {
+      setEtapa(0);
+      setSelectedDay(undefined);
+      setHorario("");
+      setHorariosPorPacote({});
+      setParticipantesPorGrupo({});
+      setIdadesPorGrupoETipo({});
+      setTemPet(null);
+      setFormErrors({});
+    }
+  }, [initialExperience, initialPackageId, loadingPacotes, pacotes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
@@ -2285,7 +2347,7 @@ export function BookingSection() {
       return;
     }
 
-    if (loading || bloqueiaEnvioCartao) {
+    if (paymentSubmissionLockRef.current || loading || bloqueiaEnvioCartao) {
       return;
     }
 
@@ -2314,6 +2376,7 @@ export function BookingSection() {
       return;
     }
 
+    paymentSubmissionLockRef.current = true;
     setLoading(true);
     setCheckoutUrl(null);
     setPixKey(null);
@@ -2421,11 +2484,16 @@ export function BookingSection() {
         data: dataStr,
         billingType: formaPagamento,
       });
+      const idempotencyKey =
+        paymentIdempotencyKeyRef.current ?? criarChaveIdempotenciaPagamento();
+      paymentIdempotencyKeyRef.current = idempotencyKey;
+
       const rawResponse = await fetch("https://vagafogo-production.up.railway.app/criar-cobranca", {
         method: "POST",
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify(payload),
       });
@@ -2437,14 +2505,28 @@ export function BookingSection() {
 
       if (!rawResponse.ok) {
         console.error('❌ Erro na resposta:', resposta);
+        const tentativaAindaEmAndamento =
+          resposta?.code === "PAYMENT_IN_PROGRESS";
+        const conflitoDeTentativa =
+          resposta?.code === "IDEMPOTENCY_KEY_REUSED";
+        if (
+          rawResponse.status >= 400 &&
+          rawResponse.status < 500 &&
+          !tentativaAindaEmAndamento &&
+          !conflitoDeTentativa
+        ) {
+          paymentIdempotencyKeyRef.current = null;
+        }
         const mensagemErro = extrairMensagemErroPagamento(
           resposta,
           "Erro ao criar a cobranca."
         );
         if (formaPagamento === "CREDIT_CARD") {
           setCartaoResultado({
-            status: "error",
-            message: `Compra negada: ${mensagemErro}`,
+            status: tentativaAindaEmAndamento ? "retry" : "error",
+            message: tentativaAindaEmAndamento || conflitoDeTentativa
+              ? mensagemErro
+              : `Compra negada: ${mensagemErro}`,
           });
         } else {
           alert(`Erro ao criar a cobranca: ${mensagemErro}`);
@@ -2490,6 +2572,8 @@ export function BookingSection() {
           });
           if (pagamentoConfirmado) {
             resetFormulario();
+          } else if (pagamentoNegado) {
+            paymentIdempotencyKeyRef.current = null;
           }
         }
 
@@ -2532,6 +2616,7 @@ export function BookingSection() {
         alert("Erro ao processar reserva. Tente novamente.");
       }
     } finally {
+      paymentSubmissionLockRef.current = false;
       setLoading(false);
     }
   }
@@ -3124,6 +3209,16 @@ export function BookingSection() {
                 {/* ============ ETAPA 0 — PACOTES (seleção simples) ============ */}
                 {etapa === 0 && (
                   <div ref={pacotesRef} className="space-y-5">
+                    {initialExperience && selectedPacotes.some((pacote) =>
+                      pacoteCorrespondeExperiencia(pacote, initialExperience)
+                    ) && (
+                      <div
+                        role="status"
+                        className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-800"
+                      >
+                        A opção de {initialExperience === "brunch" ? "brunch" : "trilha"} já está selecionada. Confira os valores e altere a escolha se quiser combinar experiências.
+                      </div>
+                    )}
                     {/* PACOTES — checkboxes simples */}
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wider text-[#8B4F23] mb-2.5 flex items-center gap-2">
@@ -3140,8 +3235,16 @@ export function BookingSection() {
                           return (
                             <div
                               key={pacote.id}
+                              role="checkbox"
+                              aria-checked={selecionado}
                               aria-disabled={desabilitado}
+                              tabIndex={desabilitado ? -1 : 0}
                               onClick={() => !desabilitado && handlePackageToggle(pacote.id!)}
+                              onKeyDown={(event) => {
+                                if (desabilitado || (event.key !== "Enter" && event.key !== " ")) return;
+                                event.preventDefault();
+                                handlePackageToggle(pacote.id!);
+                              }}
                               className={`relative rounded-2xl border-2 p-4 transition-all duration-300 ${
                                 desabilitado
                                   ? "border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed"
@@ -4248,7 +4351,9 @@ export function BookingSection() {
                       {loading
                         ? "Processando..."
                         : bloqueiaEnvioCartao
-                        ? "Aguardando confirmação..."
+                         ? "Aguardando confirmação..."
+                        : cartaoResultado?.status === "retry"
+                        ? "Consultar pagamento"
                         : formaPagamento === "PIX"
                         ? "Gerar QR Code PIX"
                         : "Pagar com cartão"}
@@ -4436,7 +4541,11 @@ export function BookingSection() {
                 /* ── Cartão resultado ── */
                 <div className="text-center space-y-4">
                   <h3 className="text-xl font-bold text-white">
-                    {cartaoResultado.status === "processing" ? "Processando pagamento" : "Pagamento no cartão"}
+                    {cartaoResultado.status === "processing"
+                      ? "Processando pagamento"
+                      : cartaoResultado.status === "retry"
+                      ? "Confirmação em andamento"
+                      : "Pagamento no cartão"}
                   </h3>
                   <p className="text-base text-white/90">
                     {cartaoResultado.message}
@@ -4445,7 +4554,7 @@ export function BookingSection() {
                     className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold ${
                       cartaoResultado.status === "processing"
                         ? "bg-sky-500/20 text-sky-100"
-                        : cartaoResultado.status === "pending"
+                        : ["pending", "retry"].includes(cartaoResultado.status)
                         ? "bg-amber-500/20 text-amber-100"
                         : "bg-rose-500/20 text-rose-100"
                     }`}
@@ -4454,6 +4563,8 @@ export function BookingSection() {
                       ? "Processando compra"
                       : cartaoResultado.status === "pending"
                       ? "Pagamento em processamento"
+                      : cartaoResultado.status === "retry"
+                      ? "Tente consultar novamente"
                       : "Pagamento não aprovado"}
                   </span>
                 </div>

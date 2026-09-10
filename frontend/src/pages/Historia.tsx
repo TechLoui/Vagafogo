@@ -4,10 +4,12 @@ import { Footer } from "../components/Footer";
 import { FloatingButtons } from "../components/FloatingButtons";
 import { Reveal } from "../components/Reveal";
 import { Magnetic } from "../components/Magnetic";
+import { PageBreadcrumbs } from "../components/PageBreadcrumbs";
 import { Spotlight } from "../components/Spotlight";
-import heroImg from "../assets/hero/hero-1.jpg";
+import heroImg from "../assets/hero/hero-1.webp";
+import heroImgMobile from "../assets/hero/hero-1-800.webp";
 import trilhaImg from "../assets/trilhaecologica/trilhaecologica-1.jpg";
-import brunchImg from "../assets/brunch/laticinios/brunch-3.jpg";
+import brunchImg from "../assets/brunch/laticinios/brunch-3.webp";
 import educacaoImg from "../assets/educacaoambiental/educacaoambiental-1.jpg";
 import {
   FaGlobeEurope,
@@ -23,7 +25,7 @@ const timeline = [
   { ano: "1973", titulo: "Encontro com Pirenópolis", icone: FaMapMarkedAlt },
   { ano: "1975", titulo: "Compra do terreno", icone: FaHandshake },
   { ano: "1979", titulo: "Vida na fazenda", icone: FaSeedling },
-  { ano: "1989", titulo: "Criação da RPPN", icone: FaTree },
+  { ano: "1990", titulo: "Criação da RPPN", icone: FaTree },
   { ano: "1992", titulo: "Inauguração do Santuário", icone: FaLeaf },
   { ano: "Hoje", titulo: "Nova geração", icone: FaUsers },
 ];
@@ -34,12 +36,16 @@ export function Historia() {
       <Header />
       <FloatingButtons />
 
-      <main>
+      <main id="conteudo-principal" tabIndex={-1}>
         {/* ============ HERO ============ */}
         <section className="relative min-h-[80vh] flex items-center justify-center overflow-hidden">
           <div className="absolute inset-0">
             <img
               src={heroImg}
+              srcSet={`${heroImgMobile} 800w, ${heroImg} 1440w`}
+              sizes="100vw"
+              width={1440}
+              height={2161}
               alt=""
               aria-hidden="true"
               fetchPriority="high"
@@ -49,6 +55,10 @@ export function Historia() {
           </div>
 
           <div className="relative z-10 mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8 pt-24 pb-20 text-center">
+            <PageBreadcrumbs
+              items={[{ label: "Início", to: "/" }, { label: "Nossa história" }]}
+              className="mb-7 text-white"
+            />
             <Reveal variant="up" once>
               <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.32em] text-[#E0B13C] mb-5">
                 <span className="h-px w-8 bg-[#E0B13C]" />
@@ -56,10 +66,10 @@ export function Historia() {
                 <span className="h-px w-8 bg-[#E0B13C]" />
               </span>
             </Reveal>
-            <Reveal variant="up" delay={200} once as="h1" className="font-display text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-2xl">
-              Onde Tudo<br className="hidden sm:block" />
-              <em className="not-italic text-[#E0B13C]"> Começou</em>
-            </Reveal>
+            <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-2xl">
+              A história do<br className="hidden sm:block" />
+              <em className="not-italic text-[#E0B13C]"> Santuário Vagafogo</em>
+            </h1>
             <Reveal variant="up" delay={400} once as="p" className="mx-auto mt-8 max-w-2xl text-base md:text-lg text-white/85 leading-relaxed">
               A história de Evandro e Catarina — dois brasileiros que se encontraram do outro lado do mundo e plantaram raízes no coração do cerrado.
             </Reveal>
@@ -142,7 +152,7 @@ export function Historia() {
             <Reveal variant="fade" delay={240} className="prose-elegant">
               <p>
                 <span className="float-left mr-3 text-7xl font-bold leading-none text-[#8B4F23] font-display">E</span>
-                vandro, mineiro de Alfenas, e <strong>Catarina</strong>, paulistana, são dois brasileiros que acabaram se encontrando do outro lado do mundo, em uma comunidade alternativa chamada <em>Saint Martem Latem</em>, na Bélgica. Juntos, percorreram diversos países da Europa e da Ásia, vivenciando diferentes modos de vida e culturas.
+                vandro, mineiro de Alfenas, e <strong>Catarina</strong>, paulistana, são dois brasileiros que acabaram se encontrando do outro lado do mundo, em uma comunidade alternativa na Bélgica. Juntos, percorreram diversos países da Europa e da Ásia, vivenciando diferentes modos de vida e culturas.
               </p>
               <p>
                 Após essa intensa jornada, perceberam que <strong>o melhor lugar para viver ainda era o Brasil</strong>.
@@ -201,7 +211,7 @@ export function Historia() {
 
               <Reveal variant="right" delay={250} className="prose-elegant">
                 <p>
-                  Com o dinheiro que haviam guardado para realizar o sonho de adquirir terras, compraram um pedaço de chão em <strong>1975</strong>. E foi em <strong>1979</strong> que passaram a viver definitivamente na <span className="text-[#8B4F23] font-semibold">Fazenda Vagafogo</span>.
+                  Com o dinheiro que haviam guardado para realizar o sonho de adquirir terras, compraram um pedaço de chão em <strong>1975</strong>. Na memória contada pela família, <strong>1979</strong> marca o início da vida definitiva na <span className="text-[#8B4F23] font-semibold">Fazenda Vagafogo</span>.
                 </p>
                 <p>
                   Para sustentar a família, começaram a vender produtos da fazenda em Brasília, atividade que mantiveram por cerca de <strong>dez anos</strong>.
@@ -236,10 +246,10 @@ export function Historia() {
 
             <Reveal variant="fade" delay={240} className="prose-elegant">
               <p>
-                Em <strong>1989</strong>, a trajetória da fazenda tomou um novo rumo com o apoio da <strong>Funatura</strong> – Fundação Pró-Natureza –, que, junto ao financiamento da WWF, da Fundação O Boticário e do British Council, viabilizou a criação de uma <strong>RPPN</strong> – Reserva Particular do Patrimônio Natural –, conhecida como <em>Santuário de Vida Silvestre</em>.
+                Em <strong>1989</strong>, a trajetória da fazenda tomou um novo rumo com o início do trabalho de conservação apoiado pela <strong>Funatura</strong> – Fundação Pró-Natureza. Em <strong>1990</strong>, 17 dos 46 hectares da propriedade foram destinados à conservação em caráter perpétuo com a criação da <strong>RPPN</strong> – Reserva Particular do Patrimônio Natural.
               </p>
               <p>
-                O projeto foi estruturado com Plano de Manejo e um Centro de Visitantes, abrindo espaço para o <strong>turismo ecológico</strong>, a <strong>educação ambiental</strong> e a <strong>observação da natureza</strong>.
+                A Vagafogo tornou-se a primeira RPPN de Goiás e uma das seis primeiras do Brasil. O projeto abriu espaço para o <strong>turismo ecológico</strong>, a <strong>educação ambiental</strong> e a <strong>observação da natureza</strong>.
               </p>
             </Reveal>
 
@@ -255,7 +265,7 @@ export function Historia() {
                       Inauguração com o Príncipe Philip
                     </h3>
                     <p className="text-gray-700 leading-relaxed">
-                      A inauguração ocorreu com a presença de <strong>autoridades locais</strong> e do <strong>Príncipe Philip</strong>. Com recursos da Embaixada Britânica e madeira doada pelo IBAMA, foram construídas passarelas para proteger as trilhas mais sensíveis da mata.
+                      O Centro de Visitantes foi inaugurado em março de 1992 com a presença do <strong>Príncipe Philip</strong>. Com recursos da Embaixada Britânica e madeira doada pelo IBAMA, foram construídas passarelas para proteger as áreas mais sensíveis da mata.
                     </p>
                   </div>
                 </div>
@@ -263,6 +273,49 @@ export function Historia() {
             </Reveal>
           </div>
         </section>
+
+        <aside aria-labelledby="fontes-historia" className="border-y border-[#8B4F23]/10 bg-[#F7FAEF] py-12">
+          <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
+            <h2 id="fontes-historia" className="font-display text-2xl font-bold text-[#2D1E0F]">
+              Fontes e memória da Vagafogo
+            </h2>
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-gray-600">
+              Esta narrativa reúne a memória da família e registros institucionais sobre a criação da RPPN, o Centro de Visitantes e a trajetória da fazenda.
+            </p>
+            <ul className="mt-5 flex flex-wrap gap-3 text-sm font-semibold">
+              <li>
+                <a
+                  href="https://funatura.org.br/wp-content/uploads/2017/05/images_docs_Livro-Funatura-30-Anos.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex rounded-full border border-[#8B4F23]/20 bg-white px-4 py-2 text-[#8B4F23] hover:border-[#8B4F23]/50"
+                >
+                  Funatura: 30 anos de conservação
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://goias.gov.br/turismo/wp-content/uploads/sites/4/2022/02/INVENTARIOCAMINHODECORACORALINA-574.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex rounded-full border border-[#8B4F23]/20 bg-white px-4 py-2 text-[#8B4F23] hover:border-[#8B4F23]/50"
+                >
+                  Inventário turístico de Goiás
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://bdm.unb.br/bitstream/10483/12200/1/2015_SebastiaoInacioDeMagalhaes.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex rounded-full border border-[#8B4F23]/20 bg-white px-4 py-2 text-[#8B4F23] hover:border-[#8B4F23]/50"
+                >
+                  Pesquisa da Universidade de Brasília
+                </a>
+              </li>
+            </ul>
+          </div>
+        </aside>
 
         {/* ============ CAPÍTULO 4 — FAMÍLIA ============ */}
         <section className="py-20 md:py-28 bg-gradient-to-b from-[#FAFCF5] to-white overflow-hidden">
@@ -292,17 +345,17 @@ export function Historia() {
                   <div className="relative rounded-3xl overflow-hidden shadow-2xl group">
                     <img
                       src={educacaoImg}
-                      alt="Família na Vagafogo"
+                      alt="Grupo em atividade de educação ambiental no Santuário Vagafogo"
                       loading="lazy"
                       className="w-full h-80 lg:h-[440px] object-cover transition-transform duration-[1500ms] group-hover:scale-105"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                     <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between gap-3">
                       <div>
-                        <p className="text-[10px] font-bold text-[#E0B13C] uppercase tracking-[0.2em]">Geração 1</p>
-                        <p className="font-display font-bold text-white text-xl">Evandro & Catarina</p>
+                        <p className="text-[10px] font-bold text-[#E0B13C] uppercase tracking-[0.2em]">Legado vivo</p>
+                        <p className="font-display font-bold text-white text-xl">Educação e conservação</p>
                       </div>
-                      <span className="text-xs text-white/80 bg-white/10 backdrop-blur-sm border border-white/20 px-3 py-1 rounded-full">Fundadores</span>
+                      <span className="text-xs text-white/80 bg-white/10 backdrop-blur-sm border border-white/20 px-3 py-1 rounded-full">Novas gerações</span>
                     </div>
                   </div>
                 </Spotlight>
@@ -329,7 +382,7 @@ export function Historia() {
 
             <Reveal variant="fade" delay={240} className="prose-elegant prose-dark max-w-3xl mx-auto">
               <p>
-                A Fazenda Vagafogo segue firme em sua busca pela <strong>sustentabilidade</strong>, com o melhor aproveitamento possível das frutas orgânicas do cerrado e da produção de leite, resultando em cerca de <strong className="text-[#E0B13C]">70 itens comercializados</strong>.
+                A Fazenda Vagafogo segue firme em sua busca pela <strong>sustentabilidade</strong>, aproveitando frutos do Cerrado e a produção de leite em diferentes preparos e produtos da fazenda.
               </p>
               <p>
                 Um dos grandes destaques é o <strong>brunch sustentável</strong>, que reúne esses produtos em uma experiência gastronômica única — valorizando ingredientes locais e sazonais, preparados com responsabilidade ambiental.

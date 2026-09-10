@@ -1,47 +1,114 @@
-import { createBrowserRouter } from "react-router-dom"
-import { Home } from "./pages/home"
-import { LoginAdmin } from "./pages/LoginAdmin"
-import { Admin } from "./pages/Admin"
-import { ProtectedRoute } from "./components/ProtectedRoute"
-import { Reserva } from "./pages/Reserva"
-import { MinhaReserva } from "./pages/MinhaReserva"
-import { Historia } from "./pages/Historia"
-import { HistoriaPirenopolis } from "./pages/HistoriaPirenopolis"
-import { FormularioPublico } from "./pages/FormularioPublico"
+import { createBrowserRouter } from "react-router-dom";
+import { AppLayout, PageLoader } from "./components/AppLayout";
 
 export const router = createBrowserRouter([
   {
-    path: "/",
-    element: <Home />
+    element: <AppLayout />,
+    hydrateFallbackElement: <PageLoader />,
+    children: [
+      {
+        path: "/",
+        lazy: async () => {
+          const { Home } = await import("./pages/home");
+          return { Component: Home };
+        },
+      },
+      {
+        path: "/brunch",
+        lazy: async () => {
+          const { Brunch } = await import("./pages/Brunch");
+          return { Component: Brunch };
+        },
+      },
+      {
+        path: "/trilha",
+        lazy: async () => {
+          const { Trilha } = await import("./pages/Trilha");
+          return { Component: Trilha };
+        },
+      },
+      {
+        path: "/historia",
+        lazy: async () => {
+          const { Historia } = await import("./pages/Historia");
+          return { Component: Historia };
+        },
+      },
+      {
+        path: "/historia/pirenopolis",
+        lazy: async () => {
+          const { HistoriaPirenopolis } = await import("./pages/HistoriaPirenopolis");
+          return { Component: HistoriaPirenopolis };
+        },
+      },
+      {
+        path: "/planeje-sua-visita",
+        lazy: async () => {
+          const { PlanejeVisita } = await import("./pages/PlanejeVisita");
+          return { Component: PlanejeVisita };
+        },
+      },
+      {
+        path: "/educacao-ambiental",
+        lazy: async () => {
+          const { EducacaoAmbiental } = await import("./pages/EducacaoAmbiental");
+          return { Component: EducacaoAmbiental };
+        },
+      },
+      {
+        path: "/reservar",
+        lazy: async () => {
+          const { Reserva } = await import("./pages/Reserva");
+          return { Component: Reserva };
+        },
+      },
+      {
+        path: "/minha-reserva",
+        lazy: async () => {
+          const { MinhaReserva } = await import("./pages/MinhaReserva");
+          return { Component: MinhaReserva };
+        },
+      },
+      {
+        path: "/formulario/:publicId",
+        lazy: async () => {
+          const { FormularioPublico } = await import("./pages/FormularioPublico");
+          return { Component: FormularioPublico };
+        },
+      },
+      {
+        path: "/login",
+        lazy: async () => {
+          const { LoginAdmin } = await import("./pages/LoginAdmin");
+          return { Component: LoginAdmin };
+        },
+      },
+      {
+        path: "/admin",
+        lazy: async () => {
+          const [{ Admin }, { ProtectedRoute }] = await Promise.all([
+            import("./pages/Admin"),
+            import("./components/ProtectedRoute"),
+          ]);
+
+          function ProtectedAdmin() {
+            return (
+              <ProtectedRoute>
+                <Admin />
+              </ProtectedRoute>
+            );
+          }
+
+          return { Component: ProtectedAdmin };
+        },
+      },
+      {
+        path: "*",
+        lazy: async () => {
+          const { NotFound } = await import("./pages/NotFound");
+          return { Component: NotFound };
+        },
+      },
+    ],
   },
-  {
-    path: "/historia",
-    element: <Historia />
-  },
-  {
-    path: "/historia/pirenopolis",
-    element: <HistoriaPirenopolis />
-  },
-  {
-    path: "/reservar",
-    element: <Reserva />
-  },
-  {
-    path: "/minha-reserva",
-    element: <MinhaReserva />
-  },
-  {
-    path: "/formulario/:publicId",
-    element: <FormularioPublico />
-  },
-  {
-    path: "/login",
-    element: <LoginAdmin />
-  },
-   {
-    path: "/admin",
-    element:  <ProtectedRoute>
-              <Admin />
-            </ProtectedRoute>
-  }
-])
+]);

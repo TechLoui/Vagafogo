@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import heroImg1 from "../assets/hero/hero-1.jpg";
-import heroImg2 from "../assets/hero/hero-2.jpg";
+import heroImg1 from "../assets/hero/hero-1.webp";
+import heroImg1Mobile from "../assets/hero/hero-1-800.webp";
+import heroImg2 from "../assets/hero/hero-2.webp";
+import heroImg2Mobile from "../assets/hero/hero-2-800.webp";
 import { Magnetic } from "./Magnetic";
 
-const heroImages = [heroImg1, heroImg2];
+const heroImages = [
+  { src: heroImg1, mobileSrc: heroImg1Mobile },
+  { src: heroImg2, mobileSrc: heroImg2Mobile },
+];
 
 export function HeroSection() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -27,8 +32,12 @@ export function HeroSection() {
           const ativo = index === activeImageIndex;
           return (
             <img
-              key={image}
-              src={image}
+              key={image.src}
+              src={image.src}
+              srcSet={`${image.mobileSrc} 800w, ${image.src} 1440w`}
+              sizes="100vw"
+              width={1440}
+              height={2160}
               alt=""
               aria-hidden="true"
               fetchPriority={index === 0 ? "high" : "low"}
@@ -59,8 +68,7 @@ export function HeroSection() {
 
           {/* Título principal */}
           <h1
-            className="font-display mb-6 text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.1] tracking-tight text-white drop-shadow-2xl animate-hero-reveal"
-            style={{ animationDelay: "350ms" }}
+            className="font-display mb-6 text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.1] tracking-tight text-white drop-shadow-2xl"
           >
             Descubra o
             <br />
@@ -71,8 +79,7 @@ export function HeroSection() {
 
           {/* Subtítulo */}
           <p
-            className="mx-auto mb-10 max-w-2xl text-base leading-relaxed text-white/85 drop-shadow md:text-lg lg:text-xl animate-hero-reveal"
-            style={{ animationDelay: "650ms" }}
+            className="mx-auto mb-10 max-w-2xl text-base leading-relaxed text-white/85 drop-shadow md:text-lg lg:text-xl"
           >
             Uma experiência gastronômica única, aliada às maravilhas do cerrado brasileiro.
             Sabores que emocionam, natureza que encanta.
@@ -97,12 +104,12 @@ export function HeroSection() {
               </svg>
             </Link>
             </Magnetic>
-            <a
-              href="#brunch"
+            <Link
+              to="/brunch"
               className="inline-flex items-center gap-2 rounded-full border border-white/40 bg-white/8 px-8 py-4 text-sm font-semibold text-white backdrop-blur-sm transition-all duration-300 hover:bg-white hover:text-[#2D1E0F] hover:border-white sm:text-base"
             >
               Conheça o brunch
-            </a>
+            </Link>
           </div>
         </div>
       </div>

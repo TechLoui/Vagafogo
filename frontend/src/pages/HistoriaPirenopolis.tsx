@@ -4,11 +4,13 @@ import { Footer } from "../components/Footer";
 import { FloatingButtons } from "../components/FloatingButtons";
 import { Reveal } from "../components/Reveal";
 import { Magnetic } from "../components/Magnetic";
+import { PageBreadcrumbs } from "../components/PageBreadcrumbs";
 import { Spotlight } from "../components/Spotlight";
-import heroImg from "../assets/Carrossel-1.jpg";
-import carrossel2 from "../assets/Carrossel-2.jpg";
-import carrossel3 from "../assets/Carrossel-3.jpg";
-import trilhaImg from "../assets/trilhaecologica/trilhaecologica-3.jpg";
+import heroImg from "../assets/Carrossel-1.webp";
+import heroImgMobile from "../assets/Carrossel-1-800.webp";
+import carrossel2 from "../assets/Carrossel-2.webp";
+import carrossel3 from "../assets/Carrossel-3.webp";
+import trilhaImg from "../assets/trilhaecologica/trilhaecologica-2.jpg";
 import {
   FaGem,
   FaChurch,
@@ -35,12 +37,16 @@ export function HistoriaPirenopolis() {
       <Header />
       <FloatingButtons />
 
-      <main>
+      <main id="conteudo-principal" tabIndex={-1}>
         {/* ============ HERO ============ */}
         <section className="relative min-h-[80vh] flex items-center justify-center overflow-hidden">
           <div className="absolute inset-0">
             <img
               src={heroImg}
+              srcSet={`${heroImgMobile} 800w, ${heroImg} 1440w`}
+              sizes="100vw"
+              width={1440}
+              height={1166}
               alt=""
               aria-hidden="true"
               fetchPriority="high"
@@ -50,6 +56,14 @@ export function HistoriaPirenopolis() {
           </div>
 
           <div className="relative z-10 mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8 pt-24 pb-20 text-center">
+            <PageBreadcrumbs
+              items={[
+                { label: "Início", to: "/" },
+                { label: "Nossa história", to: "/historia" },
+                { label: "História de Pirenópolis" },
+              ]}
+              className="mb-7 text-white"
+            />
             <Reveal variant="up" once>
               <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.32em] text-[#E0B13C] mb-5">
                 <span className="h-px w-8 bg-[#E0B13C]" />
@@ -57,10 +71,10 @@ export function HistoriaPirenopolis() {
                 <span className="h-px w-8 bg-[#E0B13C]" />
               </span>
             </Reveal>
-            <Reveal variant="up" delay={200} once as="h1" className="font-display text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-2xl">
+            <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-2xl">
               A História de<br className="hidden sm:block" />
               <em className="not-italic text-[#E0B13C]"> Pirenópolis</em>
-            </Reveal>
+            </h1>
             <Reveal variant="up" delay={400} once as="p" className="mx-auto mt-8 max-w-2xl text-base md:text-lg text-white/85 leading-relaxed">
               Do arraial das minas de ouro à cidade turística — três séculos de ciclos, fé, arte e reinvenção no coração do cerrado.
             </Reveal>
@@ -304,7 +318,7 @@ export function HistoriaPirenopolis() {
                   <div className="relative rounded-3xl overflow-hidden shadow-2xl group">
                     <img
                       src={trilhaImg}
-                      alt="Rio das Almas — Pirenópolis"
+                      alt="Córrego entre pedras e mata preservada em Pirenópolis"
                       loading="lazy"
                       className="w-full h-80 lg:h-[440px] object-cover transition-transform duration-[1500ms] group-hover:scale-105"
                     />

@@ -1,8 +1,16 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import logo from "../assets/logo.jpg";
 import { BookingSection } from "../components/BookingSection";
 
 export function Reserva() {
+  const [searchParams] = useSearchParams();
+  const experienceParam = searchParams.get("experiencia");
+  const initialExperience =
+    experienceParam === "brunch" || experienceParam === "trilha"
+      ? experienceParam
+      : undefined;
+  const initialPackageId = searchParams.get("pacote")?.trim() || undefined;
+
   return (
     <div className="min-h-screen bg-[#F7FAEF]" style={{ background: "linear-gradient(160deg, #F7FAEF 0%, #f0ede6 50%, #F7FAEF 100%)" }}>
 
@@ -19,22 +27,27 @@ export function Reserva() {
         </Link>
       </div>
 
-      {/* Intro centralizada */}
-      <div className="mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8 pt-16 sm:pt-12 pb-2">
-        <div className="flex flex-col items-center text-center gap-3">
-          <img
-            src={logo}
-            alt="Vagafogo"
-            className="h-20 w-20 sm:h-24 sm:w-24 rounded-full border-4 border-[#8B4F23]/20 object-cover shadow-lg"
-            loading="eager"
-          />
-          <h1 className="font-display text-2xl sm:text-3xl md:text-4xl font-bold text-[#2D1E0F] leading-tight">
-            Reserve sua experiência no Vagafogo
-          </h1>
+      <main id="conteudo-principal" tabIndex={-1}>
+        {/* Intro centralizada */}
+        <div className="mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8 pt-16 sm:pt-12 pb-2">
+          <div className="flex flex-col items-center text-center gap-3">
+            <img
+              src={logo}
+              alt="Vagafogo"
+              className="h-20 w-20 sm:h-24 sm:w-24 rounded-full border-4 border-[#8B4F23]/20 object-cover shadow-lg"
+              loading="eager"
+            />
+            <h1 className="font-display text-2xl sm:text-3xl md:text-4xl font-bold text-[#2D1E0F] leading-tight">
+              Reserve sua experiência no Vagafogo
+            </h1>
+          </div>
         </div>
-      </div>
 
-      <BookingSection />
+        <BookingSection
+          initialExperience={initialExperience}
+          initialPackageId={initialPackageId}
+        />
+      </main>
 
       {/* Footer mínimo */}
       <div className="border-t border-[#8B4F23]/10 mt-8 py-5 text-center px-4">

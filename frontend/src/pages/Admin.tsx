@@ -3,7 +3,7 @@ import AdminDashboard from "../components/AdminDashboard.tsx";
 
 export function Admin() {
   return (
-    <main>
+    <main id="conteudo-principal" tabIndex={-1}>
       <AdminMainContentHeader />
       <AdminDashboard />
     </main>

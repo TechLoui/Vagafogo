@@ -52,22 +52,22 @@ export function Footer() {
             <h4 className="text-sm font-bold uppercase tracking-widest text-[#E0B13C] mb-4">Experiências</h4>
             <ul className="space-y-2.5">
               <li>
-                <a href="#brunch" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
+                <Link to="/brunch" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
                   <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
                   Brunch Gastronômico
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#trilha" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
+                <Link to="/trilha" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
                   <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
                   Trilha Mãe da Floresta
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="#educacao" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
+                <Link to="/educacao-ambiental" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
                   <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
                   Educação Ambiental
-                </a>
+                </Link>
               </li>
               <li>
                 <Link to="/historia" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
@@ -79,6 +79,12 @@ export function Footer() {
                 <Link to="/historia/pirenopolis" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
                   <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
                   História de Pirenópolis
+                </Link>
+              </li>
+              <li>
+                <Link to="/planeje-sua-visita" className="text-gray-300 text-sm hover:text-white transition-colors flex items-center gap-2">
+                  <span className="w-1 h-1 rounded-full bg-[#E0B13C]" />
+                  Planeje sua visita
                 </Link>
               </li>
               <li>
@@ -105,7 +111,15 @@ export function Footer() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <span>Pirenópolis, Goiás – Brasil</span>
+                <a
+                  href="https://www.google.com/maps/search/?api=1&query=R.%20do%20Frota%2C%20S%2FN%2C%20Alto%20do%20Carmo%2C%20Piren%C3%B3polis%20GO%2C%2072980-000"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-white transition-colors"
+                >
+                  R. do Frota, S/N, Alto do Carmo<br />
+                  Pirenópolis-GO · 72980-000
+                </a>
               </li>
               <li className="text-gray-300 text-sm flex items-start gap-2">
                 <svg className="w-4 h-4 mt-0.5 text-[#E0B13C] flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
@@ -162,7 +176,7 @@ export function Footer() {
           <p className="text-gray-400 text-xs">
             © {currentYear} Santuário Vagafogo. Todos os direitos reservados.
           </p>
-          <p className="text-gray-500 text-xs">
+          <p className="text-gray-400 text-xs">
             Pirenópolis · Goiás · Brasil
           </p>
         </div>

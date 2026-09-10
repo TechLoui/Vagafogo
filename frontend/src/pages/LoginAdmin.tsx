@@ -32,7 +32,7 @@ export function LoginAdmin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "linear-gradient(135deg, #F7FAEF 0%, #EDE8DF 100%)" }}>
+    <main id="conteudo-principal" tabIndex={-1} className="min-h-screen flex items-center justify-center p-4" style={{ background: "linear-gradient(135deg, #F7FAEF 0%, #EDE8DF 100%)" }}>
       <div className="max-w-4xl w-full flex flex-col md:flex-row rounded-3xl overflow-hidden shadow-2xl">
 
         {/* Painel esquerdo com branding */}
@@ -182,6 +182,6 @@ export function LoginAdmin() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

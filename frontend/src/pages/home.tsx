@@ -7,17 +7,15 @@ import { EducationSection } from "../components/EducationSection.tsx"
 import { Footer } from "../components/Footer.tsx"
 import { FloatingButtons } from "../components/FloatingButtons.tsx"
 import { Reveal } from "../components/Reveal.tsx"
-import { IntroVideo } from "../components/IntroVideo.tsx"
 import { Magnetic } from "../components/Magnetic.tsx"
 import { Link } from "react-router-dom"
 
 export function Home() {
   return (
     <>
-      <IntroVideo />
       <Header />
       <FloatingButtons />
-      <main>
+      <main id="conteudo-principal" tabIndex={-1}>
         <HeroSection />
         <FeatureSection />
         <BrunchSection />

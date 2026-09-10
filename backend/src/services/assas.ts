@@ -6,6 +6,16 @@ import { enviarEmailConfirmacaoReserva } from "./emailReservas";
 import { getDocs, collection, query, where, doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
+import {
+  PaymentAttemptContext,
+  PaymentIdempotencyKeyError,
+  aguardarTentativaPagamento,
+  concluirTentativaPagamento,
+  iniciarTentativaPagamento,
+  liberarTentativaPagamento,
+  normalizarChaveIdempotenciaPagamento,
+  renovarTentativaPagamento,
+} from "./paymentIdempotency";
 
 const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
 
@@ -163,6 +173,46 @@ const parseHorarioParaMinutos = (valor?: string | null) => {
   if (!Number.isFinite(horas) || !Number.isFinite(minutos)) return null;
   if (horas < 0 || horas > 23 || minutos < 0 || minutos > 59) return null;
   return horas * 60 + minutos;
+};
+
+const buscarCobrancaAsaasPorReferencia = async (externalReference: string) => {
+  const params = new URLSearchParams({
+    externalReference,
+    limit: "10",
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(
+      `https://api.asaas.com/v3/payments?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          access_token: process.env.ASAAS_API_KEY!,
+        },
+        signal: controller.signal,
+      }
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        `Falha ao consultar cobranca existente no Asaas (HTTP ${response.status}).`
+      );
+    }
+
+    const payments = Array.isArray(body?.data) ? body.data : [];
+    if (payments.length > 1) {
+      console.error("[asaas] Mais de uma cobranca para a mesma referencia externa.", {
+        externalReference,
+        paymentIds: payments.map((payment: any) => payment?.id).filter(Boolean),
+      });
+    }
+    return payments[0] ?? null;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 const normalizarVagasExtrasDisponibilidade = (mapa?: Record<string, unknown> | null) =>
@@ -552,6 +602,24 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   }
 
   // Impedir reservas em horários que já passaram no dia atual (horário de São Paulo)
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = normalizarChaveIdempotenciaPagamento(
+      req.get("Idempotency-Key")
+    );
+  } catch (error) {
+    const message =
+      error instanceof PaymentIdempotencyKeyError
+        ? error.message
+        : "Idempotency-Key invalida.";
+    res.status(400).json({
+      status: "erro",
+      code: "INVALID_IDEMPOTENCY_KEY",
+      error: message,
+    });
+    return;
+  }
+
   const minutosSelecionados = parseHorarioParaMinutos(horarioFormatado);
   if (minutosSelecionados !== null) {
     const hojeSp = new Intl.DateTimeFormat("en-CA", {
@@ -581,6 +649,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       }
     }
   }
+
+  let paymentAttempt: PaymentAttemptContext | null = null;
+  let paymentCreationStarted = false;
 
   try {
     const disponibilidadeRef = doc(db, "disponibilidade", data);
@@ -741,7 +812,60 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
     // ✅ Criar reserva no Firebase
     console.log("💾 Criando reserva no Firebase...");
+    let claim;
+    try {
+      claim = await iniciarTentativaPagamento(idempotencyKey, req.body);
+    } catch (error) {
+      console.error("[pagamento] Protecao de idempotencia indisponivel:", error);
+      res.status(503).json({
+        status: "erro",
+        code: "PAYMENT_IDEMPOTENCY_UNAVAILABLE",
+        error:
+          "Nao foi possivel iniciar o pagamento com seguranca. Tente novamente em instantes.",
+      });
+      return;
+    }
+
+    if (claim.type === "conflict") {
+      res.status(409).json({
+        status: "erro",
+        code: "IDEMPOTENCY_KEY_REUSED",
+        error:
+          "Os dados desta tentativa foram alterados enquanto um pagamento anterior ainda pode estar em andamento. Por seguranca, nenhuma nova cobranca foi enviada.",
+      });
+      return;
+    }
+
+    if (claim.type === "replay") {
+      res.set("Idempotent-Replayed", "true");
+      res.status(claim.response.httpStatus).json(claim.response.body);
+      return;
+    }
+
+    if (claim.type === "in_progress") {
+      const completed = await aguardarTentativaPagamento(
+        claim.documentId,
+        claim.requestHash
+      );
+      if (completed) {
+        res.set("Idempotent-Replayed", "true");
+        res.status(completed.httpStatus).json(completed.body);
+        return;
+      }
+
+      res.set("Retry-After", "5");
+      res.status(409).json({
+        status: "processando",
+        code: "PAYMENT_IN_PROGRESS",
+        error:
+          "Este pagamento ja esta sendo processado. Aguarde alguns segundos antes de consultar novamente.",
+      });
+      return;
+    }
+
+    paymentAttempt = claim.context;
     const reservaId = await criarReserva({
+      reservaId: paymentAttempt.reservaId,
       nome,
       cpf,
       email,
@@ -768,125 +892,151 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     console.log("✅ Reserva criada com ID:", reservaId);
 
     const dataHoje = new Date().toISOString().split("T")[0];
+    const splitConfig = getSplitConfig();
+    let cobrancaData: any = await buscarCobrancaAsaasPorReferencia(reservaId);
 
-    // 🔍 Verificar se o cliente já existe no Asaas (pelo CPF)
-    const customerSearch = await fetch(
-      `https://api.asaas.com/v3/customers?cpfCnpj=${cpfLimpo}`,
-      {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          access_token: process.env.ASAAS_API_KEY!,
-        },
-      }
-    );
-
-    const customerSearchData = await customerSearch.json();
-    let customerId: string | null = null;
-
-    if (customerSearchData?.data?.length > 0) {
-      customerId = customerSearchData.data[0].id;
-      console.log("🔁 Cliente encontrado:", customerId);
+    if (cobrancaData) {
+      console.warn("[asaas] Reutilizando cobranca ja existente.", {
+        paymentId: cobrancaData.id,
+        externalReference: reservaId,
+      });
     } else {
-      // 👤 Criar novo cliente
-      const customerPayload = {
-        name: nome,
-        email,
-        cpfCnpj: cpfLimpo,
-        phone: telefoneLimpo,
-        notificationDisabled: true,
+      // Verificar se o cliente ja existe no Asaas (pelo CPF).
+      const customerSearch = await fetch(
+        `https://api.asaas.com/v3/customers?cpfCnpj=${cpfLimpo}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            access_token: process.env.ASAAS_API_KEY!,
+          },
+        }
+      );
+      const customerSearchData = await customerSearch.json().catch(() => ({}));
+      if (!customerSearch.ok) {
+        throw new Error(
+          `Falha ao consultar cliente no Asaas (HTTP ${customerSearch.status}).`
+        );
+      }
+
+      let customerId: string | null = null;
+      if (customerSearchData?.data?.length > 0) {
+        customerId = customerSearchData.data[0].id;
+        console.log("Cliente encontrado:", customerId);
+      } else {
+        const customerPayload = {
+          name: nome,
+          email,
+          cpfCnpj: cpfLimpo,
+          phone: telefoneLimpo,
+          notificationDisabled: true,
+        };
+        const customerCreate = await fetch("https://api.asaas.com/v3/customers", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            access_token: process.env.ASAAS_API_KEY!,
+          },
+          body: JSON.stringify(customerPayload),
+        });
+        const customerData = await customerCreate.json().catch(() => ({}));
+
+        if (!customerCreate.ok) {
+          const errorResponse = {
+            status: "erro",
+            error:
+              customerData.errors?.[0]?.description || "Erro ao criar cliente",
+            details: customerData,
+          };
+          await concluirTentativaPagamento(paymentAttempt, {
+            httpStatus: 400,
+            body: errorResponse,
+          });
+          res.status(400).json(errorResponse);
+          return;
+        }
+
+        customerId = customerData.id;
+        console.log("Cliente criado:", customerId);
+      }
+
+      const paymentPayload: Record<string, unknown> = {
+        billingType,
+        customer: customerId,
+        value: valor,
+        dueDate: dataHoje,
+        description: `Cobranca de ${nome}`,
+        externalReference: reservaId,
       };
-      
-      console.log("👤 Criando cliente:", customerPayload);
-      
-      const customerCreate = await fetch("https://api.asaas.com/v3/customers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          access_token: process.env.ASAAS_API_KEY!,
-        },
-        body: JSON.stringify(customerPayload),
+
+      if (splitConfig) {
+        paymentPayload.split = [splitConfig];
+      }
+
+      if (
+        billingType === "CREDIT_CARD" &&
+        creditCardNormalizado &&
+        creditCardHolderNormalizado
+      ) {
+        paymentPayload.creditCard = creditCardNormalizado;
+        paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
+      }
+
+      console.log("INFO Criando pagamento no Asaas:", {
+        billingType,
+        customer: customerId,
+        value: valor,
+        dueDate: dataHoje,
+        externalReference: reservaId,
+        hasCreditCard: billingType === "CREDIT_CARD",
+        split: splitConfig
+          ? {
+              walletId: maskId(splitConfig.walletId),
+              percentualValue: splitConfig.percentualValue,
+            }
+          : null,
       });
 
-      const customerData = await customerCreate.json();
-      console.log("👤 Resposta criação cliente:", customerData);
+      // Uma instancia que perdeu o lease nao pode chegar ao POST financeiro.
+      await renovarTentativaPagamento(paymentAttempt);
+      paymentCreationStarted = true;
+      const paymentController = new AbortController();
+      const paymentTimeout = setTimeout(() => paymentController.abort(), 30_000);
+      let paymentResponse: Awaited<ReturnType<typeof fetch>>;
+      try {
+        paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+            access_token: process.env.ASAAS_API_KEY!,
+          },
+          body: JSON.stringify(paymentPayload),
+          signal: paymentController.signal,
+        });
+        cobrancaData = await paymentResponse.json().catch(() => ({}));
+      } finally {
+        clearTimeout(paymentTimeout);
+      }
 
-      if (!customerCreate.ok) {
-        console.error("❌ Erro ao criar cliente no Asaas:", {
-          status: customerCreate.status,
-          data: customerData
+      if (!paymentResponse.ok) {
+        const errorResponse = {
+          status: "erro",
+          error:
+            cobrancaData.errors?.[0]?.description ||
+            cobrancaData.message ||
+            "Erro ao criar cobranca",
+          details: cobrancaData,
+        };
+        await concluirTentativaPagamento(paymentAttempt, {
+          httpStatus: 400,
+          body: errorResponse,
         });
-        res.status(400).json({ 
-          status: "erro", 
-          error: customerData.errors?.[0]?.description || "Erro ao criar cliente",
-          details: customerData 
-        });
+        res.status(400).json(errorResponse);
         return;
       }
-
-      customerId = customerData.id;
-      console.log("🆕 Cliente criado:", customerId);
     }
 
-    // 💰 Criar pagamento com o customer correto
-    const paymentPayload: Record<string, unknown> = {
-      billingType,
-      customer: customerId,
-      value: valor,
-      dueDate: dataHoje,
-      description: `Cobranca de ${nome}`,
-      externalReference: reservaId,
-    };
-
-    const splitConfig = getSplitConfig();
-
-    if (splitConfig) {
-      paymentPayload.split = [splitConfig];
-    }
-
-    if (billingType === "CREDIT_CARD" && creditCardNormalizado && creditCardHolderNormalizado) {
-      paymentPayload.creditCard = creditCardNormalizado;
-      paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
-      // Log do holder info (sem dados do cartao) para debug de erros de validacao Asaas
-      console.log("INFO creditCardHolderInfo enviado:", {
-        name: creditCardHolderNormalizado.name,
-        email: creditCardHolderNormalizado.email,
-        cpfLen: creditCardHolderNormalizado.cpfCnpj?.length,
-        postalCode: creditCardHolderNormalizado.postalCode,
-        province: creditCardHolderNormalizado.province,
-        city: creditCardHolderNormalizado.city,
-        state: creditCardHolderNormalizado.state,
-        addressState: (creditCardHolderNormalizado as any).addressState,
-        phone: creditCardHolderNormalizado.phone?.length,
-      });
-    }
-
-    console.log("INFO Criando pagamento no Asaas:", {
-      billingType,
-      customer: customerId,
-      value: valor,
-      dueDate: dataHoje,
-      externalReference: reservaId,
-      hasCreditCard: billingType === "CREDIT_CARD",
-      split: splitConfig
-        ? {
-            walletId: maskId(splitConfig.walletId),
-            percentualValue: splitConfig.percentualValue,
-          }
-        : null,
-    });
-    
-    const paymentResponse = await fetch("https://api.asaas.com/v3/payments", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        accept: "application/json",
-        access_token: process.env.ASAAS_API_KEY!,
-      },
-      body: JSON.stringify(paymentPayload),
-    });
-
-    const cobrancaData = await paymentResponse.json();
     const splitRetornado =
       Array.isArray(cobrancaData?.split) && cobrancaData.split.length > 0;
     console.log("INFO Resposta do Asaas:", {
@@ -909,23 +1059,18 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       });
     }
 
-    if (!paymentResponse.ok) {
-      console.error("❌ Erro ao criar cobrança:", {
-        status: paymentResponse.status,
-        statusText: paymentResponse.statusText,
-        data: cobrancaData
-      });
-      res.status(400).json({ 
-        status: "erro", 
-        error: cobrancaData.errors?.[0]?.description || cobrancaData.message || "Erro ao criar cobrança",
-        details: cobrancaData 
-      });
-      return;
-    }
-
     if (billingType === "CREDIT_CARD" && !cobrancaData.invoiceUrl) {
       console.warn("⚠️ Invoice URL não retornada para cartão de crédito");
     }
+
+    if (!cobrancaData?.id) {
+      throw new Error("O Asaas nao retornou o identificador da cobranca.");
+    }
+
+    await updateDoc(doc(db, "reservas", reservaId), {
+      asaasPaymentId: cobrancaData.id,
+      formaPagamento: billingType,
+    });
 
     const statusPagamento = String(cobrancaData.status ?? "").toUpperCase();
     const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusPagamento);
@@ -1021,12 +1166,31 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       }
     }
 
+    await concluirTentativaPagamento(
+      paymentAttempt,
+      { httpStatus: 200, body: resposta },
+      cobrancaData.id
+    );
     console.log("✅ Resposta enviada:", resposta);
     res.status(200).json(resposta);
   } catch (error) {
     console.error("🔥 Erro inesperado ao criar cobrança:", error);
+    if (paymentAttempt) {
+      try {
+        // Depois que o POST ao adquirente comecou, uma falha de rede e ambigua:
+        // aguardamos antes de liberar a chave para dar tempo de a consulta por
+        // externalReference encontrar uma cobranca que possa ter sido criada.
+        await liberarTentativaPagamento(
+          paymentAttempt,
+          paymentCreationStarted ? 5 * 60_000 : 0
+        );
+      } catch (releaseError) {
+        console.error("[pagamento] Falha ao liberar tentativa:", releaseError);
+      }
+    }
     res.status(500).json({
       status: "erro",
+      code: "PAYMENT_PROCESSING_ERROR",
       error: "Erro interno ao processar a cobrança.",
     });
   }

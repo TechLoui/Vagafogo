@@ -209,7 +209,7 @@ export function MinhaReserva() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-screen-md px-4 sm:px-6 lg:px-8 pt-10 pb-16">
+      <main id="conteudo-principal" tabIndex={-1} className="mx-auto w-full max-w-screen-md px-4 sm:px-6 lg:px-8 pt-10 pb-16">
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-[#2D1E0F] leading-tight tracking-tight">
             Consulte sua reserva

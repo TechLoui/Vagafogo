@@ -17,6 +17,7 @@ export function Magnetic({ children, className = "", strength = 0.25 }: Magnetic
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = ref.current;
     if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     // Só ativa em dispositivos com cursor preciso
     if (!window.matchMedia("(pointer: fine)").matches) return;
     const rect = el.getBoundingClientRect();

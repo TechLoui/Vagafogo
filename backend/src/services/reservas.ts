@@ -1,5 +1,5 @@
 import { db } from "./firebase";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { v4 as uuidv4 } from "uuid";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 import { reservaEstaConfirmada } from "./reservaStatus";
@@ -89,6 +89,7 @@ const normalizarHorariosPorPacote = (horarios?: Record<string, string>) => {
 };
 
 export type CriarReservaPayload = {
+  reservaId?: string;
   nome: string;
   cpf: string;
   email: string;
@@ -115,6 +116,7 @@ export type CriarReservaPayload = {
 
 export async function criarReserva(payload: CriarReservaPayload): Promise<string> {
   const {
+    reservaId: reservaIdInformado,
     nome,
     cpf,
     email,
@@ -165,8 +167,11 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
   const comboIdNormalizado = comboId ? comboId.toString() : null;
   const horariosPorPacoteNormalizado = normalizarHorariosPorPacote(horariosPorPacote);
 
-  const reservaId = uuidv4();
+  const reservaId = reservaIdInformado?.trim() || uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
+  if (reservaIdInformado && (await getDoc(reservaRef)).exists()) {
+    return reservaId;
+  }
   const camposRetencao = obterCamposRetencaoReservaNaCriacao({ status });
 
   await setDoc(reservaRef, {

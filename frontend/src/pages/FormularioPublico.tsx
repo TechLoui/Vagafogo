@@ -1108,7 +1108,7 @@ export function FormularioPublico() {
         </Link>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-3xl px-4 pb-12 pt-2 sm:px-6 sm:pb-16 sm:pt-4">
+      <main id="conteudo-principal" tabIndex={-1} className="relative z-10 mx-auto w-full max-w-3xl px-4 pb-12 pt-2 sm:px-6 sm:pb-16 sm:pt-4">
         {renderStateContent()}
       </main>
 
