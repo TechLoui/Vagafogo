@@ -123,9 +123,9 @@ const SEO_PAGES = {
     ],
   },
   "/reservar": {
-    title: "Reservas | Brunch e Trilha no Santuário Vagafogo",
+    title: "Reservas | Brunch e Trilha na Vagafogo",
     description:
-      "Reserve online seu brunch, sua trilha ecológica ou a experiência completa no Santuário Vagafogo, em Pirenópolis, com data e horário escolhidos.",
+      "Reserve online seu brunch, sua trilha ecológica ou a experiência completa na Vagafogo, em Pirenópolis, com data e horário escolhidos.",
     canonicalPath: "/reservar",
     schemaType: "WebPage",
     breadcrumbs: [

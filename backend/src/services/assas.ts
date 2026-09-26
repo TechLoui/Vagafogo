@@ -149,6 +149,11 @@ const getSplitConfig = (): SplitConfig | null => {
 
 const somenteNumeros = (valor?: string) => (valor ? valor.replace(/\D/g, "") : "");
 const limparTexto = (valor?: string) => (typeof valor === "string" ? valor.trim() : "");
+const obterIpPagador = (req: Request) =>
+  (req.ip || req.socket.remoteAddress || "")
+    .replace(/^::ffff:/, "")
+    .split("%")[0]
+    .trim();
 const normalizarAnoValidade = (valor?: string) => {
   const numeros = somenteNumeros(valor);
   if (!numeros) return "";
@@ -980,6 +985,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       ) {
         paymentPayload.creditCard = creditCardNormalizado;
         paymentPayload.creditCardHolderInfo = creditCardHolderNormalizado;
+        paymentPayload.remoteIp = obterIpPagador(req);
       }
 
       console.log("INFO Criando pagamento no Asaas:", {
@@ -1001,7 +1007,10 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       await renovarTentativaPagamento(paymentAttempt);
       paymentCreationStarted = true;
       const paymentController = new AbortController();
-      const paymentTimeout = setTimeout(() => paymentController.abort(), 30_000);
+      const paymentTimeout = setTimeout(
+        () => paymentController.abort(),
+        billingType === "CREDIT_CARD" ? 65_000 : 30_000
+      );
       let paymentResponse: Awaited<ReturnType<typeof fetch>>;
       try {
         paymentResponse = await fetch("https://api.asaas.com/v3/payments", {

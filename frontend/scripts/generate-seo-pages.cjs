@@ -157,12 +157,13 @@ const pages = [
   },
   {
     outputPath: "reservar/index.html",
-    title: "Reservas | Brunch e Trilha no Santuário Vagafogo",
+    title: "Reservas | Brunch e Trilha na Vagafogo",
     description:
-      "Reserve online seu brunch, sua trilha ecológica ou a experiência completa no Santuário Vagafogo, em Pirenópolis, com data e horário escolhidos.",
+      "Reserve online seu brunch, sua trilha ecológica ou a experiência completa na Vagafogo, em Pirenópolis, com data e horário escolhidos.",
     canonicalPath: "/reservar",
     schemaType: "WebPage",
-    heading: "Reserve seu brunch e sua trilha no Santuário Vagafogo",
+    staticFallback: false,
+    heading: "Reserve seu brunch e sua trilha na Vagafogo",
     highlights: [
       "Escolha as experiências e a data da visita.",
       "Consulte horários, valores e disponibilidade atualizados.",
@@ -327,7 +328,7 @@ const resolveManifestAsset = (manifest, source) => {
 };
 
 const renderStaticFallback = (page) => {
-  if (page.noindex || !page.heading) return '<div id="root"></div>';
+  if (page.noindex || !page.heading || page.staticFallback === false) return '<div id="root"></div>';
 
   const primaryHref = page.canonicalPath === "/reservar" ? "/brunch" : "/reservar";
   const primaryLabel = page.canonicalPath === "/reservar" ? "Conhecer o brunch" : "Fazer reserva";

@@ -5,6 +5,8 @@ import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { ptBR } from "date-fns/locale";
 import { reservaContaParaOcupacao } from "../utils/reservaStatus";
+import brunchExperiencePhoto from "../assets/brunch/brunch-3-800.webp";
+import trailExperiencePhoto from "../assets/trilhaecologica/trilhaecologica-1.jpg";
 import {
   compararTextoNumericamente,
   normalizarBloqueiosDisponibilidade,
@@ -86,6 +88,8 @@ type Pacote = {
   aviso?: string;
   /** URL do ícone do pacote (PNG) salvo no Firebase Storage. */
   iconeUrl?: string;
+  /** Foto principal da experiência. Quando ausente, usa o acervo local oficial. */
+  imagemUrl?: string;
 };
 
 type Combo = {
@@ -153,6 +157,10 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 const formatCurrency = (valor: number) =>
   currencyFormatter.format(Number.isFinite(valor) ? valor : 0);
 
+const API_BASE = (
+  import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app"
+).replace(/\/$/, "");
+
 const criarChaveIdempotenciaPagamento = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `payment-${crypto.randomUUID()}`;
@@ -169,6 +177,21 @@ const normalizarTexto = (valor: string) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+const ehPerguntaJuntarMesa = (pergunta: string) => {
+  const perguntaNormalizada = normalizarTexto(pergunta);
+  return perguntaNormalizada.includes("juntar") && perguntaNormalizada.includes("mesa");
+};
+
+const ehCampoTitularOutraReserva = (pergunta: string) => {
+  const perguntaNormalizada = normalizarTexto(pergunta);
+  return (
+    perguntaNormalizada.includes("outra reserva") &&
+    (perguntaNormalizada.includes("quem") ||
+      perguntaNormalizada.includes("titular") ||
+      perguntaNormalizada.includes("nome"))
+  );
+};
+
 type ExperienceSlug = "brunch" | "trilha";
 
 const pacoteCorrespondeExperiencia = (pacote: Pacote, experiencia: ExperienceSlug) => {
@@ -180,6 +203,14 @@ const pacoteCorrespondeExperiencia = (pacote: Pacote, experiencia: ExperienceSlu
   }
 
   return tipo.includes("trilha") || tipo.includes("natureza") || nome.includes("trilha");
+};
+
+const obterFotoOficialPacote = (pacote: Pacote) => {
+  const fotoCadastrada = pacote.imagemUrl?.trim();
+  if (fotoCadastrada) return fotoCadastrada;
+  if (pacoteCorrespondeExperiencia(pacote, "brunch")) return brunchExperiencePhoto;
+  if (pacoteCorrespondeExperiencia(pacote, "trilha")) return trailExperiencePhoto;
+  return "";
 };
 
 const obterChaveTipo = (tipo: TipoCliente) => tipo.id ?? normalizarTexto(tipo.nome);
@@ -503,8 +534,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const paymentSubmissionLockRef = useRef(false);
   const paymentIdempotencyKeyRef = useRef<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
-  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>("CREDIT_CARD");
+  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>("PIX");
   const [modalReembolsoAberto, setModalReembolsoAberto] = useState<boolean>(false);
+  const [confirmacaoJuntarMesa, setConfirmacaoJuntarMesa] = useState<{
+    chave: string;
+    condicaoEsperada?: string;
+  } | null>(null);
+  const [segundosJuntarMesa, setSegundosJuntarMesa] = useState(5);
+  const [modalLogisticaAberto, setModalLogisticaAberto] = useState(false);
+  const [segundosLogistica, setSegundosLogistica] = useState(5);
+  const avisoLogisticaExibidoRef = useRef(false);
   const [cartaoNome, setCartaoNome] = useState<string>("");
   const [cartaoNumero, setCartaoNumero] = useState<string>("");
   const [cartaoValidade, setCartaoValidade] = useState<string>("");
@@ -537,6 +576,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const cartaoRef = useRef<HTMLDivElement | null>(null);
   const paymentMethodRef = useRef<HTMLDivElement | null>(null);
   const paymentFormRef = useRef<HTMLDivElement | null>(null);
+  const checkoutColumnRef = useRef<HTMLDivElement | null>(null);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
 
   // PIX
@@ -554,6 +595,44 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setCartaoResultado(null);
     setPixCopiado(false);
   }, [formaPagamento]);
+
+  useEffect(() => {
+    const temResultado = Boolean(
+      checkoutUrl || pixKey || qrCodeImage || cartaoResultado
+    );
+    if (!temResultado) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const container = checkoutColumnRef.current;
+      const target = paymentCardRef.current;
+      if (!container || !target) return;
+
+      const containerTop = container.getBoundingClientRect().top;
+      const targetTop = target.getBoundingClientRect().top;
+      container.scrollTo({
+        top: Math.max(0, container.scrollTop + targetTop - containerTop - 8),
+        behavior: "smooth",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [cartaoResultado, checkoutUrl, pixKey, qrCodeImage]);
+
+  useEffect(() => {
+    if (!confirmacaoJuntarMesa || segundosJuntarMesa <= 0) return;
+    const timeoutId = window.setTimeout(() => {
+      setSegundosJuntarMesa((segundos) => Math.max(segundos - 1, 0));
+    }, 1000);
+    return () => window.clearTimeout(timeoutId);
+  }, [confirmacaoJuntarMesa, segundosJuntarMesa]);
+
+  useEffect(() => {
+    if (!modalLogisticaAberto || segundosLogistica <= 0) return;
+    const timeoutId = window.setTimeout(() => {
+      setSegundosLogistica((segundos) => Math.max(segundos - 1, 0));
+    }, 1000);
+    return () => window.clearTimeout(timeoutId);
+  }, [modalLogisticaAberto, segundosLogistica]);
   const cartaoBrand = useMemo(() => detectarBandeiraCartao(cartaoNumero), [cartaoNumero]);
   const cartaoBrandInfo = useMemo(
     () => (cartaoBrand ? cardBrandConfigs.find((brand) => brand.id === cartaoBrand) ?? null : null),
@@ -569,9 +648,13 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     ? cartaoNome.trim().toUpperCase()
     : "NOME NO CARTAO";
   const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
+  const pixGerado =
+    formaPagamento === "PIX" && Boolean(checkoutUrl || pixKey || qrCodeImage);
+  const pagamentoCartaoConcluido =
+    formaPagamento === "CREDIT_CARD" && cartaoResultado?.status === "success";
   const bloqueiaEnvioCartao =
     formaPagamento === "CREDIT_CARD" &&
-    ["processing", "pending"].includes(cartaoResultado?.status ?? "");
+    ["processing", "pending", "success"].includes(cartaoResultado?.status ?? "");
 
   useEffect(() => {
     setCartaoCvv((prev) => prev.slice(0, cartaoCvvMaxLength));
@@ -594,7 +677,13 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setSubPassoParticipantes(0);
     setTemPet(null);
     setCheckoutUrl(null);
-    setFormaPagamento("CREDIT_CARD");
+    setFormaPagamento("PIX");
+    setModalReembolsoAberto(false);
+    setConfirmacaoJuntarMesa(null);
+    setSegundosJuntarMesa(5);
+    setModalLogisticaAberto(false);
+    setSegundosLogistica(5);
+    avisoLogisticaExibidoRef.current = false;
     setCartaoNome("");
     setCartaoNumero("");
     setCartaoValidade("");
@@ -612,6 +701,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setQrCodeImage(null);
     setExpirationDate(null);
     setPixCopiado(false);
+    setCartaoResultado(null);
   };
 
 
@@ -666,7 +756,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       }
       case "telefone": {
         const valor = telefone.trim();
-        if (!valor) return "";
+        if (!valor) return "Informe seu telefone com DDD.";
         const digits = onlyNumbers(valor);
         if (digits.length < 10) return "Digite um telefone válido com DDD.";
         return "";
@@ -897,8 +987,10 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           aceitaPet: d.aceitaPet !== false,
           modoHorario: d.modoHorario || 'lista',
           horarioInicio: d.horarioInicio || '',
-        horarioFim: d.horarioFim || '',
+          horarioFim: d.horarioFim || '',
           perguntasPersonalizadas: Array.isArray(d.perguntasPersonalizadas) ? d.perguntasPersonalizadas : [],
+          iconeUrl: typeof d.iconeUrl === "string" ? d.iconeUrl : "",
+          imagemUrl: typeof d.imagemUrl === "string" ? d.imagemUrl : "",
       }));
         
         setTiposClientes(tiposData);
@@ -1120,6 +1212,65 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         c.pacoteIds.every((id) => selectedPackages.includes(id))
     );
   }, [combos, selectedPackages]);
+
+  const pacoteBrunchSelecionado = useMemo(
+    () => selectedPacotes.find((pacote) => pacoteCorrespondeExperiencia(pacote, "brunch")),
+    [selectedPacotes]
+  );
+  const pacoteTrilhaSelecionado = useMemo(
+    () => selectedPacotes.find((pacote) => pacoteCorrespondeExperiencia(pacote, "trilha")),
+    [selectedPacotes]
+  );
+  const comboBrunchTrilhaAtivo = Boolean(pacoteBrunchSelecionado && pacoteTrilhaSelecionado);
+  const horarioBrunchSelecionado = pacoteBrunchSelecionado?.id
+    ? horariosPorPacote[pacoteBrunchSelecionado.id] ?? ""
+    : "";
+  const faixaHorarioTrilha =
+    pacoteTrilhaSelecionado?.horarioInicio && pacoteTrilhaSelecionado?.horarioFim
+      ? `das ${pacoteTrilhaSelecionado.horarioInicio} às ${pacoteTrilhaSelecionado.horarioFim}`
+      : "entre a abertura e o fechamento";
+
+  useEffect(() => {
+    if (!comboBrunchTrilhaAtivo) {
+      avisoLogisticaExibidoRef.current = false;
+      setModalLogisticaAberto(false);
+      setSegundosLogistica(5);
+      return;
+    }
+
+    if (!avisoLogisticaExibidoRef.current) {
+      avisoLogisticaExibidoRef.current = true;
+      setSegundosLogistica(5);
+      setModalLogisticaAberto(true);
+    }
+  }, [comboBrunchTrilhaAtivo]);
+
+  const abrirModalLogistica = () => {
+    setSegundosLogistica(5);
+    setModalLogisticaAberto(true);
+  };
+
+  const renderAvisoLogisticaCombo = () => (
+    <button
+      type="button"
+      onClick={abrirModalLogistica}
+      aria-label="Orientação para organizar o brunch e a trilha"
+      className="group w-full rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-amber-50 px-3 py-2 text-left shadow-sm transition hover:border-sky-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-sky-300 sm:py-2.5"
+    >
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-sky-100 text-base" aria-hidden="true">
+          🕐
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold text-[#2D1E0F] sm:text-sm">Planeje seu Brunch + Trilha</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-slate-600 sm:text-xs">
+            Brunch com hora marcada e 15 min de tolerância · Trilha livre {faixaHorarioTrilha}
+          </p>
+        </div>
+        <span className="hidden shrink-0 text-[11px] font-bold text-sky-700 group-hover:underline sm:inline">Ver orientação</span>
+      </div>
+    </button>
+  );
 
   // Grupos de participação simplificados: sempre 1 grupo único.
   // - Se a seleção bate com um combo: grupo combo (com preço do combo)
@@ -1595,31 +1746,17 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   ]);
 
   useEffect(() => {
-    const target =
-      etapa === 0
-        ? pacotesRef.current
-        : etapa === 1
-        ? dataRef.current ?? horarioRef.current
-        : etapa === 2
-        ? participantesRef.current ?? petRef.current
-        : etapa === 3
-        ? perguntasRef.current ?? participantesRef.current
-        : subEtapaPagamento === "metodo"
-        ? paymentMethodRef.current
-        : paymentFormRef.current ?? nomeRef.current ?? cartaoRef.current;
-
-    if (!target) return;
     const timeoutId = window.setTimeout(() => {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
+      checkoutColumnRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }, 50);
     return () => window.clearTimeout(timeoutId);
   }, [etapa, subEtapaPagamento]);
 
   if (loadingPacotes) {
     return (
-      <section id="reservas" className="py-10">
-        <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-3xl rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+      <section id="reservas" className="flex h-full items-center justify-center p-4">
+        <div className="w-full max-w-xl">
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
               Reserva
             </p>
@@ -1637,9 +1774,9 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
   if (pacotes.length === 0) {
     return (
-      <section id="reservas" className="py-10">
-        <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-3xl rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+      <section id="reservas" className="flex h-full items-center justify-center p-4">
+        <div className="w-full max-w-xl">
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
               Reserva
             </p>
@@ -1846,6 +1983,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setHorario("");
     setHorariosPorPacote({});
     setTemPet(null);
+    setConfirmacaoJuntarMesa(null);
+    setSegundosJuntarMesa(5);
     setFieldError("pacotes");
     setFieldError("data");
     setFieldError("horario");
@@ -1900,6 +2039,21 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     });
   };
 
+  const abrirAvisoJuntarMesa = (chave: string, condicaoEsperada?: string) => {
+    setConfirmacaoJuntarMesa({ chave, condicaoEsperada });
+    setSegundosJuntarMesa(5);
+  };
+
+  const confirmarJuntarMesa = () => {
+    if (!confirmacaoJuntarMesa || segundosJuntarMesa > 0) return;
+    atualizarRespostaBase(
+      confirmacaoJuntarMesa.chave,
+      "sim",
+      confirmacaoJuntarMesa.condicaoEsperada
+    );
+    setConfirmacaoJuntarMesa(null);
+  };
+
   const montarRespostasPersonalizadas = (): {
     respostas: PerguntaPersonalizadaRespostaPayload[];
     erro?: string;
@@ -1908,7 +2062,20 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     for (const pacote of selectedPacotes) {
       if (!pacote.id) continue;
       const perguntas = pacote.perguntasPersonalizadas ?? [];
+      const perguntaJuntarMesa = perguntas.find((pergunta) =>
+        ehPerguntaJuntarMesa(pergunta.pergunta)
+      );
+      const respostaJuntarMesa = perguntaJuntarMesa
+        ? respostasPersonalizadas[`${pacote.id}-${perguntaJuntarMesa.id}`]?.resposta
+        : undefined;
       for (const pergunta of perguntas) {
+        if (
+          perguntaJuntarMesa &&
+          ehCampoTitularOutraReserva(pergunta.pergunta) &&
+          respostaJuntarMesa !== "sim"
+        ) {
+          continue;
+        }
         const chave = `${pacote.id}-${pergunta.id}`;
         const registro = respostasPersonalizadas[chave];
         let valorBase = registro?.resposta ?? "";
@@ -1958,7 +2125,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
         if (pergunta.perguntaCondicional) {
           const cond = pergunta.perguntaCondicional;
-          const condicaoAtiva = valorBase === cond.condicao;
+          const condicaoAtiva =
+            valorBase === (ehPerguntaJuntarMesa(pergunta.pergunta) ? "sim" : cond.condicao);
           if (condicaoAtiva) {
             let valorCondicional = registro?.condicional ?? "";
             if (cond.tipo === "texto") {
@@ -2347,7 +2515,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       return;
     }
 
-    if (paymentSubmissionLockRef.current || loading || bloqueiaEnvioCartao) {
+    if (paymentSubmissionLockRef.current || loading || bloqueiaEnvioCartao || pixGerado) {
       return;
     }
 
@@ -2488,7 +2656,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         paymentIdempotencyKeyRef.current ?? criarChaveIdempotenciaPagamento();
       paymentIdempotencyKeyRef.current = idempotencyKey;
 
-      const rawResponse = await fetch("https://vagafogo-production.up.railway.app/criar-cobranca", {
+      const rawResponse = await fetch(`${API_BASE}/criar-cobranca`, {
         method: "POST",
         headers: {
           accept: 'application/json',
@@ -2571,19 +2739,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
             message: mensagemResultado,
           });
           if (pagamentoConfirmado) {
-            resetFormulario();
+            // Preserva o resumo ate o visitante iniciar uma nova reserva,
+            // removendo apenas os dados sensiveis do cartao da interface.
+            setCartaoNome("");
+            setCartaoNumero("");
+            setCartaoValidade("");
+            setCartaoCvv("");
           } else if (pagamentoNegado) {
             paymentIdempotencyKeyRef.current = null;
           }
         }
-
-        // Scroll automático para o card de pagamento
-        setTimeout(() => {
-          paymentCardRef.current?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center'
-          });
-        }, 100);
 
         // Mostrar mensagem sobre carteirinha bariátrica
         if (bariatrica > 0) {
@@ -2642,12 +2807,12 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       : "Selecione os pacotes para continuar.";
 
   const dadosPessoaisPagamento = (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div>
         <h3 className="text-sm font-bold text-slate-800 mb-1">Seus dados</h3>
         <p className="text-xs text-slate-500">Usados para identificação e envio da confirmação.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
             Nome Completo <span className="text-red-500">*</span>
@@ -2719,7 +2884,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
-            Telefone / WhatsApp
+            Telefone / WhatsApp <span className="text-red-500">*</span>
           </label>
           <input
             type="tel"
@@ -2735,6 +2900,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
             inputMode="tel"
             autoComplete="tel"
             maxLength={15}
+            required
           />
           {formErrors.telefone && (
             <p className="mt-1 text-sm text-red-600">{formErrors.telefone}</p>
@@ -2938,117 +3104,125 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   );
 
   const resumoCard = (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-md">
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-        Resumo
-      </p>
-
-      <div className="mt-4 space-y-4">
-        <div>
-          <p className="text-xs font-semibold uppercase text-slate-500">Atividades</p>
-          {pacotesResumo.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-sm text-slate-700">
-              {pacotesResumo.slice(0, 3).map((nomePacote) => (
-                <li key={nomePacote} className="truncate">
-                  {nomePacote}
-                </li>
-              ))}
-              {pacotesResumo.length > 3 && (
-                <li className="text-slate-500">
-                  + {pacotesResumo.length - 3} outro(s)
-                </li>
-              )}
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm text-slate-600">
-              Selecione os pacotes para continuar.
-            </p>
-          )}
-          {comboAtivo && (
-            <p className="mt-2 text-xs font-semibold text-emerald-700">
-              Combo: {comboAtivo.nome}
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">Data</p>
-            <p className="mt-1 text-slate-700">
-              {selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">Horário</p>
-            <p className="mt-1 text-slate-700">{selectedDay ? horarioResumo : "—"}</p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">
-              Participantes
-            </p>
-            <p className="mt-1 text-slate-700">
-              {totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">Pagamento</p>
-            <p className="mt-1 text-slate-700">
-              {formaPagamento === "PIX" ? "PIX" : "Cartão"}
-            </p>
-          </div>
-        </div>
+    <div className="overflow-hidden rounded-3xl border border-[#8B4F23]/15 bg-white shadow-lg shadow-[#2D1E0F]/10">
+      <div className="border-b border-[#8B4F23]/10 bg-gradient-to-r from-[#F7FAEF] via-white to-[#E0B13C]/10 px-5 py-4">
+        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8B4F23]">Resumo da reserva</p>
+        <p className="mt-1 text-sm text-slate-500">Confira sua experiência antes de continuar.</p>
       </div>
 
-      <div className="mt-5 flex items-baseline justify-between rounded-2xl bg-slate-50 px-4 py-3">
-        <span className="text-sm font-semibold text-slate-700">Total</span>
-        <span className="text-xl font-bold text-emerald-700">
-          {formatCurrency(totalResumo)}
-        </span>
+      <div className="space-y-4 p-5">
+        <div className="space-y-2">
+          {selectedPacotes.length > 0 ? (
+            selectedPacotes.slice(0, 3).map((pacote) => {
+              const fotoPacote = obterFotoOficialPacote(pacote);
+              return (
+                <div key={pacote.id ?? pacote.nome} className="flex items-center gap-3 rounded-2xl bg-[#F7FAEF]/80 p-2">
+                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-[#EADFCF] shadow-sm">
+                    {fotoPacote ? (
+                      <img src={fotoPacote} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full items-center justify-center text-2xl" aria-hidden="true">{pacote.emoji || "🌿"}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-[#2D1E0F]">{pacote.nome}</p>
+                    <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-[#8B4F23]/65">
+                      {pacoteCorrespondeExperiencia(pacote, "brunch") ? "Gastronomia" : "Natureza"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <p className="rounded-2xl bg-slate-50 px-3 py-4 text-sm text-slate-600">Selecione as experiências para continuar.</p>
+          )}
+          {selectedPacotes.length > 3 && (
+            <p className="text-xs text-slate-500">+ {selectedPacotes.length - 3} outra(s) experiência(s)</p>
+          )}
+          {comboAtivo && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+              <span aria-hidden="true">✓</span>
+              <span className="leading-snug">Combo aplicado: {comboAtivo.nome}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-sm">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data</p>
+            <p className="mt-0.5 font-semibold text-slate-700">{selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Horário</p>
+            <p className="mt-0.5 truncate font-semibold text-slate-700">{selectedDay ? horarioResumo : "—"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Participantes</p>
+            <p className="mt-0.5 font-semibold text-slate-700">{totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pagamento</p>
+            <p className="mt-0.5 font-semibold text-slate-700">{formaPagamento === "PIX" ? "PIX" : "Cartão"}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between rounded-2xl bg-gradient-to-r from-[#8B4F23] to-[#A8642D] px-4 py-3 text-white shadow-md shadow-[#8B4F23]/20">
+          <span className="text-xs font-semibold uppercase tracking-wider text-white/75">Total</span>
+          <span className="text-xl font-bold">{formatCurrency(totalResumo)}</span>
+        </div>
       </div>
     </div>
   );
 
   const resumoCardMobile = (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            Resumo
-          </p>
-          <p className="mt-1 truncate text-sm font-semibold text-slate-800">
-            {atividadesResumoMobile}
-          </p>
+    <div className="rounded-2xl border border-[#8B4F23]/15 bg-white p-3 shadow-md shadow-[#2D1E0F]/5">
+      <div className="flex items-center gap-2.5">
+        {selectedPacotes.length > 0 && (
+          <div className="flex shrink-0 -space-x-2">
+            {selectedPacotes.slice(0, 2).map((pacote) => {
+              const fotoPacote = obterFotoOficialPacote(pacote);
+              return fotoPacote ? (
+                <img
+                  key={pacote.id ?? pacote.nome}
+                  src={fotoPacote}
+                  alt=""
+                  className="h-10 w-10 rounded-xl border-2 border-white object-cover shadow-sm"
+                />
+              ) : (
+                <span key={pacote.id ?? pacote.nome} className="flex h-10 w-10 items-center justify-center rounded-xl border-2 border-white bg-[#F7FAEF] text-lg shadow-sm" aria-hidden="true">
+                  {pacote.emoji || "🌿"}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#8B4F23]">Resumo da reserva</p>
+          <p className="truncate text-xs font-semibold text-slate-800">{atividadesResumoMobile}</p>
         </div>
-        <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalResumo)}</p>
+        <p className="shrink-0 text-base font-bold text-emerald-700">{formatCurrency(totalResumo)}</p>
       </div>
-      <div className="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-xs text-slate-600 sm:grid-cols-2">
+      <div className="mt-2 grid grid-cols-3 gap-2 border-t border-slate-100 pt-2 text-[10px] text-slate-600">
         <p>
-          <span className="font-semibold text-slate-700">Data:</span>{" "}
-          {selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}
+          <span className="block font-semibold text-slate-400">Data</span>
+          <span className="font-semibold text-slate-700">{selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—"}</span>
         </p>
         <p>
-          <span className="font-semibold text-slate-700">Horário:</span>{" "}
-          {selectedDay ? horarioResumo : "—"}
+          <span className="block font-semibold text-slate-400">Horário</span>
+          <span className="font-semibold text-slate-700">{selectedDay ? horarioResumo : "—"}</span>
         </p>
         <p>
-          <span className="font-semibold text-slate-700">Participantes:</span>{" "}
-          {totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}
-        </p>
-        <p>
-          <span className="font-semibold text-slate-700">Pagamento:</span>{" "}
-          {formaPagamento === "PIX" ? "PIX" : "Cartão"}
+          <span className="block font-semibold text-slate-400">Pessoas</span>
+          <span className="font-semibold text-slate-700">{totalParticipantesSelecionados > 0 ? totalParticipantesSelecionados : "—"}</span>
         </p>
       </div>
-      {comboAtivo && (
-        <p className="mt-2 text-xs font-semibold text-emerald-700">Combo: {comboAtivo.nome}</p>
-      )}
     </div>
   );
 
   const etapasCardDesktop = (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-md">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-md">
       <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Etapas</p>
-      <div className="mt-4 space-y-2">
+      <div className="mt-3 space-y-1.5">
         {wizardSteps.map((stepInfo, idx) => {
           const ativo = idx === etapa;
           const disponivel = idx <= etapa;
@@ -3058,7 +3232,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
               type="button"
               disabled={!disponivel}
               onClick={() => disponivel && setEtapa(idx as EtapaReserva)}
-              className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
+              className={`flex w-full items-center gap-2.5 rounded-xl border px-3 py-1.5 text-left transition ${
                 ativo
                   ? "border-[#8B4F23]/30 bg-[#8B4F23]/5"
                   : disponivel
@@ -3067,7 +3241,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
               }`}
             >
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
                   ativo
                     ? "bg-[#8B4F23] text-white"
                     : disponivel
@@ -3089,25 +3263,28 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   );
 
   return (
-    <section id="reservas" className="py-8 pb-16">
-      <div className="mx-auto w-full max-w-screen-xl px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl md:max-w-2xl lg:max-w-5xl">
-          <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div>
+    <section id="reservas" className="h-full min-h-0 py-2 sm:py-3 lg:py-4">
+      <div className="mx-auto h-full w-full max-w-screen-xl px-2 sm:px-4 lg:px-6">
+        <div className="mx-auto h-full max-w-6xl">
+          <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_280px] xl:grid-cols-[minmax(0,1fr)_300px]">
+            <div
+              ref={checkoutColumnRef}
+              className="scrollbar-none h-full min-h-0 overflow-y-auto overscroll-contain"
+            >
               <form
                 onSubmit={handleSubmit}
                 noValidate
-                className="rounded-2xl sm:rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-4 shadow-2xl shadow-[#8B4F23]/5 sm:p-7 md:p-8 relative overflow-hidden flex flex-col min-h-[calc(100svh-180px)] md:min-h-[calc(100svh-220px)] lg:min-h-0"
+                className={`${pagamentoCartaoConcluido ? "hidden" : "relative flex"} min-h-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-3 shadow-xl shadow-[#8B4F23]/10 sm:p-4 lg:p-5`}
               >
-                <div className="mb-6 sm:mb-8">
+                <div className="mb-3 shrink-0 sm:mb-4">
                   {/* Stepper bolinhas conectadas — sempre visível */}
-                  <div className="relative flex items-center justify-between px-1 mb-5">
+                  <div className="relative mb-3 flex items-center justify-between px-1">
                     {/* Linha de progresso atrás das bolinhas */}
-                    <div className="absolute left-4 right-4 top-1/2 -translate-y-1/2 h-0.5 bg-slate-200 rounded-full" aria-hidden="true" />
+                    <div className="absolute left-3.5 right-3.5 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-slate-200" aria-hidden="true" />
                     <div
-                      className="absolute left-4 top-1/2 -translate-y-1/2 h-0.5 rounded-full transition-all duration-500"
+                      className="absolute left-3.5 top-1/2 h-0.5 -translate-y-1/2 rounded-full transition-all duration-500"
                       style={{
-                        width: `calc((100% - 2rem) * ${etapa / Math.max(wizardSteps.length - 1, 1)})`,
+                        width: `calc((100% - 1.75rem) * ${etapa / Math.max(wizardSteps.length - 1, 1)})`,
                         background: "linear-gradient(90deg, #8B4F23, #A05D2B)",
                       }}
                       aria-hidden="true"
@@ -3127,7 +3304,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                           title={stepInfo.title}
                         >
                           <span
-                            className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition-all duration-300 ring-4 ${
+                            className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold transition-all duration-300 ring-[3px] ${
                               ativo
                                 ? "bg-gradient-to-br from-[#8B4F23] to-[#A05D2B] text-white ring-[#E0B13C]/30 shadow-lg scale-110"
                                 : concluida
@@ -3143,7 +3320,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                               idx + 1
                             )}
                           </span>
-                          <span className={`mt-1.5 text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider transition-colors hidden sm:block ${
+                          <span className={`mt-1 text-[9px] font-semibold uppercase tracking-wider transition-colors hidden sm:block ${
                             ativo ? "text-[#8B4F23]" : concluida ? "text-slate-600" : "text-slate-400"
                           }`}>
                             {stepInfo.title}
@@ -3154,15 +3331,17 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                   </div>
 
                   {/* Título da etapa atual */}
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-[#8B4F23]">
-                      Etapa {etapa + 1} de {wizardSteps.length}
-                    </p>
-                    <h2 className="mt-1 text-xl font-bold text-[#2D1E0F]">
-                      {wizardSteps[etapa].title}
-                    </h2>
+                  <div className="flex items-end justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8B4F23]">
+                        Etapa {etapa + 1} de {wizardSteps.length}
+                      </p>
+                      <h2 className="mt-0.5 text-lg font-bold leading-tight text-[#2D1E0F] sm:text-xl">
+                        {wizardSteps[etapa].title}
+                      </h2>
+                    </div>
                     {wizardSteps[etapa].description && (
-                      <p className="mt-1 text-sm text-slate-500">
+                      <p className="hidden max-w-[52%] text-right text-xs leading-snug text-slate-500 sm:block">
                         {wizardSteps[etapa].description}
                       </p>
                     )}
@@ -3170,11 +3349,11 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                 </div>
 
                 {/* Wrapper de conteúdo — flex-1 com scroll interno no mobile */}
-                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden lg:overflow-visible lg:flex-none">
+                <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-x-hidden pr-0.5 sm:pr-1">
 
                 {/* ============ ETAPA 1 — DATA ============ */}
                 {etapa === 1 && (
-                  <div className="mb-6">
+                  <div className="pb-1">
                     <div ref={dataRef} className="flex justify-center">
                       <DayPicker
                         mode="single"
@@ -3182,7 +3361,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         onSelect={handleDaySelect}
                         disabled={[{ before: todayStart }, (day) => !hasDisponibilidadeNoDia(day)]}
                         locale={ptBR}
-                        className="rdp-vagafogo border border-slate-200 rounded-2xl p-4 shadow-sm bg-white"
+                        className="rdp-vagafogo rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:p-3"
                         modifiers={{
                           blocked: (day) => isBlockedDay(day)
                         }}
@@ -3208,31 +3387,34 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                 {/* ============ ETAPA 0 — PACOTES (seleção simples) ============ */}
                 {etapa === 0 && (
-                  <div ref={pacotesRef} className="space-y-5">
+                  <div ref={pacotesRef} className="space-y-2.5 pb-1 sm:space-y-3">
                     {initialExperience && selectedPacotes.some((pacote) =>
                       pacoteCorrespondeExperiencia(pacote, initialExperience)
                     ) && (
                       <div
                         role="status"
-                        className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-800"
+                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800"
                       >
                         A opção de {initialExperience === "brunch" ? "brunch" : "trilha"} já está selecionada. Confira os valores e altere a escolha se quiser combinar experiências.
                       </div>
                     )}
                     {/* PACOTES — checkboxes simples */}
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-[#8B4F23] mb-2.5 flex items-center gap-2">
+                      <p className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#8B4F23]">
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8B4F23]" />
                         Atividades
                       </p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
                         {pacotes.map((pacote) => {
                           const selecionado = selectedPackages.includes(pacote.id!);
-                          const indisponivelNoDia = Boolean(
-                            selectedDay && pacote.id && disponibilidadePacotesNoDia[pacote.id] === false
-                          );
-                          const desabilitado = indisponivelNoDia && !selecionado;
-                          return (
+                          const fotoPacote = obterFotoOficialPacote(pacote);
+                           const indisponivelNoDia = Boolean(
+                             selectedDay && pacote.id && disponibilidadePacotesNoDia[pacote.id] === false
+                           );
+                           const desabilitado = indisponivelNoDia && !selecionado;
+                           const sugerirSelecaoAdicional =
+                             selectedPackages.length === 1 && !selecionado && !desabilitado;
+                           return (
                             <div
                               key={pacote.id}
                               role="checkbox"
@@ -3245,28 +3427,60 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                 event.preventDefault();
                                 handlePackageToggle(pacote.id!);
                               }}
-                              className={`relative rounded-2xl border-2 p-4 transition-all duration-300 ${
+                              className={`group relative overflow-hidden rounded-2xl border-2 text-left transition-all duration-300 ${
                                 desabilitado
                                   ? "border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed"
-                                  : selecionado
-                                  ? "border-[#8B4F23] bg-gradient-to-br from-[#8B4F23]/8 via-white to-[#E0B13C]/8 cursor-pointer shadow-lg shadow-[#8B4F23]/10 scale-[1.01]"
-                                  : "border-slate-200 bg-white hover:border-[#8B4F23]/40 hover:shadow-md hover:-translate-y-0.5 cursor-pointer"
-                              }`}
-                            >
-                              <div className="flex items-start gap-3">
-                                {pacote.iconeUrl ? (
+                                 : selecionado
+                                   ? "border-[#8B4F23] bg-white cursor-pointer shadow-lg shadow-[#8B4F23]/15"
+                                   : sugerirSelecaoAdicional
+                                   ? "border-[#E0B13C]/80 bg-white cursor-pointer shadow-lg shadow-[#E0B13C]/20 hover:border-[#E0B13C] hover:-translate-y-0.5"
+                                   : "border-white bg-white cursor-pointer shadow-md shadow-slate-900/10 hover:border-[#E0B13C]/70 hover:shadow-lg hover:-translate-y-0.5"
+                               }`}
+                             >
+                              <div className="relative h-[84px] overflow-hidden bg-slate-100 sm:h-32">
+                                {fotoPacote ? (
                                   <img
-                                    src={pacote.iconeUrl}
-                                    alt=""
-                                    aria-hidden="true"
-                                    loading="lazy"
-                                    className="w-11 h-11 rounded-xl object-cover flex-shrink-0 border border-slate-100 bg-white shadow-sm"
+                                    src={fotoPacote}
+                                    alt={`${pacote.nome} na Vagafogo`}
+                                    loading="eager"
+                                    className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
                                   />
-                                ) : pacote.emoji ? (
-                                  <span className="w-11 h-11 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0 text-2xl">{pacote.emoji}</span>
-                                ) : null}
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-semibold text-[#2D1E0F] flex items-center gap-2 flex-wrap">
+                                ) : (
+                                  <div className="flex h-full items-center justify-center bg-gradient-to-br from-[#F7FAEF] to-[#EADFCF] text-4xl">
+                                    {pacote.emoji || "🌿"}
+                                  </div>
+                                )}
+                                <div className="absolute inset-0 bg-gradient-to-t from-[#241407]/65 via-transparent to-black/10" />
+
+                                <div className="absolute bottom-2.5 left-3 flex items-center gap-2">
+                                  <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/50 bg-white/90 text-lg shadow-md backdrop-blur-sm">
+                                    {pacote.emoji || (pacoteCorrespondeExperiencia(pacote, "brunch") ? "🍽️" : "🌿")}
+                                  </span>
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white drop-shadow">
+                                    {pacoteCorrespondeExperiencia(pacote, "brunch") ? "Gastronomia" : "Natureza"}
+                                  </span>
+                                </div>
+
+                                <span
+                                  aria-hidden="true"
+                                  title={selecionado ? "Selecionado" : "Selecionar"}
+                                  className={`absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full border-2 shadow-md backdrop-blur-sm transition-all ${
+                                   selecionado
+                                     ? "border-white/70 bg-[#8B4F23] text-white"
+                                     : "border-white/90 bg-white/90 text-[#8B4F23]"
+                                  }`}
+                                >
+                                  {selecionado && (
+                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  )}
+                                </span>
+                              </div>
+
+                               <div className="p-2.5 sm:p-3.5">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="flex flex-wrap items-center gap-1.5 text-[15px] font-bold leading-tight text-[#2D1E0F] sm:text-base">
                                     <span>{pacote.nome}</span>
                                     {indisponivelNoDia && (
                                       <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
@@ -3274,29 +3488,28 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                       </span>
                                     )}
                                   </p>
-                                  <div className="mt-2 space-y-0.5">
+                                  {desabilitado && <span className="text-[10px] font-bold text-red-600">Indisponível</span>}
+                                </div>
+                                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 border-t border-slate-100 pt-1.5 sm:mt-2 sm:gap-y-1 sm:pt-2">
                                     {tiposClientesAtivos.map((tipo) => {
                                       const preco = obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote);
                                       if (preco <= 0) return null;
                                       return (
-                                        <p key={obterChaveTipo(tipo)} className="text-xs text-slate-500">
-                                          {tipo.nome}: {formatCurrency(preco)}
+                                        <p key={obterChaveTipo(tipo)} className="flex items-baseline justify-between gap-1 text-[10px] text-slate-500 sm:text-[11px]">
+                                          <span className="truncate">{tipo.nome}</span>
+                                          <strong className="shrink-0 font-semibold text-slate-700">{formatCurrency(preco)}</strong>
                                         </p>
                                       );
                                     })}
-                                  </div>
-                                </div>
-                                <span className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 transition-all ${
-                                  selecionado ? "border-[#8B4F23] bg-[#8B4F23]" : "border-slate-300 bg-white"
-                                }`}>
-                                  {selecionado && (
-                                    <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  )}
-                                </span>
-                              </div>
-                            </div>
+                                 </div>
+                               </div>
+                               {sugerirSelecaoAdicional && (
+                                 <span
+                                   aria-hidden="true"
+                                   className="pointer-events-none absolute inset-0 z-20 rounded-[14px] border-2 border-[#E0B13C] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.55),0_0_0_3px_rgba(224,177,60,0.2)] animate-pulse motion-reduce:animate-none"
+                                 />
+                               )}
+                             </div>
                           );
                         })}
                       </div>
@@ -3304,11 +3517,11 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                     {/* Combo detectado automaticamente */}
                     {comboAtivo && (
-                      <div className="rounded-2xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/15 via-[#E0B13C]/5 to-white p-4 flex items-start gap-3 shadow-md">
-                        <span className="text-2xl">🎉</span>
+                      <div className="flex items-start gap-2.5 rounded-xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/15 via-[#E0B13C]/5 to-white px-3 py-2 shadow-sm sm:py-2.5">
+                        <span className="text-xl">🎉</span>
                         <div className="flex-1">
-                          <p className="text-sm font-bold text-[#8B4F23]">Combo aplicado: {comboAtivo.nome}</p>
-                          <p className="text-xs text-slate-600 mt-0.5">
+                          <p className="text-xs font-bold text-[#8B4F23] sm:text-sm">Combo aplicado: {comboAtivo.nome}</p>
+                          <p className="mt-0.5 text-[11px] text-slate-600">
                             {hasCustomComboPricing(comboAtivo)
                               ? describeComboValores(comboAtivo) || "Valores personalizados aplicados"
                               : comboAtivo.preco && comboAtivo.preco > 0
@@ -3321,6 +3534,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       </div>
                     )}
 
+                    {comboBrunchTrilhaAtivo && renderAvisoLogisticaCombo()}
+
                     {formErrors.pacotes && (
                       <p className="text-sm text-red-600">{formErrors.pacotes}</p>
                     )}
@@ -3330,7 +3545,9 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                 {/* ============ ETAPA 2 — HORÁRIO + PERGUNTAS POR PACOTE ============ */}
                 {etapa === 2 && (
-                  <div ref={horarioRef} className="space-y-5">
+                  <div ref={horarioRef} className="space-y-3 pb-1">
+                    {comboBrunchTrilhaAtivo && renderAvisoLogisticaCombo()}
+
                     {diaSelecionadoFechado ? (
                       <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                         <p className="text-sm text-red-700">
@@ -3346,12 +3563,28 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         const temHorariosVisiveis = horariosPacote.length > 0;
                         const horarioPacote = horariosPorPacote[pacote.id!] ?? "";
                         const aviso = pacote.aviso;
+                        const perguntasPacote = pacote.perguntasPersonalizadas ?? [];
+                        const perguntaJuntarMesaPacote = perguntasPacote.find((pergunta) =>
+                          ehPerguntaJuntarMesa(pergunta.pergunta)
+                        );
+                        const chaveJuntarMesaPacote = perguntaJuntarMesaPacote
+                          ? `${pacote.id}-${perguntaJuntarMesaPacote.id}`
+                          : "";
+                        const juntarMesaConfirmado =
+                          Boolean(chaveJuntarMesaPacote) &&
+                          respostasPersonalizadas[chaveJuntarMesaPacote]?.resposta === "sim";
+                        const perguntaTitularOutraReserva = perguntasPacote.find((pergunta) =>
+                          ehCampoTitularOutraReserva(pergunta.pergunta)
+                        );
+                        const chaveTitularOutraReserva = perguntaTitularOutraReserva
+                          ? `${pacote.id}-${perguntaTitularOutraReserva.id}`
+                          : "";
                         return (
                           <div
                             key={pacote.id}
-                            className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-5 shadow-sm hover:shadow-md transition-shadow"
+                            className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-3.5 shadow-sm transition-shadow hover:shadow-md"
                           >
-                            <div className="flex items-start justify-between gap-3 mb-3">
+                            <div className="mb-2.5 flex items-start justify-between gap-3">
                               <div className="flex items-start gap-3 flex-1 min-w-0">
                                 {pacote.iconeUrl ? (
                                   <img
@@ -3359,16 +3592,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                     alt=""
                                     aria-hidden="true"
                                     loading="lazy"
-                                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-slate-100 bg-white shadow-sm mt-0.5"
+                                    className="mt-0.5 h-9 w-9 flex-shrink-0 rounded-lg border border-slate-100 bg-white object-cover shadow-sm"
                                   />
                                 ) : pacote.emoji ? (
-                                  <span className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0 text-xl mt-0.5">{pacote.emoji}</span>
+                                  <span className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-slate-100 bg-slate-50 text-lg">{pacote.emoji}</span>
                                 ) : null}
                                 <div className="min-w-0">
                                   <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8B4F23]/70">
                                     Pacote {idxPacote + 1} de {selectedPacotes.length}
                                   </p>
-                                  <h3 className="mt-1 text-base font-bold text-[#2D1E0F]">
+                                  <h3 className="mt-0.5 text-sm font-bold text-[#2D1E0F] sm:text-base">
                                     {pacote.nome}
                                   </h3>
                                 </div>
@@ -3382,7 +3615,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                             </div>
 
                             {aviso && aviso.trim() && (
-                              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 flex items-start gap-2.5">
+                              <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                                 <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg>
                                 <p className="text-xs text-amber-900 leading-relaxed">
                                   <strong className="font-semibold">Atenção:</strong> {aviso}
@@ -3391,17 +3624,17 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                             )}
 
                             {ehFaixa ? (
-                              <div className="rounded-xl bg-blue-50 border border-blue-200 px-3.5 py-3">
+                              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                                 <p className="text-xs text-blue-800">
                                   Funciona em <strong>faixa de horário</strong>, das {pacote.horarioInicio} às {pacote.horarioFim}.
                                 </p>
                               </div>
                             ) : temHorariosVisiveis ? (
                               <>
-                                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2.5">
+                                <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                                   Escolha o horário
                                 </p>
-                                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                                <div className="grid grid-cols-3 gap-2">
                                   {horariosPacote.map((h) => {
                                     const restante = vagasRestantesPorHorario[h];
                                     const restanteExibicao =
@@ -3426,7 +3659,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                           setHorario(h);
                                           setFieldError("horario");
                                         }}
-                                        className={`flex flex-col items-center justify-center rounded-xl border-2 px-2.5 py-2.5 text-sm font-medium transition-all duration-200 ${estado}`}
+                                        className={`flex flex-col items-center justify-center rounded-lg border-2 px-2 py-2 text-sm font-medium transition-all duration-200 ${estado}`}
                                       >
                                         <span className="text-base font-semibold">{h}</span>
                                         <span className={`text-[10px] mt-0.5 ${selecionado ? "text-white/90" : "text-slate-500"}`}>{textoVagas}</span>
@@ -3445,7 +3678,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                             {/* Perguntas personalizadas do pacote */}
                             {pacote.perguntasPersonalizadas && pacote.perguntasPersonalizadas.length > 0 && (
-                              <div className="mt-5 pt-5 border-t border-slate-100 space-y-4">
+                              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
                                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
                                   Informações adicionais
                                 </p>
@@ -3454,10 +3687,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                   const respostaBase = respostasPersonalizadas[chave]?.resposta ?? "";
                                   const respostaCondicional = respostasPersonalizadas[chave]?.condicional ?? "";
                                   const cond = pergunta.perguntaCondicional;
-                                  const mostrarCondicional = cond && respostaBase === cond.condicao;
+                                  const perguntaJuntarMesa = ehPerguntaJuntarMesa(pergunta.pergunta);
+                                  const campoTitularOutraReserva = ehCampoTitularOutraReserva(pergunta.pergunta);
+                                  if (campoTitularOutraReserva && perguntaJuntarMesaPacote && !juntarMesaConfirmado) {
+                                    return null;
+                                  }
+                                  const condicaoEsperada = perguntaJuntarMesa ? "sim" : cond?.condicao;
+                                  const mostrarCondicional = cond && respostaBase === condicaoEsperada;
                                   return (
                                     <div key={pergunta.id}>
-                                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                                      <label className="mb-1.5 block text-xs font-semibold text-slate-700 sm:text-sm">
                                         {pergunta.pergunta}
                                         {pergunta.obrigatoria && <span className="text-red-500 ml-1">*</span>}
                                       </label>
@@ -3467,8 +3706,17 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                             <button
                                               key={opcao}
                                               type="button"
-                                              onClick={() => atualizarRespostaBase(chave, opcao, cond?.condicao)}
-                                              className={`flex-1 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-all ${
+                                              onClick={() => {
+                                                if (perguntaJuntarMesa && opcao === "sim" && respostaBase !== "sim") {
+                                                  abrirAvisoJuntarMesa(chave, condicaoEsperada);
+                                                  return;
+                                                }
+                                                if (perguntaJuntarMesa && opcao === "nao" && chaveTitularOutraReserva) {
+                                                  atualizarRespostaBase(chaveTitularOutraReserva, "");
+                                                }
+                                                atualizarRespostaBase(chave, opcao, condicaoEsperada);
+                                              }}
+                                                className={`flex-1 rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all ${
                                                 respostaBase === opcao
                                                   ? "border-[#8B4F23] bg-[#8B4F23] text-white shadow"
                                                   : "border-slate-200 bg-white text-slate-700 hover:border-[#8B4F23]/40"
@@ -3479,13 +3727,20 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                           ))}
                                         </div>
                                       ) : (
-                                        <input
-                                          type="text"
-                                          value={respostaBase}
-                                          onChange={(e) => atualizarRespostaBase(chave, e.target.value, cond?.condicao, true)}
-                                          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23]"
-                                          placeholder="Sua resposta"
-                                        />
+                                        <div>
+                                          <input
+                                            type="text"
+                                            value={respostaBase}
+                                            onChange={(e) => atualizarRespostaBase(chave, e.target.value, cond?.condicao, true)}
+                                            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23]"
+                                            placeholder={campoTitularOutraReserva ? "Nome completo do titular da outra reserva" : "Sua resposta"}
+                                          />
+                                          {campoTitularOutraReserva && (
+                                            <p className="mt-1.5 text-xs text-slate-500">
+                                              Informe o titular responsável pelo outro pedido e pagamento.
+                                            </p>
+                                          )}
+                                        </div>
                                       )}
                                       {mostrarCondicional && cond && (
                                         <div className="mt-3 pl-4 border-l-2 border-[#8B4F23]/30">
@@ -3511,13 +3766,20 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                               ))}
                                             </div>
                                           ) : (
-                                            <input
-                                              type="text"
-                                              value={respostaCondicional}
-                                              onChange={(e) => atualizarRespostaCondicional(chave, e.target.value, true)}
-                                              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23]"
-                                              placeholder="Sua resposta"
-                                            />
+                                            <div>
+                                              <input
+                                                type="text"
+                                                value={respostaCondicional}
+                                                onChange={(e) => atualizarRespostaCondicional(chave, e.target.value, true)}
+                                                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23]"
+                                                placeholder={perguntaJuntarMesa ? "Nome completo do titular da outra reserva" : "Sua resposta"}
+                                              />
+                                              {perguntaJuntarMesa && (
+                                                <p className="mt-1.5 text-xs text-slate-500">
+                                                  Informe o titular responsável pelo outro pedido e pagamento.
+                                                </p>
+                                              )}
+                                            </div>
                                           )}
                                         </div>
                                       )}
@@ -3538,10 +3800,10 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                 {/* ============ ETAPA 3 — PARTICIPANTES + PET (simples) ============ */}
                 {etapa === 3 && gruposParticipacao[0] && (
-                  <div ref={participantesRef} className="space-y-4">
+                  <div ref={participantesRef} className="space-y-3 pb-1">
                     {/* Banner se há combo aplicado */}
                     {comboAtivo && (
-                      <div className="rounded-xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/12 via-white to-[#8B4F23]/5 px-3 py-2.5 flex items-start gap-2 shadow-sm">
+                      <div className="flex items-start gap-2 rounded-xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/12 via-white to-[#8B4F23]/5 px-3 py-2 shadow-sm">
                         <span className="text-lg flex-shrink-0">🎉</span>
                         <div className="text-[11px] leading-snug">
                           <p className="font-bold text-[#8B4F23]">Combo aplicado: {comboAtivo.nome}</p>
@@ -3551,11 +3813,11 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                     )}
 
                     {/* Seletor único de participantes por tipo */}
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         Quantos vão?
                       </p>
-                      <div className="space-y-2.5">
+                      <div className="space-y-1.5">
                         {tiposClientesAtivos.map((tipo) => {
                           const grupo = gruposParticipacao[0];
                           const chaveTipo = obterChaveTipo(tipo);
@@ -3584,14 +3846,14 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                     type="button"
                                     onClick={() => atualizarParticipantesGrupo(grupo.chave, tipo, -1)}
                                     disabled={valor <= 0}
-                                    className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-lg disabled:opacity-30 disabled:cursor-not-allowed"
+                                    className="h-8 w-8 rounded-full bg-slate-100 text-base font-bold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-30"
                                     aria-label={`Diminuir ${tipo.nome}`}
                                   >−</button>
-                                  <span className="w-7 text-center text-base font-bold tabular-nums">{valor}</span>
+                                  <span className="w-6 text-center text-sm font-bold tabular-nums">{valor}</span>
                                   <button
                                     type="button"
                                     onClick={() => atualizarParticipantesGrupo(grupo.chave, tipo, 1)}
-                                    className="w-9 h-9 rounded-full bg-[#8B4F23] hover:bg-[#A05D2B] text-white font-bold text-lg"
+                                    className="h-8 w-8 rounded-full bg-[#8B4F23] text-base font-bold text-white hover:bg-[#A05D2B]"
                                     aria-label={`Aumentar ${tipo.nome}`}
                                   >+</button>
                                 </div>
@@ -3641,7 +3903,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       </div>
 
                       {totalParticipantesSelecionados > 0 && (
-                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2.5">
                           <span className="text-xs font-semibold text-slate-600">
                             {totalParticipantesSelecionados} pessoa(s)
                           </span>
@@ -3651,11 +3913,11 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                     </div>
 
                     {/* Pet */}
-                    <div ref={petRef} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <h4 className="text-base font-bold text-[#2D1E0F] mb-3">Vai levar pet? <span className="text-red-500">*</span></h4>
+                    <div ref={petRef} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <h4 className="mb-2 text-sm font-bold text-[#2D1E0F]">Vai levar pet? <span className="text-red-500">*</span></h4>
 
                       {getPetMessage() && (
-                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 flex items-start gap-2">
+                        <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                           <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
                             <path d="M12 2L1 21h22L12 2zm0 4l7.53 13H4.47L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z"/>
                           </svg>
@@ -3665,8 +3927,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         </div>
                       )}
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className={`flex items-center gap-2 rounded-xl border-2 p-3 cursor-pointer transition-all ${
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <label className={`flex cursor-pointer items-center gap-2 rounded-lg border-2 px-3 py-2 transition-all ${
                           temPet === true ? "border-[#8B4F23] bg-[#8B4F23]/5" : "border-slate-200 bg-white hover:border-[#8B4F23]/30"
                         }`}>
                           <input type="radio" name="pet" checked={temPet === true} onChange={() => { setTemPet(true); setFieldError("pet"); }} className="sr-only" />
@@ -3676,7 +3938,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                             <p className="text-[10px] text-slate-500">Levo pet</p>
                           </div>
                         </label>
-                        <label className={`flex items-center gap-2 rounded-xl border-2 p-3 cursor-pointer transition-all ${
+                        <label className={`flex cursor-pointer items-center gap-2 rounded-lg border-2 px-3 py-2 transition-all ${
                           temPet === false ? "border-[#8B4F23] bg-[#8B4F23]/5" : "border-slate-200 bg-white hover:border-[#8B4F23]/30"
                         }`}>
                           <input type="radio" name="pet" checked={temPet === false} onChange={() => { setTemPet(false); setFieldError("pet"); }} className="sr-only" />
@@ -4100,14 +4362,14 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
                 {/* ============ ETAPA 4 — MÉTODO + PAGAMENTO ============ */}
                 {etapa === 4 && subEtapaPagamento === "metodo" && (
-                  <div ref={paymentMethodRef} className="scroll-mt-24 space-y-5">
-                    <div className="text-center mb-3">
+                  <div ref={paymentMethodRef} className="space-y-3 pb-1">
+                    <div className="mb-2 text-center">
                       <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#8B4F23]/70 mb-1">Falta pouco</p>
-                      <h3 className="text-xl font-bold text-[#2D1E0F]">Como você prefere pagar?</h3>
-                      <p className="text-sm text-slate-500 mt-1">Escolha um método para continuar.</p>
+                      <h3 className="text-lg font-bold text-[#2D1E0F] sm:text-xl">Como você prefere pagar?</h3>
+                      <p className="mt-0.5 text-xs text-slate-500">Escolha um método para continuar.</p>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-2.5">
                       {[
                         { id: "PIX", label: "PIX", desc: "Confirmação instantânea", icon: "⚡" },
                         { id: "CREDIT_CARD", label: "Cartão de crédito", desc: "Pagamento único, à vista", icon: "💳" },
@@ -4121,18 +4383,18 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                               setFormaPagamento(m.id as "PIX" | "CREDIT_CARD");
                               setModalReembolsoAberto(true);
                             }}
-                            className={`group relative rounded-2xl border-2 p-5 text-left transition-all duration-200 ${
+                            className={`group relative rounded-xl border-2 p-3 text-left transition-all duration-200 sm:p-4 ${
                               ativo
                                 ? "border-[#8B4F23] bg-gradient-to-br from-[#8B4F23]/8 to-[#E0B13C]/8 shadow-md"
                                 : "border-slate-200 bg-white hover:border-[#8B4F23]/40 hover:shadow-sm"
                             }`}
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-3">
-                                <span className="text-3xl">{m.icon}</span>
+                              <div className="flex min-w-0 items-center gap-2.5">
+                                <span className="text-2xl">{m.icon}</span>
                                 <div>
-                                  <p className="text-sm font-bold text-[#2D1E0F]">{m.label}</p>
-                                  <p className="text-xs text-slate-500 mt-0.5">{m.desc}</p>
+                                  <p className="text-xs font-bold leading-tight text-[#2D1E0F] sm:text-sm">{m.label}</p>
+                                  <p className="mt-0.5 hidden text-[11px] text-slate-500 sm:block">{m.desc}</p>
                                 </div>
                               </div>
                               <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
@@ -4150,12 +4412,12 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       })}
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 flex items-start gap-3">
+                    <div className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5">
                       <svg className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                       </svg>
                       <p className="text-xs text-slate-600 leading-relaxed">
-                        Pagamento seguro pela <strong>Asaas</strong>. Seus dados de cartão não são armazenados.
+                        Pagamento seguro. Seus dados de cartão não são armazenados.
                       </p>
                     </div>
                   </div>
@@ -4205,7 +4467,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                 )}
 
                 {etapa === 4 && subEtapaPagamento !== "metodo" && (
-                  <div ref={paymentFormRef} className="scroll-mt-24 space-y-5">
+                  <div ref={paymentFormRef} className="space-y-3 pb-1">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#8B4F23]/70">
@@ -4218,17 +4480,18 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       <button
                         type="button"
                         onClick={() => setSubEtapaPagamento("metodo")}
-                        className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 sm:w-auto"
+                        disabled={pixGerado}
+                        className="w-full rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                       >
                         Alterar forma
                       </button>
                     </div>
 
                     {subEtapaPagamento === "pix" && (
-                      <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                      <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
                           <p className="text-sm font-bold text-emerald-900">PIX selecionado</p>
-                          <p className="mt-1 text-sm text-emerald-800">
+                            <p className="mt-0.5 text-xs text-emerald-800">
                             Preencha seus dados e gere o QR Code. O código para copiar aparece logo abaixo após a geração.
                           </p>
                         </div>
@@ -4298,7 +4561,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                           })()}
                         </div>
 
-                        <div className="p-4 sm:p-5">
+                        <div className="p-3 sm:p-4">
                           {subEtapaPagamento === "cartao-dados" && dadosPessoaisPagamento}
                           {subEtapaPagamento === "cartao-cartao" && cartaoDadosFields}
                           {subEtapaPagamento === "cartao-endereco" && enderecoCobrancaFields}
@@ -4308,16 +4571,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                   </div>
                 )}
 
-                {etapa === 4 && <div className="mb-6 lg:hidden">{resumoCardMobile}</div>}
+                {etapa === 4 && <div className="mt-3 lg:hidden">{resumoCardMobile}</div>}
 
                 </div>{/* fim do wrapper de conteúdo scrollável */}
 
-                <div className="sticky bottom-0 pt-4 pb-2 sm:pb-0 sm:pt-6 mt-auto sm:mt-10 bg-gradient-to-t from-white via-white/95 to-white/0 border-t border-slate-200 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between sm:relative sm:bg-transparent">
+                <div className="mt-3 flex shrink-0 items-center gap-2.5 border-t border-slate-200 bg-white pt-3">
                   <button
                     type="button"
                     onClick={handleVoltarEtapa}
                     disabled={etapa === 0 || loading}
-                    className="w-full sm:w-auto inline-flex items-center gap-1.5 justify-center rounded-full border border-slate-200 bg-white px-5 py-3.5 sm:py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex w-[96px] shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-5"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -4329,7 +4592,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                     <button
                       type="button"
                       onClick={handleAvancarEtapa}
-                      className="w-full sm:w-auto inline-flex items-center gap-2 justify-center rounded-full bg-[#8B4F23] px-7 py-3.5 sm:py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md"
+                      className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8B4F23] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md sm:ml-auto sm:flex-none sm:px-7"
                     >
                       {etapa < 4
                         ? "Continuar"
@@ -4345,11 +4608,13 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                   ) : (
                     <button
                       type="submit"
-                      disabled={loading || selectedPackages.length === 0 || bloqueiaEnvioCartao}
-                      className="w-full sm:w-auto inline-flex items-center gap-2 justify-center rounded-full bg-[#8B4F23] px-7 py-3.5 sm:py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={loading || selectedPackages.length === 0 || bloqueiaEnvioCartao || pixGerado}
+                      className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8B4F23] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto sm:flex-none sm:px-7"
                     >
                       {loading
                         ? "Processando..."
+                        : pixGerado
+                        ? "QR Code gerado"
                         : bloqueiaEnvioCartao
                          ? "Aguardando confirmação..."
                         : cartaoResultado?.status === "retry"
@@ -4362,9 +4627,142 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                 </div>
           </form>
 
+          {modalLogisticaAberto && comboBrunchTrilhaAtivo && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 px-3 py-3 backdrop-blur-sm sm:px-4 sm:py-6"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-aviso-logistica"
+              aria-describedby="descricao-aviso-logistica"
+            >
+              <div className="flex max-h-[calc(100svh-1.5rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:rounded-3xl">
+                <div className="shrink-0 bg-gradient-to-r from-sky-50 to-amber-50 px-4 py-3.5 sm:px-6 sm:py-5">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-100 text-xl sm:h-11 sm:w-11 sm:text-2xl" aria-hidden="true">
+                      🕐
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-sky-700">Leia com atenção</p>
+                      <h3 id="titulo-aviso-logistica" className="mt-0.5 text-lg font-bold leading-tight text-[#2D1E0F] sm:mt-1 sm:text-xl">
+                        Planeje seu Brunch + Trilha
+                      </h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="descricao-aviso-logistica" className="min-h-0 space-y-3 overflow-y-auto px-4 py-3 text-[13px] leading-[1.55] text-slate-700 sm:space-y-4 sm:px-6 sm:py-5 sm:text-sm sm:leading-relaxed">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-950 sm:rounded-2xl sm:px-4 sm:py-3">
+                    <p>
+                      <strong>Brunch:</strong> sua mesa é servida pontualmente no turno marcado
+                      {horarioBrunchSelecionado ? <>, às <strong>{horarioBrunchSelecionado}</strong></> : null}.
+                    </p>
+                    <p className="mt-1 font-semibold">A tolerância máxima para atraso é de 15 minutos.</p>
+                  </div>
+                  <p>
+                    <strong>Trilha Ecológica:</strong> funciona em fluxo contínuo, com horário livre {faixaHorarioTrilha}.
+                  </p>
+                  <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2.5 sm:rounded-2xl sm:px-4 sm:py-3">
+                    <p>
+                      Se marcar o brunch mais cedo, faça a caminhada depois. Se escolher um turno posterior e quiser caminhar antes,
+                      chegue com antecedência suficiente para concluir a trilha e estar à mesa no início do brunch.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="shrink-0 border-t border-slate-100 bg-slate-50 px-4 py-3 sm:px-6 sm:py-4">
+                  <p className="mb-2 text-center text-xs font-medium text-slate-500 sm:mb-3" aria-live="polite">
+                    {segundosLogistica > 0
+                      ? `Leia as orientações para continuar em ${segundosLogistica}s.`
+                      : "Confirmação liberada."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={segundosLogistica > 0}
+                    onClick={() => setModalLogisticaAberto(false)}
+                    className="w-full rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 sm:py-3"
+                  >
+                    {segundosLogistica > 0 ? `Aguarde ${segundosLogistica}s` : "OK, entendi"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {confirmacaoJuntarMesa && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 px-3 py-3 backdrop-blur-sm sm:px-4 sm:py-6"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-aviso-juntar-mesa"
+              aria-describedby="descricao-aviso-juntar-mesa"
+            >
+              <div className="flex max-h-[calc(100svh-1.5rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:rounded-3xl">
+                <div className="shrink-0 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3.5 sm:px-6 sm:py-5">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-xl sm:h-11 sm:w-11 sm:text-2xl" aria-hidden="true">
+                      ⚠️
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Leia com atenção</p>
+                      <h3 id="titulo-aviso-juntar-mesa" className="mt-0.5 text-lg font-bold leading-tight text-[#2D1E0F] sm:mt-1 sm:text-xl">
+                        Quando devo juntar mesa?
+                      </h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="descricao-aviso-juntar-mesa" className="min-h-0 space-y-3 overflow-y-auto px-4 py-3 text-[13px] leading-[1.55] text-slate-700 sm:space-y-4 sm:px-6 sm:py-5 sm:text-sm sm:leading-relaxed">
+                  <p>
+                    Use esta opção <strong>exclusivamente para sentar com pessoas que fizeram outra compra</strong>, em um pedido e pagamento separados.
+                  </p>
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-red-900 sm:rounded-2xl sm:px-4 sm:py-3">
+                    <p className="font-semibold">Não informe aqui acompanhantes desta mesma reserva.</p>
+                    <p className="mt-1 text-xs">
+                      Marido, esposa, filhos ou amigos já incluídos nesta compra devem constar apenas na quantidade de participantes.
+                    </p>
+                  </div>
+                  <p>
+                    Depois de confirmar, você poderá digitar o nome do titular responsável pela outra reserva.
+                  </p>
+                </div>
+
+                <div className="shrink-0 border-t border-slate-100 bg-slate-50 px-4 py-3 sm:px-6 sm:py-4">
+                  <p className="mb-2 text-center text-xs font-medium text-slate-500 sm:mb-3" aria-live="polite">
+                    {segundosJuntarMesa > 0
+                      ? `Leia as instruções para continuar em ${segundosJuntarMesa}s.`
+                      : "Confirmação liberada."}
+                  </p>
+                  <div className="grid grid-cols-[0.8fr_1.2fr] gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmacaoJuntarMesa(null)}
+                      className="rounded-xl border-2 border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:px-4 sm:py-3"
+                    >
+                      Agora não
+                    </button>
+                    <button
+                      type="button"
+                      disabled={segundosJuntarMesa > 0}
+                      onClick={confirmarJuntarMesa}
+                      className="rounded-xl bg-[#8B4F23] px-3 py-2.5 text-sm font-semibold leading-tight text-white transition hover:bg-[#A05D2B] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 sm:px-4 sm:py-3"
+                    >
+                      {segundosJuntarMesa > 0
+                        ? `Aguarde ${segundosJuntarMesa}s`
+                        : "Entendi, quero juntar mesa"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ============ RESERVA CONFIRMADA — RESUMO FINAL ============ */}
           {cartaoResultado?.status === "success" && (
-            <div className="mt-8 rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50/40 to-emerald-100/30 p-6 sm:p-10 shadow-xl overflow-hidden relative">
+            <div
+              ref={paymentCardRef}
+              aria-live="polite"
+              className="relative mx-1 my-2 overflow-hidden rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50/40 to-emerald-100/30 p-6 shadow-xl sm:mx-0 sm:my-3 sm:p-10"
+            >
               <div className="pointer-events-none absolute -top-20 -right-20 w-64 h-64 rounded-full bg-emerald-400/15 blur-3xl" />
               <div className="pointer-events-none absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-[#E0B13C]/15 blur-3xl" />
 
@@ -4386,7 +4784,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
               <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto mb-6">
                 {[
                   { label: "Data", value: selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—" },
-                  { label: "Horário", value: horario || "—" },
+                  { label: "Horário", value: horarioResumo || "—" },
                   { label: "Pessoas", value: String(totalParticipantesSelecionados) },
                   { label: "Valor", value: formatCurrency(calcularTotal()) },
                 ].map((item) => (
@@ -4437,18 +4835,19 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           )}
 
           {/* Resultado do Pagamento */}
-          {cartaoResultado?.status !== "success" && (checkoutUrl || pixKey || cartaoResultado) && (
+          {cartaoResultado?.status !== "success" && (checkoutUrl || pixKey || qrCodeImage || cartaoResultado) && (
             <div
               ref={paymentCardRef}
-              className="relative mt-8 w-full min-w-0 overflow-hidden rounded-2xl p-4 shadow-2xl sm:rounded-3xl sm:p-8"
+              aria-live="polite"
+              className="relative mx-1 my-2 w-auto min-w-0 overflow-hidden rounded-2xl p-4 shadow-2xl sm:mx-0 sm:my-3 sm:rounded-3xl sm:p-8"
               style={{
-                background: (checkoutUrl || pixKey)
+                background: (checkoutUrl || pixKey || qrCodeImage)
                   ? 'linear-gradient(135deg, #1a6b3a 0%, #145c30 100%)'
                   : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                 animation: 'pulse-glow 3s ease-in-out infinite'
               }}
             >
-              {(checkoutUrl || pixKey) ? (
+              {(checkoutUrl || pixKey || qrCodeImage) ? (
                 /* ── PIX inline ── */
                 <div className="flex w-full min-w-0 flex-col items-center gap-5">
                   <div className="flex items-center gap-2 text-center">
@@ -4567,6 +4966,26 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       ? "Tente consultar novamente"
                       : "Pagamento não aprovado"}
                   </span>
+                  {["pending", "retry"].includes(cartaoResultado.status) && (
+                    <a
+                      href="/minha-reserva"
+                      className="mx-auto flex w-full max-w-xs items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white/90"
+                    >
+                      Consultar minha reserva
+                    </a>
+                  )}
+                  {cartaoResultado.status === "error" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubEtapaPagamento("cartao-cartao");
+                        checkoutColumnRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      className="mx-auto flex w-full max-w-xs items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white/90"
+                    >
+                      Revisar dados do cartão
+                    </button>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -4574,8 +4993,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
             </div>
 
-            <aside className="hidden lg:block">
-              <div className="sticky top-6 space-y-4">
+            <aside className="hidden min-h-0 lg:block">
+              <div className="scrollbar-none h-full space-y-3 overflow-y-auto">
                 {etapa === 4 && resumoCard}
                 {etapasCardDesktop}
               </div>
