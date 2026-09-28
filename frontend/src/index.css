@@ -361,3 +361,108 @@ textarea.booking-input {
   @apply w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm transition-all duration-200
          focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23] bg-white resize-none;
 }
+
+/* Checkout em uma tela: a lateral só aparece quando há altura útil suficiente. */
+.checkout-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.checkout-sidebar,
+.checkout-card-preview {
+  display: none;
+}
+
+@media (min-width: 1024px) and (min-height: 700px) {
+  .checkout-shell:not(.checkout-shell--result) {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+
+  .checkout-sidebar {
+    display: block;
+  }
+}
+
+@media (min-width: 1280px) and (min-height: 700px) {
+  .checkout-shell:not(.checkout-shell--result) {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+
+@media (min-width: 1024px) and (min-height: 850px) {
+  .checkout-card-preview {
+    display: block;
+  }
+}
+
+@media (max-height: 700px) {
+  .reserva-header {
+    padding-top: 0.375rem;
+    padding-bottom: 0.375rem;
+  }
+
+  .reserva-logo {
+    width: 2.25rem !important;
+    height: 2.25rem !important;
+  }
+
+  .reserva-footer {
+    display: none !important;
+  }
+
+  .booking-section {
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+  }
+
+  .checkout-form {
+    padding: 0.75rem !important;
+  }
+
+  .checkout-step-header {
+    margin-bottom: 0.5rem !important;
+  }
+
+  .checkout-actions {
+    margin-top: 0.5rem !important;
+    padding-top: 0.5rem !important;
+  }
+
+  .checkout-payment-heading {
+    display: none;
+  }
+
+  .checkout-payment-heading + * {
+    margin-top: 0 !important;
+  }
+
+  .checkout-card-substeps {
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+  }
+
+  .checkout-card-body {
+    padding: 0.65rem !important;
+  }
+
+  .checkout-package-image {
+    height: 5.5rem !important;
+  }
+
+  .checkout-mobile-summary {
+    display: none;
+  }
+
+  .checkout-logistics-reminder {
+    display: none;
+  }
+
+  .checkout-participant-combo {
+    display: none;
+  }
+
+  .rdp-vagafogo {
+    transform: scale(0.9);
+    transform-origin: top center;
+    margin-bottom: -2rem;
+  }
+}

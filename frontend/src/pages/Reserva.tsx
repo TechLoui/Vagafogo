@@ -13,13 +13,13 @@ export function Reserva() {
 
   return (
     <div
-      className="relative flex h-[100svh] min-h-[520px] flex-col overflow-clip bg-[#F7FAEF]"
+      className="reserva-page relative flex h-[100svh] min-h-[520px] flex-col overflow-clip bg-[#F7FAEF]"
       style={{ background: "linear-gradient(145deg, #F7FAEF 0%, #f3efe7 52%, #eef5e7 100%)" }}
     >
       <div className="pointer-events-none absolute -left-24 top-24 h-72 w-72 rounded-full bg-[#E0B13C]/10 blur-3xl" />
       <div className="pointer-events-none absolute -right-24 bottom-10 h-80 w-80 rounded-full bg-[#8B4F23]/10 blur-3xl" />
 
-      <header className="relative z-20 shrink-0 border-b border-[#8B4F23]/10 bg-white/75 px-3 py-2.5 shadow-sm backdrop-blur-xl sm:px-5 sm:py-3">
+      <header className="reserva-header relative z-20 shrink-0 border-b border-[#8B4F23]/10 bg-white/75 px-3 py-2.5 shadow-sm backdrop-blur-xl sm:px-5 sm:py-3">
         <div className="mx-auto flex max-w-screen-xl items-center justify-between gap-3">
           <Link
             to="/"
@@ -36,13 +36,14 @@ export function Reserva() {
             <img
               src={logo}
               alt="Vagafogo"
-              className="h-10 w-10 shrink-0 rounded-full border-2 border-[#8B4F23]/15 object-cover shadow-sm sm:h-12 sm:w-12"
+              className="reserva-logo h-10 w-10 shrink-0 rounded-full border-2 border-[#8B4F23]/15 object-cover shadow-sm sm:h-12 sm:w-12"
               loading="eager"
             />
             <div className="min-w-0 text-left">
               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8B4F23]/65">Reserva online</p>
-              <h1 className="truncate font-display text-base font-bold leading-tight text-[#2D1E0F] sm:text-xl">
-                Sua experiência na Vagafogo
+              <h1 className="truncate font-display text-sm font-bold leading-tight text-[#2D1E0F] sm:text-xl">
+                <span className="sm:hidden">Experiência Vagafogo</span>
+                <span className="hidden sm:inline">Sua experiência na Vagafogo</span>
               </h1>
             </div>
           </div>
@@ -58,7 +59,7 @@ export function Reserva() {
         />
       </main>
 
-      <footer className="relative z-10 hidden shrink-0 border-t border-[#8B4F23]/10 bg-white/50 px-4 py-1.5 text-center xl:block">
+      <footer className="reserva-footer relative z-10 hidden shrink-0 border-t border-[#8B4F23]/10 bg-white/50 px-4 py-1.5 text-center xl:block">
         <p className="text-xs text-gray-400">
           © {new Date().getFullYear()} Santuário Vagafogo · Pirenópolis, GO ·{" "}
           <a href="https://wa.me/5562992225471" target="_blank" rel="noopener noreferrer" className="text-[#8B4F23] hover:underline">

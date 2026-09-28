@@ -303,7 +303,13 @@ const somarGruposParticipacao = (grupos?: Array<{ participantesPorTipo?: Record<
 type PersonalField = "nome" | "email" | "cpf" | "telefone";
 type EtapaReserva = 0 | 1 | 2 | 3 | 4;
 type FormaPagamento = "CREDIT_CARD" | "PIX";
-type SubEtapaPagamento = "metodo" | "pix" | "cartao-dados" | "cartao-cartao" | "cartao-endereco";
+type SubEtapaPagamento =
+  | "metodo"
+  | "pix"
+  | "cartao-dados"
+  | "cartao-cartao"
+  | "cartao-endereco"
+  | "cartao-localizacao";
 
 const onlyNumbers = (value: string) => value.replace(/\D/g, "");
 
@@ -522,6 +528,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const [subEtapaPagamento, setSubEtapaPagamento] = useState<SubEtapaPagamento>("metodo");
   // Sub-passo dentro da etapa Participantes — segue gruposParticipacao + "pet" no final
   const [subPassoParticipantes, setSubPassoParticipantes] = useState<number>(0);
+  // Mostra uma experiência por vez na etapa de horários para manter cada tela curta.
+  const [indicePacoteHorario, setIndicePacoteHorario] = useState<number>(0);
   const [diasBloqueados, setDiasBloqueados] = useState<Set<string>>(new Set());
   const [diaSelecionadoFechado, setDiaSelecionadoFechado] = useState(false);
   const [participantesPorGrupo, setParticipantesPorGrupo] = useState<ParticipantesPorGrupo>({});
@@ -650,8 +658,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
   const pixGerado =
     formaPagamento === "PIX" && Boolean(checkoutUrl || pixKey || qrCodeImage);
-  const pagamentoCartaoConcluido =
-    formaPagamento === "CREDIT_CARD" && cartaoResultado?.status === "success";
+  const resultadoPagamentoDedicado = pixGerado || cartaoResultado !== null;
   const bloqueiaEnvioCartao =
     formaPagamento === "CREDIT_CARD" &&
     ["processing", "pending", "success"].includes(cartaoResultado?.status ?? "");
@@ -672,6 +679,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setHorario("");
     setHorariosPorPacote({});
     setSubEtapaPagamento("metodo");
+    setIndicePacoteHorario(0);
     setParticipantesPorGrupo({});
     setIdadesPorGrupoETipo({});
     setSubPassoParticipantes(0);
@@ -1096,6 +1104,15 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     () => pacotes.filter((p) => p.id && selectedPackages.includes(p.id)),
     [pacotes, selectedPackages]
   );
+
+  const pacoteHorarioAtual = selectedPacotes[indicePacoteHorario] ?? null;
+  const temProximoPacoteHorario = indicePacoteHorario < selectedPacotes.length - 1;
+
+  useEffect(() => {
+    setIndicePacoteHorario((indiceAtual) =>
+      Math.min(indiceAtual, Math.max(selectedPacotes.length - 1, 0))
+    );
+  }, [selectedPacotes.length]);
 
   const pacotesPorId = useMemo(() => {
     const mapa = new Map<string, Pacote>();
@@ -2054,12 +2071,12 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     setConfirmacaoJuntarMesa(null);
   };
 
-  const montarRespostasPersonalizadas = (): {
+  const montarRespostasPersonalizadas = (pacotesAlvo: Pacote[] = selectedPacotes): {
     respostas: PerguntaPersonalizadaRespostaPayload[];
     erro?: string;
   } => {
     const respostas: PerguntaPersonalizadaRespostaPayload[] = [];
-    for (const pacote of selectedPacotes) {
+    for (const pacote of pacotesAlvo) {
       if (!pacote.id) continue;
       const perguntas = pacote.perguntasPersonalizadas ?? [];
       const perguntaJuntarMesa = perguntas.find((pergunta) =>
@@ -2176,10 +2193,51 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     return { respostas };
   };
 
+  const validarPacoteHorarioAtual = (pacote: Pacote) => {
+    if (!pacote.id) return true;
+
+    if (pacote.modoHorario !== "intervalo" && (pacote.horarios?.length ?? 0) > 0) {
+      const horariosVisiveisDoPacote = (pacote.horarios ?? []).filter((item) =>
+        horariosVisiveis.includes(item)
+      );
+      const horariosDisponiveisDoPacote = (pacote.horarios ?? []).filter((item) =>
+        horariosDisponiveis.includes(item)
+      );
+      const mensagemHorario =
+        horariosVisiveisDoPacote.length === 0
+          ? `Não há horários disponíveis para ${pacote.nome} nesta data.`
+          : horariosDisponiveisDoPacote.length === 0
+          ? `Todos os horários de ${pacote.nome} estão lotados.`
+          : !horariosPorPacote[pacote.id]
+          ? `Escolha o horário de ${pacote.nome}.`
+          : "";
+
+      if (mensagemHorario) {
+        setFormErrors((prev) => ({ ...prev, horario: mensagemHorario }));
+        return false;
+      }
+    }
+
+    const { erro } = montarRespostasPersonalizadas([pacote]);
+    if (erro) {
+      setFormErrors((prev) => ({ ...prev, perguntas: erro }));
+      return false;
+    }
+
+    setFormErrors((prev) => {
+      const nextErrors = { ...prev };
+      delete nextErrors.horario;
+      delete nextErrors.perguntas;
+      return nextErrors;
+    });
+    return true;
+  };
+
   const errorFocusOrder = [
     "pacotes",
     "data",
     "horario",
+    "perguntas",
     "participantes",
     "pet",
     "nome",
@@ -2373,29 +2431,52 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     { id: "cartao-dados", label: "Dados" },
     { id: "cartao-cartao", label: "Cartão" },
     { id: "cartao-endereco", label: "Endereço" },
+    { id: "cartao-localizacao", label: "Cidade" },
   ] as const;
   const isSubEtapaCartao = subEtapaPagamento.startsWith("cartao");
   const pagamentoPrecisaContinuar =
     etapa < 4 ||
     subEtapaPagamento === "metodo" ||
     subEtapaPagamento === "cartao-dados" ||
-    subEtapaPagamento === "cartao-cartao";
+    subEtapaPagamento === "cartao-cartao" ||
+    subEtapaPagamento === "cartao-endereco";
+  const descricaoEtapaAtual =
+    etapa === 2 && pacoteHorarioAtual
+      ? `${pacoteHorarioAtual.nome} · atividade ${indicePacoteHorario + 1} de ${selectedPacotes.length}`
+      : etapa === 3
+      ? subPassoParticipantes === 0
+        ? "Informe as quantidades de cada tipo de visitante."
+        : "Confirme se haverá pet nesta visita."
+      : wizardSteps[etapa].description;
+  const textoBotaoContinuar =
+    etapa === 2 && temProximoPacoteHorario
+      ? "Próxima atividade"
+      : etapa === 3 && subPassoParticipantes === 0
+      ? "Continuar para pet"
+      : etapa === 3
+      ? "Continuar para pagamento"
+      : etapa < 4
+      ? "Continuar"
+      : subEtapaPagamento === "cartao-dados"
+      ? "Continuar para cartão"
+      : subEtapaPagamento === "cartao-cartao"
+      ? "Continuar para endereço"
+      : subEtapaPagamento === "cartao-endereco"
+      ? "Continuar para cidade"
+      : "Continuar";
   const subEtapaPagamentoParaErro = (errors: Record<string, string>): SubEtapaPagamento | null => {
     const camposDados = ["nome", "email", "cpf", "telefone"];
     const camposCartao = ["cartaoNome", "cartaoNumero", "cartaoValidade", "cartaoCvv"];
-    const camposEndereco = [
-      "enderecoCep",
-      "enderecoRua",
-      "enderecoNumero",
-      "enderecoBairro",
-      "enderecoCidade",
-      "enderecoEstado",
-    ];
     if (camposDados.some((campo) => errors[campo])) {
       return formaPagamento === "PIX" ? "pix" : "cartao-dados";
     }
     if (camposCartao.some((campo) => errors[campo])) return "cartao-cartao";
-    if (camposEndereco.some((campo) => errors[campo])) return "cartao-endereco";
+    if (["enderecoCep", "enderecoRua", "enderecoNumero"].some((campo) => errors[campo])) {
+      return "cartao-endereco";
+    }
+    if (["enderecoBairro", "enderecoCidade", "enderecoEstado"].some((campo) => errors[campo])) {
+      return "cartao-localizacao";
+    }
     return null;
   };
 
@@ -2410,6 +2491,10 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   };
 
   const handleVoltarEtapa = () => {
+    if (etapa === 4 && subEtapaPagamento === "cartao-localizacao") {
+      setSubEtapaPagamento("cartao-endereco");
+      return;
+    }
     if (etapa === 4 && subEtapaPagamento === "cartao-endereco") {
       setSubEtapaPagamento("cartao-cartao");
       return;
@@ -2420,6 +2505,14 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     }
     if (etapa === 4 && subEtapaPagamento !== "metodo") {
       setSubEtapaPagamento("metodo");
+      return;
+    }
+    if (etapa === 3 && subPassoParticipantes > 0) {
+      setSubPassoParticipantes(0);
+      return;
+    }
+    if (etapa === 2 && indicePacoteHorario > 0) {
+      setIndicePacoteHorario((indice) => Math.max(indice - 1, 0));
       return;
     }
     setEtapa((prev) => (prev > 0 ? ((prev - 1) as EtapaReserva) : prev));
@@ -2451,6 +2544,20 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       return;
     }
 
+    if (etapa === 4 && subEtapaPagamento === "cartao-endereco") {
+      const todosErrosEndereco = getEnderecoCobrancaErrors();
+      const errors: Record<string, string> = {};
+      ["enderecoCep", "enderecoRua", "enderecoNumero"].forEach((campo) => {
+        if (todosErrosEndereco[campo]) errors[campo] = todosErrosEndereco[campo];
+      });
+      if (Object.keys(errors).length > 0) {
+        aplicarErrosPagamento(errors);
+        return;
+      }
+      setSubEtapaPagamento("cartao-localizacao");
+      return;
+    }
+
     if (etapa === 0) {
       const validation = validateForm(0);
       if (!validation.ok) {
@@ -2467,11 +2574,19 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         setEtapa(etapaParaPrimeiroErro(validation.errors));
         return;
       }
+      setIndicePacoteHorario(0);
       setEtapa(2);
       return;
     }
 
     if (etapa === 2) {
+      if (pacoteHorarioAtual && !validarPacoteHorarioAtual(pacoteHorarioAtual)) {
+        return;
+      }
+      if (temProximoPacoteHorario) {
+        setIndicePacoteHorario((indice) => indice + 1);
+        return;
+      }
       const validation = validateForm(2);
       if (!validation.ok) {
         setEtapa(etapaParaPrimeiroErro(validation.errors));
@@ -2483,11 +2598,23 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         alert(erro);
         return;
       }
+      setSubPassoParticipantes(0);
       setEtapa(3);
       return;
     }
 
     if (etapa === 3) {
+      if (subPassoParticipantes === 0) {
+        const errors = getErrorsAteEtapa(3);
+        delete errors.pet;
+        setFormErrors(errors);
+        if (Object.keys(errors).length > 0) {
+          scrollToErrorField(errors);
+          return;
+        }
+        setSubPassoParticipantes(1);
+        return;
+      }
       const validation = validateForm(3);
       if (!validation.ok) {
         setEtapa(etapaParaPrimeiroErro(validation.errors));
@@ -2509,7 +2636,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     if (
       subEtapaPagamento === "metodo" ||
       subEtapaPagamento === "cartao-dados" ||
-      subEtapaPagamento === "cartao-cartao"
+      subEtapaPagamento === "cartao-cartao" ||
+      subEtapaPagamento === "cartao-endereco"
     ) {
       handleAvancarEtapa();
       return;
@@ -2796,7 +2924,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     : horariosDisponiveis.length > 0
     ? "Selecione um horário"
     : faixasResumo.length > 0
-    ? `Faixa: ${faixasResumo.join(" / ")}`
+    ? faixasResumo.join(" / ")
     : "Sem horário específico";
 
   const atividadesResumoMobile =
@@ -2911,7 +3039,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   );
 
   const cartaoPreview = (
-    <div className="bg-gradient-to-br from-slate-800 to-slate-900 px-3 py-3 sm:px-4 sm:py-4">
+    <div className="checkout-card-preview bg-gradient-to-br from-slate-800 to-slate-900 px-3 py-3 sm:px-4 sm:py-4">
       <div className="relative mx-auto w-full max-w-[300px] aspect-[1.586/1] overflow-hidden rounded-xl bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 p-3.5 text-white shadow-lg sm:p-4">
         <div className="flex items-center justify-between">
           <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-white/50">Crédito</span>
@@ -3063,6 +3191,13 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           />
         </label>
       </div>
+
+    </div>
+  );
+
+  const enderecoLocalizacaoFields = (
+    <div className="space-y-3">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Cidade e estado</p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_5rem]">
         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -3263,20 +3398,20 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   );
 
   return (
-    <section id="reservas" className="h-full min-h-0 py-2 sm:py-3 lg:py-4">
+    <section id="reservas" className="booking-section h-full min-h-0 py-2 sm:py-3 lg:py-4">
       <div className="mx-auto h-full w-full max-w-screen-xl px-2 sm:px-4 lg:px-6">
         <div className="mx-auto h-full max-w-6xl">
-          <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_280px] xl:grid-cols-[minmax(0,1fr)_300px]">
+          <div className={`checkout-shell grid h-full min-h-0 gap-3 ${resultadoPagamentoDedicado ? "checkout-shell--result" : ""}`}>
             <div
               ref={checkoutColumnRef}
-              className="scrollbar-none h-full min-h-0 overflow-y-auto overscroll-contain"
+              className="h-full min-h-0 overflow-hidden"
             >
               <form
                 onSubmit={handleSubmit}
                 noValidate
-                className={`${pagamentoCartaoConcluido ? "hidden" : "relative flex"} min-h-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-3 shadow-xl shadow-[#8B4F23]/10 sm:p-4 lg:p-5`}
+                className={`${resultadoPagamentoDedicado ? "hidden" : "relative flex"} checkout-form h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white via-white to-[#FAF7F2] p-3 shadow-xl shadow-[#8B4F23]/10 sm:p-4 lg:p-5`}
               >
-                <div className="mb-3 shrink-0 sm:mb-4">
+                <div className="checkout-step-header mb-3 shrink-0 sm:mb-4">
                   {/* Stepper bolinhas conectadas — sempre visível */}
                   <div className="relative mb-3 flex items-center justify-between px-1">
                     {/* Linha de progresso atrás das bolinhas */}
@@ -3340,16 +3475,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         {wizardSteps[etapa].title}
                       </h2>
                     </div>
-                    {wizardSteps[etapa].description && (
+                    {descricaoEtapaAtual && (
                       <p className="hidden max-w-[52%] text-right text-xs leading-snug text-slate-500 sm:block">
-                        {wizardSteps[etapa].description}
+                        {descricaoEtapaAtual}
                       </p>
                     )}
                   </div>
                 </div>
 
                 {/* Wrapper de conteúdo — flex-1 com scroll interno no mobile */}
-                <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-x-hidden pr-0.5 sm:pr-1">
+                <div ref={contentScrollRef} className="checkout-step-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-0.5 sm:pr-1">
 
                 {/* ============ ETAPA 1 — DATA ============ */}
                 {etapa === 1 && (
@@ -3437,7 +3572,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                                    : "border-white bg-white cursor-pointer shadow-md shadow-slate-900/10 hover:border-[#E0B13C]/70 hover:shadow-lg hover:-translate-y-0.5"
                                }`}
                              >
-                              <div className="relative h-[84px] overflow-hidden bg-slate-100 sm:h-32">
+                              <div className="checkout-package-image relative h-[76px] overflow-hidden bg-slate-100 sm:h-28">
                                 {fotoPacote ? (
                                   <img
                                     src={fotoPacote}
@@ -3534,7 +3669,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       </div>
                     )}
 
-                    {comboBrunchTrilhaAtivo && renderAvisoLogisticaCombo()}
+                    {comboBrunchTrilhaAtivo && <div className="checkout-logistics-reminder">{renderAvisoLogisticaCombo()}</div>}
 
                     {formErrors.pacotes && (
                       <p className="text-sm text-red-600">{formErrors.pacotes}</p>
@@ -3546,7 +3681,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                 {/* ============ ETAPA 2 — HORÁRIO + PERGUNTAS POR PACOTE ============ */}
                 {etapa === 2 && (
                   <div ref={horarioRef} className="space-y-3 pb-1">
-                    {comboBrunchTrilhaAtivo && renderAvisoLogisticaCombo()}
+                    {comboBrunchTrilhaAtivo && <div className="checkout-logistics-reminder">{renderAvisoLogisticaCombo()}</div>}
 
                     {diaSelecionadoFechado ? (
                       <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -3555,7 +3690,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         </p>
                       </div>
                     ) : (
-                      selectedPacotes.map((pacote, idxPacote) => {
+                      (pacoteHorarioAtual ? [pacoteHorarioAtual] : []).map((pacote) => {
+                        const idxPacote = indicePacoteHorario;
                         const ehFaixa = pacote.modoHorario === "intervalo";
                         const horariosPacote = (pacote.horarios ?? []).filter((h) =>
                           horariosVisiveis.includes(h)
@@ -3795,6 +3931,9 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                     {formErrors.horario && !diaSelecionadoFechado && (
                       <p className="text-sm text-red-600">{formErrors.horario}</p>
                     )}
+                    {formErrors.perguntas && !diaSelecionadoFechado && (
+                      <p className="text-sm text-red-600">{formErrors.perguntas}</p>
+                    )}
                   </div>
                 )}
 
@@ -3803,7 +3942,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                   <div ref={participantesRef} className="space-y-3 pb-1">
                     {/* Banner se há combo aplicado */}
                     {comboAtivo && (
-                      <div className="flex items-start gap-2 rounded-xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/12 via-white to-[#8B4F23]/5 px-3 py-2 shadow-sm">
+                      <div className="checkout-participant-combo flex items-start gap-2 rounded-xl border border-[#E0B13C] bg-gradient-to-br from-[#E0B13C]/12 via-white to-[#8B4F23]/5 px-3 py-2 shadow-sm">
                         <span className="text-lg flex-shrink-0">🎉</span>
                         <div className="text-[11px] leading-snug">
                           <p className="font-bold text-[#8B4F23]">Combo aplicado: {comboAtivo.nome}</p>
@@ -3812,7 +3951,29 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       </div>
                     )}
 
+                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F7FAEF] p-1">
+                      {["Pessoas", "Pet"].map((label, indice) => (
+                        <button
+                          key={label}
+                          type="button"
+                          disabled={indice > subPassoParticipantes}
+                          onClick={() => indice <= subPassoParticipantes && setSubPassoParticipantes(indice)}
+                          className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                            indice === subPassoParticipantes
+                              ? "bg-[#8B4F23] text-white shadow-sm"
+                              : indice < subPassoParticipantes
+                              ? "bg-white text-[#8B4F23]"
+                              : "cursor-not-allowed text-slate-400"
+                          }`}
+                        >
+                          {indice + 1}. {label}
+                        </button>
+                      ))}
+                    </div>
+
                     {/* Seletor único de participantes por tipo */}
+                    {subPassoParticipantes === 0 && (
+                      <>
                     <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                       <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         Quantos vão?
@@ -3912,7 +4073,14 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       )}
                     </div>
 
+                    {formErrors.participantes && (
+                      <p className="text-sm text-red-600">{formErrors.participantes}</p>
+                    )}
+                      </>
+                    )}
+
                     {/* Pet */}
+                    {subPassoParticipantes === 1 && (
                     <div ref={petRef} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                       <h4 className="mb-2 text-sm font-bold text-[#2D1E0F]">Vai levar pet? <span className="text-red-500">*</span></h4>
 
@@ -3961,9 +4129,6 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                         <p className="mt-2 text-sm text-red-600">{formErrors.pet}</p>
                       )}
                     </div>
-
-                    {formErrors.participantes && (
-                      <p className="text-sm text-red-600">{formErrors.participantes}</p>
                     )}
                   </div>
                 )}
@@ -4467,8 +4632,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                 )}
 
                 {etapa === 4 && subEtapaPagamento !== "metodo" && (
-                  <div ref={paymentFormRef} className="space-y-3 pb-1">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div ref={paymentFormRef} className="checkout-payment-form space-y-3 pb-1">
+                    <div className="checkout-payment-heading flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#8B4F23]/70">
                           Pagamento
@@ -4503,7 +4668,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       <div ref={cartaoRef} className="scroll-mt-24 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                         {cartaoPreview}
 
-                        <div className="border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+                        <div className="checkout-card-substeps border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
                           {/* Stepper bolinhas conectadas */}
                           {(() => {
                             const etapaAtual = subEtapasCartao.findIndex((item) => item.id === subEtapaPagamento);
@@ -4561,21 +4726,22 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                           })()}
                         </div>
 
-                        <div className="p-3 sm:p-4">
+                        <div className="checkout-card-body p-3 sm:p-4">
                           {subEtapaPagamento === "cartao-dados" && dadosPessoaisPagamento}
                           {subEtapaPagamento === "cartao-cartao" && cartaoDadosFields}
                           {subEtapaPagamento === "cartao-endereco" && enderecoCobrancaFields}
+                          {subEtapaPagamento === "cartao-localizacao" && enderecoLocalizacaoFields}
                         </div>
                       </div>
                     )}
                   </div>
                 )}
 
-                {etapa === 4 && <div className="mt-3 lg:hidden">{resumoCardMobile}</div>}
+                {etapa === 4 && <div className="checkout-mobile-summary mt-3 lg:hidden">{resumoCardMobile}</div>}
 
                 </div>{/* fim do wrapper de conteúdo scrollável */}
 
-                <div className="mt-3 flex shrink-0 items-center gap-2.5 border-t border-slate-200 bg-white pt-3">
+                <div className="checkout-actions mt-3 flex shrink-0 items-center gap-2.5 border-t border-slate-200 bg-white pt-3">
                   <button
                     type="button"
                     onClick={handleVoltarEtapa}
@@ -4594,13 +4760,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
                       onClick={handleAvancarEtapa}
                       className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8B4F23] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md sm:ml-auto sm:flex-none sm:px-7"
                     >
-                      {etapa < 4
-                        ? "Continuar"
-                        : subEtapaPagamento === "cartao-dados"
-                        ? "Continuar para cartão"
-                        : subEtapaPagamento === "cartao-cartao"
-                        ? "Continuar para endereço"
-                        : "Continuar"}
+                      {textoBotaoContinuar}
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
@@ -4756,271 +4916,156 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
             </div>
           )}
 
-          {/* ============ RESERVA CONFIRMADA — RESUMO FINAL ============ */}
+          {/* ============ RESULTADO DO PAGAMENTO — TELA DEDICADA ============ */}
           {cartaoResultado?.status === "success" && (
-            <div
-              ref={paymentCardRef}
-              aria-live="polite"
-              className="relative mx-1 my-2 overflow-hidden rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50/40 to-emerald-100/30 p-6 shadow-xl sm:mx-0 sm:my-3 sm:p-10"
-            >
-              <div className="pointer-events-none absolute -top-20 -right-20 w-64 h-64 rounded-full bg-emerald-400/15 blur-3xl" />
-              <div className="pointer-events-none absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-[#E0B13C]/15 blur-3xl" />
-
-              <div className="relative text-center mb-6">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg mb-3 animate-bounce">
-                  <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-emerald-700 mb-1">Reserva confirmada</p>
-                <h3 className="font-display text-2xl sm:text-3xl font-bold text-[#2D1E0F]">
-                  Nos vemos em breve, {nome.split(" ")[0] || "visitante"}!
-                </h3>
-                <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">
-                  Enviamos a confirmação para <strong className="text-[#8B4F23]">{email}</strong>. Guarde esses detalhes:
-                </p>
-              </div>
-
-              <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto mb-6">
-                {[
-                  { label: "Data", value: selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—" },
-                  { label: "Horário", value: horarioResumo || "—" },
-                  { label: "Pessoas", value: String(totalParticipantesSelecionados) },
-                  { label: "Valor", value: formatCurrency(calcularTotal()) },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-xl bg-white/80 backdrop-blur-sm border border-emerald-100 p-3 text-center shadow-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
-                    <p className="text-sm font-bold text-[#2D1E0F] mt-1">{item.value}</p>
+            <div ref={paymentCardRef} aria-live="polite" className="h-full p-1 sm:p-2">
+              <div className="relative grid h-full min-h-0 overflow-hidden rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-[#F7FAEF] to-emerald-50 p-4 shadow-xl sm:p-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-8 lg:p-8">
+                <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-400/15 blur-3xl" />
+                <div className="relative text-center lg:text-left">
+                  <div className="mb-2 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg sm:h-14 sm:w-14">
+                    <svg className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
                   </div>
-                ))}
-              </div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-emerald-700">Reserva confirmada</p>
+                  <h3 className="mt-1 font-display text-2xl font-bold leading-tight text-[#2D1E0F] sm:text-3xl">
+                    Nos vemos em breve, {nome.split(" ")[0] || "visitante"}!
+                  </h3>
+                  <p className="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">
+                    A confirmação foi enviada para <strong className="text-[#8B4F23]">{email}</strong>.
+                  </p>
+                </div>
 
-              {pacotesResumo.length > 0 && (
-                <div className="relative max-w-3xl mx-auto mb-6 rounded-2xl bg-white/70 backdrop-blur-sm border border-emerald-100 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Atividades</p>
-                  <div className="flex flex-wrap gap-2">
-                    {pacotesResumo.map((nomePacote) => (
-                      <span key={nomePacote} className="inline-flex items-center gap-1.5 rounded-full bg-[#8B4F23]/10 text-[#8B4F23] px-3 py-1 text-xs font-medium border border-[#8B4F23]/15">
-                        {nomePacote}
-                      </span>
+                <div className="relative min-w-0">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      { label: "Data", value: selectedDay ? selectedDay.toLocaleDateString("pt-BR") : "—" },
+                      { label: "Horário", value: horarioResumo || "—" },
+                      { label: "Pessoas", value: String(totalParticipantesSelecionados) },
+                      { label: "Valor", value: formatCurrency(calcularTotal()) },
+                    ].map((item) => (
+                      <div key={item.label} className="min-w-0 rounded-xl border border-emerald-100 bg-white/85 px-2 py-2.5 text-center shadow-sm">
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
+                        <p className="mt-0.5 truncate text-xs font-bold text-[#2D1E0F] sm:text-sm">{item.value}</p>
+                      </div>
                     ))}
                   </div>
-                  {comboAtivo && (
-                    <p className="mt-2 text-xs font-semibold text-[#E0B13C]">
-                      🎉 Combo: {comboAtivo.nome}
-                    </p>
-                  )}
-                </div>
-              )}
 
-              <div className="relative flex flex-col sm:flex-row gap-3 justify-center max-w-md mx-auto">
-                <a
-                  href="/minha-reserva"
-                  className="inline-flex items-center justify-center gap-2 bg-[#8B4F23] text-white font-semibold px-6 py-3 rounded-full shadow-md hover:bg-[#A05D2B] transition-all duration-300 hover:shadow-lg text-sm whitespace-nowrap"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  Consultar reserva
-                </a>
-                <button
-                  type="button"
-                  onClick={resetFormulario}
-                  className="inline-flex items-center justify-center gap-2 border border-[#8B4F23]/20 bg-white text-[#8B4F23] font-medium px-6 py-3 rounded-full hover:bg-[#8B4F23]/5 hover:border-[#8B4F23]/40 transition-all duration-300 text-sm whitespace-nowrap"
-                >
-                  Fazer nova reserva
-                </button>
+                  {pacotesResumo.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-[#8B4F23]/10 bg-white/75 p-3">
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Atividades</p>
+                      <p className="mt-1 truncate text-sm font-semibold text-[#2D1E0F]">{pacotesResumo.join(" + ")}</p>
+                    </div>
+                  )}
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <a href="/minha-reserva" className="inline-flex items-center justify-center rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-[#A05D2B]">
+                      Consultar reserva
+                    </a>
+                    <button type="button" onClick={resetFormulario} className="rounded-xl border border-[#8B4F23]/20 bg-white px-4 py-2.5 text-sm font-semibold text-[#8B4F23] transition hover:bg-[#8B4F23]/5">
+                      Fazer nova reserva
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Resultado do Pagamento */}
-          {cartaoResultado?.status !== "success" && (checkoutUrl || pixKey || qrCodeImage || cartaoResultado) && (
-            <div
-              ref={paymentCardRef}
-              aria-live="polite"
-              className="relative mx-1 my-2 w-auto min-w-0 overflow-hidden rounded-2xl p-4 shadow-2xl sm:mx-0 sm:my-3 sm:rounded-3xl sm:p-8"
-              style={{
-                background: (checkoutUrl || pixKey || qrCodeImage)
-                  ? 'linear-gradient(135deg, #1a6b3a 0%, #145c30 100%)'
-                  : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                animation: 'pulse-glow 3s ease-in-out infinite'
-              }}
-            >
-              {(checkoutUrl || pixKey || qrCodeImage) ? (
-                /* ── PIX inline ── */
-                <div className="flex w-full min-w-0 flex-col items-center gap-5">
-                  <div className="flex items-center gap-2 text-center">
-                    <span className="text-2xl">⚡</span>
-                    <h3 className="text-xl font-bold text-white">Pague com PIX</h3>
-                  </div>
-
+          {cartaoResultado?.status !== "success" && (checkoutUrl || pixKey || qrCodeImage) && (
+            <div ref={paymentCardRef} aria-live="polite" className="h-full p-1 sm:p-2">
+              <div className="relative grid h-full min-h-0 content-center gap-3 overflow-hidden rounded-3xl border border-[#8B4F23]/15 bg-gradient-to-br from-[#183122] via-[#1f4931] to-[#8B4F23] p-3 text-white shadow-xl sm:p-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-center lg:gap-8 lg:p-8">
+                <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-[#E0B13C]/20 blur-3xl" />
+                <div className="relative flex min-w-0 flex-col items-center text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#E0B13C]">Pagamento PIX gerado</p>
+                  <h3 className="mt-1 font-display text-xl font-bold leading-tight sm:text-2xl">Escaneie e conclua no seu banco</h3>
                   {qrCodeImage ? (
-                    <div className="rounded-2xl bg-white p-3 shadow-lg">
-                      <img
-                        src={qrCodeImage}
-                        alt="QR Code PIX"
-                        className="mx-auto block h-44 w-44 sm:h-52 sm:w-52"
-                      />
+                    <div className="mt-3 rounded-2xl bg-white p-2.5 shadow-xl">
+                      <img src={qrCodeImage} alt="QR Code PIX" className="block h-28 w-28 sm:h-40 sm:w-40 lg:h-48 lg:w-48" />
                     </div>
                   ) : checkoutUrl ? (
-                    /* fallback: backend returned only invoiceUrl — fetch QR from page */
-                    <div className="flex flex-col items-center gap-3 w-full max-w-sm">
-                      <p className="text-sm text-white/80 text-center">
-                        Seu PIX foi gerado com sucesso. Acesse o link para escanear o QR Code:
-                      </p>
-                      <a
-                        href={checkoutUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-white py-3 text-sm font-semibold text-slate-800 shadow-md hover:bg-white/90 transition-colors"
-                      >
-                        Abrir página de pagamento PIX
-                      </a>
-                    </div>
+                    <a href={checkoutUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex w-full max-w-xs items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#183122] shadow-lg transition hover:bg-[#F7FAEF]">
+                      Abrir página do PIX
+                    </a>
                   ) : null}
+                </div>
 
+                <div className="relative min-w-0 rounded-2xl border border-white/15 bg-white/10 p-3 backdrop-blur-sm sm:p-4">
+                  <p className="text-sm font-bold">PIX copia e cola</p>
+                  <p className="mt-1 hidden text-xs leading-relaxed text-white/75 sm:block">Copie o código abaixo e cole na área PIX do aplicativo do seu banco.</p>
                   {pixKey && (
                     <>
-                      <p className="text-sm text-white/80 text-center max-w-xs">
-                        Escaneie o QR Code acima ou copie o código PIX abaixo para pagar no seu banco.
-                      </p>
-
-                      {/* Copia-e-cola */}
-                      <div className="w-full max-w-sm min-w-0">
-                        <div className="max-h-28 overflow-y-auto rounded-xl border border-white/20 bg-white/10 px-3 py-3 sm:px-4">
-                          <p className="font-mono text-xs break-all text-white/90 leading-relaxed select-all">
-                            {pixKey}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(pixKey).then(() => {
-                              setPixCopiado(true);
-                              setTimeout(() => setPixCopiado(false), 3000);
-                            }).catch(() => {
-                              /* fallback */
-                            });
-                          }}
-                          className={`mt-2 w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-all duration-200 shadow-md ${
-                            pixCopiado
-                              ? 'bg-emerald-400 text-emerald-900'
-                              : 'bg-white text-slate-800 hover:bg-white/90 active:scale-[0.98]'
-                          }`}
-                        >
-                          {pixCopiado ? (
-                            <>
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                              </svg>
-                              Código copiado!
-                            </>
-                          ) : (
-                            <>
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <rect x="9" y="9" width="13" height="13" rx="2" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                              </svg>
-                              Copiar código PIX
-                            </>
-                          )}
-                        </button>
+                      <div className="mt-2 h-10 overflow-hidden rounded-xl border border-white/15 bg-black/15 px-3 py-1.5 sm:mt-3 sm:h-12 sm:py-2">
+                        <p className="break-all font-mono text-[10px] leading-4 text-white/80 select-all">{pixKey}</p>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(pixKey).then(() => {
+                            setPixCopiado(true);
+                            setTimeout(() => setPixCopiado(false), 3000);
+                          }).catch(() => undefined);
+                        }}
+                        className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-md transition ${pixCopiado ? "bg-[#E0B13C] text-[#2D1E0F]" : "bg-white text-[#183122] hover:bg-[#F7FAEF]"}`}
+                      >
+                        {pixCopiado ? "Código copiado!" : "Copiar código PIX"}
+                      </button>
                     </>
                   )}
+                  {expirationDate && <p className="mt-2 text-center text-[10px] text-white/60">Válido até {new Date(expirationDate).toLocaleString("pt-BR")}</p>}
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:mt-3">
+                    <a href="/minha-reserva" className="rounded-xl bg-[#E0B13C] px-2 py-2.5 text-center text-xs font-bold text-[#2D1E0F] transition hover:bg-[#efc859] sm:px-4 sm:text-sm">Consultar reserva</a>
+                    <button type="button" onClick={resetFormulario} className="rounded-xl border border-white/25 bg-white/10 px-2 py-2.5 text-xs font-semibold text-white transition hover:bg-white/15 sm:px-4 sm:text-sm">Nova reserva</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-                  {expirationDate && (
-                    <p className="text-xs text-white/60 text-center">
-                      Válido até {new Date(expirationDate).toLocaleString('pt-BR')}
-                    </p>
-                  )}
-                </div>
-              ) : cartaoResultado ? (
-                /* ── Cartão resultado ── */
-                <div className="text-center space-y-4">
-                  <h3 className="text-xl font-bold text-white">
-                    {cartaoResultado.status === "processing"
-                      ? "Processando pagamento"
-                      : cartaoResultado.status === "retry"
-                      ? "Confirmação em andamento"
-                      : "Pagamento no cartão"}
+          {cartaoResultado && cartaoResultado.status !== "success" && !(checkoutUrl || pixKey || qrCodeImage) && (
+            <div ref={paymentCardRef} aria-live="polite" className="h-full p-1 sm:p-2">
+              <div className="flex h-full items-center justify-center overflow-hidden rounded-3xl border border-[#8B4F23]/15 bg-gradient-to-br from-white via-[#F7FAEF] to-[#EADFCF]/70 p-4 shadow-xl sm:p-8">
+                <div className="w-full max-w-lg text-center">
+                  <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full text-2xl shadow-md ${cartaoResultado.status === "error" ? "bg-rose-100 text-rose-700" : cartaoResultado.status === "processing" ? "bg-[#8B4F23] text-white" : "bg-amber-100 text-amber-800"}`}>
+                    {cartaoResultado.status === "error" ? "!" : cartaoResultado.status === "processing" ? "···" : "⌛"}
+                  </div>
+                  <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.24em] text-[#8B4F23]">Pagamento com cartão</p>
+                  <h3 className="mt-1 font-display text-2xl font-bold text-[#2D1E0F]">
+                    {cartaoResultado.status === "processing" ? "Estamos processando" : cartaoResultado.status === "error" ? "Revise os dados do cartão" : "Confirmação em andamento"}
                   </h3>
-                  <p className="text-base text-white/90">
-                    {cartaoResultado.message}
-                  </p>
-                  <span
-                    className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold ${
-                      cartaoResultado.status === "processing"
-                        ? "bg-sky-500/20 text-sky-100"
-                        : ["pending", "retry"].includes(cartaoResultado.status)
-                        ? "bg-amber-500/20 text-amber-100"
-                        : "bg-rose-500/20 text-rose-100"
-                    }`}
-                  >
-                    {cartaoResultado.status === "processing"
-                      ? "Processando compra"
-                      : cartaoResultado.status === "pending"
-                      ? "Pagamento em processamento"
-                      : cartaoResultado.status === "retry"
-                      ? "Tente consultar novamente"
-                      : "Pagamento não aprovado"}
-                  </span>
-                  {["pending", "retry"].includes(cartaoResultado.status) && (
-                    <a
-                      href="/minha-reserva"
-                      className="mx-auto flex w-full max-w-xs items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white/90"
-                    >
-                      Consultar minha reserva
-                    </a>
-                  )}
-                  {cartaoResultado.status === "error" && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSubEtapaPagamento("cartao-cartao");
-                        checkoutColumnRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                      }}
-                      className="mx-auto flex w-full max-w-xs items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-md transition hover:bg-white/90"
-                    >
-                      Revisar dados do cartão
-                    </button>
-                  )}
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">{cartaoResultado.message}</p>
+                  <div className="mx-auto mt-4 grid max-w-sm gap-2 sm:grid-cols-2">
+                    {["pending", "retry"].includes(cartaoResultado.status) && (
+                      <a href="/minha-reserva" className="rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B]">Consultar reserva</a>
+                    )}
+                    {["error", "retry"].includes(cartaoResultado.status) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (cartaoResultado.status === "error") setSubEtapaPagamento("cartao-cartao");
+                          setCartaoResultado(null);
+                        }}
+                        className="rounded-xl border border-[#8B4F23]/20 bg-white px-4 py-2.5 text-sm font-semibold text-[#8B4F23] transition hover:bg-[#8B4F23]/5"
+                      >
+                        {cartaoResultado.status === "error" ? "Revisar cartão" : "Tentar novamente"}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ) : null}
+              </div>
             </div>
           )}
 
             </div>
 
-            <aside className="hidden min-h-0 lg:block">
+            {!resultadoPagamentoDedicado && <aside className="checkout-sidebar min-h-0">
               <div className="scrollbar-none h-full space-y-3 overflow-y-auto">
                 {etapa === 4 && resumoCard}
                 {etapasCardDesktop}
               </div>
-            </aside>
+            </aside>}
           </div>
         </div>
       </div>
     </section>
   );
-}
-
-// Adicionar CSS para animação do card de pagamento
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes pulse-glow {
-    0%, 100% {
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1);
-      transform: translateY(0);
-    }
-    50% {
-      box-shadow: 0 25px 50px -12px rgba(102, 126, 234, 0.4), 0 0 30px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.2);
-      transform: translateY(-2px);
-    }
-  }
-`;
-if (!document.head.querySelector('style[data-payment-card]')) {
-  style.setAttribute('data-payment-card', 'true');
-  document.head.appendChild(style);
 }
