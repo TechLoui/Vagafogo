@@ -1,7 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const DEFAULT_SITE_URL = "https://vagafogopiri.com.br";
+const DEFAULT_SITE_URL = "https://vagafogo.com.br";
 const SITE_NAME = "Santuário Vagafogo";
 const frontendDirectory = path.resolve(__dirname, "..");
 const distDirectory = path.join(frontendDirectory, "dist");

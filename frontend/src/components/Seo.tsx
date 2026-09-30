@@ -5,7 +5,7 @@ import homeImage from "../assets/hero/hero-1.webp";
 import visitImage from "../assets/Carrossel-1.webp";
 import trailImage from "../assets/trilhaecologica/trilhaecologica-2.jpg";
 
-const DEFAULT_SITE_URL = "https://vagafogopiri.com.br";
+const DEFAULT_SITE_URL = "https://vagafogo.com.br";
 const configuredSiteUrl = (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined)?.trim();
 const SITE_URL = (configuredSiteUrl || DEFAULT_SITE_URL).replace(/\/+$/, "");
 const SITE_NAME = "Santuário Vagafogo";

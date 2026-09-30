@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://vagafogopiri.com.br/sitemap.xml
+Sitemap: https://vagafogo.com.br/sitemap.xml
