@@ -27,6 +27,9 @@
   # antes do teste de diretorio para evitar o redirect automatico /rota/.
   RewriteRule ^(brunch|trilha|planeje-sua-visita|educacao-ambiental|historia|historia/pirenopolis|reservar|admin|login|minha-reserva)$ $1/index.html [L]
 
+  # CRM e Agente sao rotas privadas do React Router e nunca devem cair no 404.
+  RewriteRule ^(?:CRM(?:/login)?|agente)/?$ /index.html [L,NC]
+
   # A URL tecnica do documento de erro nunca deve ser indexada como pagina valida.
   # Precisa vir antes do teste de diretorio, pois /404 existe fisicamente no build.
   RewriteRule ^404/?$ - [R=404,L]
@@ -60,7 +63,7 @@
 </IfModule>
 
 <IfModule mod_setenvif.c>
-  SetEnvIf Request_URI "^/(admin|login|minha-reserva)(/|$)" VAGAFOGO_NOINDEX=1
+  SetEnvIf Request_URI "^/(admin|login|minha-reserva|CRM|agente)(/|$)" VAGAFOGO_NOINDEX=1
   SetEnvIf Request_URI "^/formulario/" VAGAFOGO_NOINDEX=1
   SetEnvIf Request_URI "^/assets/" VAGAFOGO_VERSIONED_ASSET=1
   SetEnvIf Request_URI "^/(robots\.txt|sitemap\.xml)$" VAGAFOGO_DISCOVERY_FILE=1
