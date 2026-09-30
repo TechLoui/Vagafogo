@@ -2,13 +2,14 @@ import { createHash, randomUUID } from "crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin, obterStorageBucketAdmin } from "./firebaseAdmin";
 import {
+  enviarMensagemWhatsappGerenciada,
+  obterStatusWhatsApp,
   registrarObservadorAckWhatsapp,
   registrarObservadorMensagemWhatsapp,
   type WhatsappAckEvent,
   type WhatsappInboundEvent,
   type WhatsappMediaPayload,
 } from "./whatsapp";
-import { requestAgentService } from "./agentGateway";
 
 export type CampaignSegment =
   | "inactive90"
@@ -536,36 +537,11 @@ const trackingUrlFor = (campaignId: string, recipientId: string) => {
   return `${base}/r/${encodeURIComponent(campaignId)}/${encodeURIComponent(recipientId)}`;
 };
 
-const enviarViaGatewayAgente = async (
+const enviarViaDisparadorCampanhas = async (
   phone: string,
   text: string,
   media?: WhatsappMediaPayload,
-) => {
-  let gatewayMedia: { dataUrl: string; filename: string } | undefined;
-  if (media) {
-    const bucket = obterStorageBucketAdmin();
-    if (!bucket) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-    const [buffer] = await bucket.file(media.storagePath).download();
-    gatewayMedia = {
-      dataUrl: `data:${media.mimeType};base64,${buffer.toString("base64")}`,
-      filename: media.filename,
-    };
-  }
-  const response = await requestAgentService("gateway", "/api/whatsapp/campaign-send", {
-    method: "POST",
-    body: { phone, text, ...(gatewayMedia ? { media: gatewayMedia } : {}) },
-    timeoutMs: 45_000,
-  });
-  const body = response.body && typeof response.body === "object"
-    ? response.body as Record<string, unknown>
-    : {};
-  return {
-    enviado: response.status < 300 && body.ok === true,
-    motivo: response.status < 300 ? undefined : clean(body.error ?? `HTTP_${response.status}`, 500),
-    messageId: clean(body.messageId, 200) || undefined,
-    midiaEnviada: body.mediaSent === true,
-  };
-};
+) => enviarMensagemWhatsappGerenciada(phone, text, media);
 
 export const enviarTesteInternoCampanhaWhatsapp = async (
   input: Pick<CriarCampanhaInput, "variacoes" | "midia">,
@@ -603,7 +579,7 @@ export const enviarTesteInternoCampanhaWhatsapp = async (
     atualizadoEm: FieldValue.serverTimestamp(),
   });
   try {
-    const result = await enviarViaGatewayAgente(destination, message, media);
+    const result = await enviarViaDisparadorCampanhas(destination, message, media);
     await auditRef.update({
       status: result.enviado ? "enviado" : "erro",
       messageId: result.messageId ?? null,
@@ -700,7 +676,7 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     const media = campaign.midia && typeof campaign.midia === "object"
       ? campaign.midia as WhatsappMediaPayload
       : undefined;
-    const result = await enviarViaGatewayAgente(String(recipientData.telefone ?? ""), message, media);
+    const result = await enviarViaDisparadorCampanhas(String(recipientData.telefone ?? ""), message, media);
     const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
 
     if (result.enviado) {
@@ -790,14 +766,6 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
           lockAte: FieldValue.delete(),
           atualizadoEm: FieldValue.serverTimestamp(),
         });
-        batch.update(campaignRef, {
-          erros: FieldValue.increment(1),
-          aguardando: FieldValue.increment(-1),
-          proximoDisparoEm: Timestamp.fromMillis(Date.now() + 5 * 60000),
-          lockOwner: FieldValue.delete(),
-          lockAte: FieldValue.delete(),
-          atualizadoEm: FieldValue.serverTimestamp(),
-        });
         await batch.commit().catch(() => undefined);
         return;
       }
@@ -834,7 +802,7 @@ const handleAck = async (event: WhatsappAckEvent) => {
       transaction.update(campaignRef, { erros: FieldValue.increment(1), atualizadoEm: FieldValue.serverTimestamp() });
       return;
     }
-    // Baileys: 2 = servidor, 3 = entregue no aparelho, 4+ = lido/tocado.
+    // whatsapp-web.js: 1/2 = enviado/servidor, 3 = aparelho, 4+ = lido/tocado.
     const nextStatus = event.ack >= 4 ? "lido" : event.ack >= 3 ? "entregue" : "enviado";
     if ((ranks[current] ?? 0) >= ranks[nextStatus]) return;
     const campaignPatch: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = { atualizadoEm: FieldValue.serverTimestamp() };
@@ -878,13 +846,17 @@ const handleInbound = async (event: WhatsappInboundEvent) => {
   });
 };
 
-export const obterCapacidadeCampanhasWhatsapp = () => ({
+export const obterCapacidadeCampanhasWhatsapp = () => {
+  const whatsapp = obterStatusWhatsApp();
+  return {
   envioHabilitado: CAMPAIGN_SENDING_ENABLED,
+  conectado: whatsapp.status === "ready",
   intervaloMinimoSegundos: 60,
   limiteDiarioMaximo: 500,
-  provedor: "Agente Vagafogo / Baileys",
-  recomendacao: "Homologue com o teste interno e mantenha consentimento, limites, pausas e monitoramento de bloqueios.",
-});
+  provedor: "Central WhatsApp Vagafogo / whatsapp-web.js",
+  recomendacao: "Conecte a Central WhatsApp no Admin, homologue com o teste interno e mantenha consentimento, limites, pausas e monitoramento de bloqueios.",
+  };
+};
 
 export const registrarAckCampanhaExterno = async (event: WhatsappAckEvent) => handleAck(event);
 

@@ -421,7 +421,7 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
     <section className="agent-metrics">{cards.map((card) => { const Icon = card.icon; return <article key={card.label} className={`tone-${card.tone}`}><span><Icon /></span><div><small>{card.label}</small><strong>{card.value}</strong></div></article>; })}</section>
     <section className="agent-overview-grid">
       <article className="agent-card agent-connection-card">
-        <div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Canal de atendimento</h2><p>O mesmo gateway atenderá agente, reservas e automações.</p></div></div>
+        <div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Canal de atendimento</h2><p>Esta sessão atende clientes e confirma reservas iniciadas pelo Agente. Campanhas usam outra sessão no Admin.</p></div></div>
         <div className={`agent-connection-state ${status.ready && !controlsUnavailable ? "is-online" : ""}`}><i /><div><strong>{status.ready ? controlsUnavailable ? "Conectado, com envios protegidos" : "WhatsApp conectado" : "WhatsApp desconectado"}</strong><span>{controlsUnavailable ? status.contactControls?.lastError || "Lista de bloqueios indisponível" : status.connectedNumber ? `Número: +${status.connectedNumber}` : status.lastError || "Conecte pelo QR Code para iniciar."}</span></div></div>
         <dl><div><dt>Último evento</dt><dd>{dateTimeLabel(status.lastMessageAt)}</dd></div><div><dt>Versão do gateway</dt><dd>{status.build || "—"}</dd></div></dl>
         <button onClick={() => onOpen("whatsapp")}>{status.ready ? "Gerenciar conexão" : "Conectar agora"}<FaArrowLeft /></button>

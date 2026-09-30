@@ -63,6 +63,49 @@ type ComboRecord = { id: string; raw: FirebaseFirestore.DocumentData };
 
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
 const normalizeText = (value: unknown) => clean(value, 300).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const canonicalLeadValue = (value: unknown) => normalizeText(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+const canonicalLeadStage = (value: unknown) => {
+  const stage = canonicalLeadValue(value);
+  const exact = new Set([
+    "contato_iniciado",
+    "interesse_identificado",
+    "cotacao",
+    "dados_em_coleta",
+    "aguardando_confirmacao",
+    "pagamento_pendente",
+    "concluida",
+    "atendimento_humano",
+    "encerrado_sem_reserva",
+  ]);
+  if (exact.has(stage)) return stage;
+  if (/conclu|confirmad|reserva_realizada|pagamento_aprovado/.test(stage)) return "concluida";
+  if (/humano|atendente|handoff/.test(stage)) return "atendimento_humano";
+  if (/sem_reserva|nao_convert|desist|cancel|encerrad/.test(stage)) return "encerrado_sem_reserva";
+  if (/pagamento|pix|cobranca/.test(stage)) return "pagamento_pendente";
+  if (/aguardando_confirm|decisao|confirmacao/.test(stage)) return "aguardando_confirmacao";
+  if (/dados|coleta|checklist|cadastro/.test(stage)) return "dados_em_coleta";
+  if (/cotacao|orcamento|disponibilidade|valor/.test(stage)) return "cotacao";
+  if (/interesse|experiencia_escolhida/.test(stage)) return "interesse_identificado";
+  return "contato_iniciado";
+};
+const canonicalLeadOutcome = (value: unknown) => {
+  const outcome = canonicalLeadValue(value);
+  const exact = new Set([
+    "em_andamento",
+    "aguardando_cliente",
+    "pagamento_pendente",
+    "reserva_confirmada",
+    "nao_convertido",
+    "atendimento_humano",
+  ]);
+  if (exact.has(outcome)) return outcome;
+  if (/reserva_confirm|pagamento_(aprovado|confirmado)|pago|conclu/.test(outcome)) return "reserva_confirmada";
+  if (/humano|atendente|handoff/.test(outcome)) return "atendimento_humano";
+  if (/nao_convert|sem_reserva|desist|cancel|perdid/.test(outcome)) return "nao_convertido";
+  if (/pagamento|pix|cobranca/.test(outcome)) return "pagamento_pendente";
+  if (/aguard|sem_resposta|cliente_responder/.test(outcome)) return "aguardando_cliente";
+  return "em_andamento";
+};
 const nonNegativeInteger = (value: unknown, maximum = 500) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(maximum, Math.max(0, Math.trunc(number))) : 0;
@@ -552,8 +595,8 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
     sessionId,
     nome: clean(input.nome, 160) || null,
     email: clean(input.email, 240) || null,
-    etapa: clean(input.etapa, 60) || "contato_iniciado",
-    resultado: clean(input.resultado, 60) || "em_andamento",
+    etapa: canonicalLeadStage(input.etapa),
+    resultado: canonicalLeadOutcome(input.resultado),
     motivo: clean(input.motivo, 240) || null,
     pacoteIds: array(input.pacoteIds),
     atividades: array(input.atividades),

@@ -178,7 +178,7 @@ const TEMPLATE_BOAS_VINDAS_PADRAO =
   "Olá {nome}! 🌿 Seja muito bem-vindo(a) ao Santuário Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.";
 
 const TEMPLATE_CONFIRMACAO_PADRAO =
-  "Olá {nome}! ✅ Sua reserva no Santuário Vagafogo foi confirmada com sucesso.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\nNos vemos em breve! 🌿";
+  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva no Santuário Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\nNos vemos em breve! 🌿";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",

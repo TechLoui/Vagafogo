@@ -104,12 +104,13 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
     if (warning && !instructions.some((line) => line.includes(warning))) instructions.push(`• ${String(item.nome ?? "Experiência")}: ${warning}`);
   });
   const hasBariatric = Number(reserva.bariatrica) > 0 || Object.entries(participantMap).some(([id, quantity]) => Number(quantity) > 0 && String(typeNames[id] ?? id).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("bariat"));
-  if (hasBariatric) instructions.push("• Bariátrica: envie a foto da carteirinha por este WhatsApp para validação e leve o documento no dia.");
+  if (hasBariatric) instructions.push("• Bariátrica: apresente a carteirinha na recepção no dia da visita; não é necessário enviar foto pelo WhatsApp.");
 
   return [
     `Pagamento confirmado, ${name}! ✅`,
     "",
     `Sua reserva foi concluída com sucesso.`,
+    "A confirmação foi automática; não é necessário enviar comprovante.",
     `Código: ${reservaId}`,
     `Data: ${date || "—"}`,
     ...(details.length ? ["", reserva.comboId ? `Combo: ${activity}` : `Experiência: ${activity}`, ...details] : [`Experiência: ${activity}${time ? ` às ${time}` : ""}`]),

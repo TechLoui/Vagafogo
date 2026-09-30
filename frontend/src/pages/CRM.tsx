@@ -758,7 +758,7 @@ function CampaignsSection({ campaigns, campaignsError, customers, pendingReserva
   const [detailsCampaign, setDetailsCampaign] = useState<CampaignRecord | null>(null);
   const [recipients, setRecipients] = useState<CampaignRecipient[]>([]);
   const [recipientFilter, setRecipientFilter] = useState("todos");
-  const [capability, setCapability] = useState<{ envioHabilitado: boolean; recomendacao?: string } | null>(null);
+  const [capability, setCapability] = useState<{ envioHabilitado: boolean; conectado?: boolean; recomendacao?: string } | null>(null);
 
   useEffect(() => {
     if (!mediaFile) {
@@ -948,10 +948,10 @@ function CampaignsSection({ campaigns, campaignsError, customers, pendingReserva
 
   return <section className="crm-section"><SectionTitle title="Operação de campanhas" subtitle="O histórico e seus indicadores respeitam o período selecionado; o público operacional usa a base atual completa." actions={<button className="crm-primary-button" onClick={() => openBuilder("inactive180")}><FaPlus /> Nova campanha</button>} />
     {campaignsError ? <div className="crm-demo-notice"><FaExclamationCircle /><span>{campaignsError}</span></div> : null}
-    <div className="crm-whatsapp-connection crm-whatsapp-connection--ready">
+    <div className={`crm-whatsapp-connection ${capability?.conectado ? "crm-whatsapp-connection--ready" : ""}`}>
       <div className="crm-whatsapp-connection__head">
-        <div className="crm-whatsapp-connection__title"><span><FaWhatsapp /></span><div><small>Remetente centralizado</small><h3>Agente Vagafogo</h3><p>Campanhas usam a sessão Baileys do serviço separado do Agente. QR Code, bloqueios e estado da conexão ficam em um único painel.</p></div></div>
-        <button type="button" className="crm-primary-button" onClick={() => window.location.assign("/agente")}><FaRobot /> Abrir Agente</button>
+        <div className="crm-whatsapp-connection__title"><span><FaWhatsapp /></span><div><small>Sessão exclusiva para disparos</small><h3>Central WhatsApp do Admin</h3><p>Campanhas, avisos internos e automações usam esta sessão. O número do Agente permanece separado e exclusivo para atendimento.</p></div></div>
+        <button type="button" className="crm-primary-button" onClick={() => window.location.assign("/admin?aba=whatsapp")}><FaWhatsapp /> Abrir Central WhatsApp</button>
       </div>
     </div>
     <div className="crm-summary-strip"><article><span className="is-blue"><FaBullhorn /></span><div><small>Campanhas registradas</small><strong>{campaigns.length}</strong></div></article><article><span className="is-green"><FaWhatsapp /></span><div><small>Envios efetuados</small><strong>{compactNumber.format(totalSent)}</strong></div></article><article><span className="is-orange"><FaClock /></span><div><small>Aguardando envio</small><strong>{compactNumber.format(totalQueued)}</strong></div></article><article><span className="is-red"><FaExclamationCircle /></span><div><small>Erros finais</small><strong>{compactNumber.format(totalErrors)}</strong></div></article></div>
@@ -994,7 +994,7 @@ function DataSourcesSection({ reservations, journeys }: { reservations: CRMReser
     <article className="crm-card crm-source-card is-connected"><div><span><FaCalendarAlt /></span><em>Conectado</em></div><h3>Sistema de reservas</h3><strong>{reservations.length} registros válidos</strong><p>Nome, telefone, experiência, data, participantes, valor e status alimentam clientes, financeiro e reativação.</p></article>
     <article className="crm-card crm-source-card is-connected"><div><span><FaLink /></span><em>{capturedReservations.length} capturadas · {inferredReservations.length} históricas</em></div><h3>Origem e domínio</h3><strong>{attributedReservations.length} reservas classificadas</strong><p>Domínio, canal, página de entrada, referência, UTMs e campanha são gravados nas novas reservas.</p></article>
     <article className="crm-card crm-source-card is-connected"><div><span><FaGlobe /></span><em>{journeys.length} jornadas</em></div><h3>Funil do checkout</h3><strong>{recoverableJourneys.length} abandono(s) recuperável(is)</strong><p>Etapas, interesse e conversão são medidos por sessão. Contato fica disponível somente com opt-in explícito.</p></article>
-    <article className="crm-card crm-source-card is-connected"><div><span><FaWhatsapp /></span><em>Serviço Agente Vagafogo</em></div><h3>WhatsApp</h3><strong>Atendimento e campanhas no mesmo gateway</strong><p>QR Code e bloqueios ficam no /agente; campanhas registram envio, erro, resposta, clique, reserva e receita atribuída.</p></article>
+    <article className="crm-card crm-source-card is-connected"><div><span><FaWhatsapp /></span><em>Duas sessões independentes</em></div><h3>WhatsApp</h3><strong>Agente para atendimento; Admin para campanhas</strong><p>O QR Code do bot fica em /agente. Campanhas e automações usam a Central WhatsApp do Admin e registram envio, erro, resposta, clique, reserva e receita atribuída.</p></article>
   </div><div className="crm-card crm-data-roadmap"><div className="crm-card__head"><div><span><FaSlidersH /></span><h3>Checklist para ativação</h3></div></div><ol><li><span>1</span><div><strong>Publicar os dois repositórios</strong><p>Agente e Vagafogo continuam em serviços Railway separados; publicar também as regras atualizadas do Firestore.</p></div></li><li><span>2</span><div><strong>Configurar a ponte privada</strong><p>Informar as URLs dos dois serviços do Agente e o mesmo token interno nos três serviços.</p></div></li><li><span>3</span><div><strong>Homologar em /agente</strong><p>Validar diagnóstico, simulação de disponibilidade, conversa privada, PIX controlado e confirmação após o pagamento.</p></div></li><li><span>4</span><div><strong>Testar campanhas</strong><p>Enviar texto e foto + legenda somente ao número interno e conferir entrega, clique, resposta, reserva e receita atribuída.</p></div></li><li><span>5</span><div><strong>Liberar a fila real</strong><p>Ativar campanhas somente depois dos testes e definir a retenção de jornadas, auditorias e leads estruturados.</p></div></li></ol></div></section>;
 }
 

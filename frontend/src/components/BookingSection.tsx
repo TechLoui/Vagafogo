@@ -2903,7 +2903,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
         // Mostrar mensagem sobre carteirinha bariátrica
         if (bariatrica > 0) {
-          alert("⚠️ IMPORTANTE: Como você selecionou opção bariátrica, será necessário enviar a foto da carteirinha via WhatsApp após realizar a reserva para validação.");
+          alert("⚠️ IMPORTANTE: Como você selecionou opção bariátrica, será necessário apresentar a carteirinha na recepção no dia da visita.");
         }
       } else {
         console.error('❌ Status não é OK:', resposta?.status);
@@ -4272,7 +4272,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                       {((obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "bariat") ?? 0) > 0) && (
                         <div className="mt-3 p-2.5 bg-orange-50 border border-orange-200 rounded-lg">
                           <p className="text-xs text-orange-700">
-                            ⚠️ <strong>Bariátrica:</strong> envie carteirinha via WhatsApp após a reserva.
+                            ⚠️ <strong>Bariátrica:</strong> apresente a carteirinha na recepção no dia da visita.
                           </p>
                         </div>
                       )}
@@ -4460,7 +4460,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
             {((obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, "bariat") ?? 0) > 0) && (
               <div className="mb-6 p-3 bg-orange-50 border border-orange-200 rounded-lg">
                 <p className="text-sm text-orange-700">
-                  ⚠️ <strong>Importante:</strong> É obrigatório apresentar a carteirinha bariátrica via WhatsApp após a reserva para validação.
+                  ⚠️ <strong>Importante:</strong> É obrigatório apresentar a carteirinha bariátrica na recepção no dia da visita.
                 </p>
               </div>
             )}

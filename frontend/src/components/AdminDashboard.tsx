@@ -95,7 +95,7 @@ const criarEmailUsoEscopo = (enviados = 0, limite = 0): EmailUsoEscopo => {
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 
 const emailTemplateConfirmacaoPadrao =
-  'Olá {nome}!\n\nSeu pagamento foi confirmado e sua reserva está garantida.\n\nAtividade: {atividade}\nData: {datareserva}\nHorário: {horario}\nParticipantes: {participantes}\nValor: {valor}\n\nAguardamos você na Vagafogo.';
+  'Olá {nome}!\n\nSeu pagamento foi confirmado automaticamente e sua reserva está garantida. Não é necessário enviar comprovante.\n\nAtividade: {atividade}\nData: {datareserva}\nHorário: {horario}\nParticipantes: {participantes}\nValor: {valor}\n\nAguardamos você na Vagafogo.';
 
 const whatsappTemplateMensagemManualPadrao =
   'Olá {nome}!\n\nAqui é o Vagafogo. Estamos entrando em contato sobre sua reserva para {datareserva} {horario}.\n\nAtividade: {atividade}\nParticipantes: {participantes}';
