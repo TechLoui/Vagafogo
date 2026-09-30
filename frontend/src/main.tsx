@@ -2,7 +2,10 @@ import React from "react"
 import ReactDOM from "react-dom/client"
 import { RouterProvider } from "react-router-dom"
 import { router } from "./routes"
+import { inicializarAtribuicao } from "./features/crm/attribution"
 import "./index.css"
+
+inicializarAtribuicao()
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

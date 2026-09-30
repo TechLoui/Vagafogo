@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
-import { criarReserva, type GrupoParticipacaoPayload } from "./reservas";
+import {
+  criarReserva,
+  type AtribuicaoReservaPayload,
+  type GrupoParticipacaoPayload,
+} from "./reservas";
 import { reservaContaParaOcupacao } from "./reservaStatus";
 import { obterCamposRetencaoReservaNaAtualizacao } from "./reservaRetention";
 import { enviarEmailConfirmacaoReserva } from "./emailReservas";
@@ -16,6 +20,9 @@ import {
   normalizarChaveIdempotenciaPagamento,
   renovarTentativaPagamento,
 } from "./paymentIdempotency";
+import { enfileirarAvisoNovaReservaEquipe } from "./whatsappReservationAlerts";
+import { registrarConclusaoJornadaReserva } from "./crmJourneys";
+import { registrarResultadoCampanhaReserva } from "./whatsappCampaigns";
 
 const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
 
@@ -374,6 +381,8 @@ export type CriarCobrancaPayload = {
   cartaoTitularNascimento?: string;
   temPet?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
+  atribuicao?: AtribuicaoReservaPayload;
+  whatsappMarketingOptIn?: boolean;
 };
 
 export type CriarCobrancaResponse = {
@@ -413,6 +422,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     cartaoTitularNascimento,
     temPet,
     perguntasPersonalizadas,
+    atribuicao,
+    whatsappMarketingOptIn,
 } = req.body as CriarCobrancaPayload;
 
   const horarioFormatado = horario?.toString().trim();
@@ -893,8 +904,33 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       status: "aguardando",
       temPet,
       perguntasPersonalizadas,
+      atribuicao,
+      whatsappMarketingOptIn,
     });
     console.log("✅ Reserva criada com ID:", reservaId);
+
+    void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, false).catch((error) => {
+      console.error(`[crm][campanha] Falha ao atribuir reserva ${reservaId}:`, error);
+    });
+
+    void registrarConclusaoJornadaReserva(atribuicao?.sessionId, reservaId).catch((error) => {
+      console.error(`[crm][jornada] Falha ao concluir jornada ${reservaId}:`, error);
+    });
+
+    void enfileirarAvisoNovaReservaEquipe(reservaId, {
+      nome,
+      email,
+      telefone,
+      atividade,
+      valor,
+      data,
+      horario: horarioFormatado,
+      participantes: participantesConsiderados,
+      formaPagamento: billingType,
+      status: "aguardando",
+    }).catch((error) => {
+      console.error(`[whatsapp][aviso-reserva] Falha ao enfileirar ${reservaId}:`, error);
+    });
 
     const dataHoje = new Date().toISOString().split("T")[0];
     const splitConfig = getSplitConfig();
@@ -1085,6 +1121,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusPagamento);
 
     if (pagamentoConfirmado) {
+      void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, true).catch((error) => {
+        console.error(`[crm][campanha] Falha ao atribuir pagamento ${reservaId}:`, error);
+      });
       try {
         const reservaRef = doc(db, "reservas", reservaId);
         const reservaSnap = await getDoc(reservaRef);

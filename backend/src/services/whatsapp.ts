@@ -1,4 +1,4 @@
-import { Client, LocalAuth, RemoteAuth } from "whatsapp-web.js";
+import { Client, LocalAuth, MessageMedia, RemoteAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
 import { doc, getDoc } from "firebase/firestore";
 import { mkdir, rm } from "fs/promises";
@@ -131,11 +131,47 @@ type WhatsappConfig = {
   mensagemConfirmacaoAutomatica?: string;
 };
 
-type ResultadoEnvio = {
+export type ResultadoEnvio = {
   enviado: boolean;
   motivo?: string;
   mensagem?: string;
   telefone?: string;
+  messageId?: string;
+  midiaEnviada?: boolean;
+};
+
+export type WhatsappMediaPayload = {
+  storagePath: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  filename: string;
+  sizeBytes: number;
+};
+
+export type WhatsappAckEvent = {
+  messageId: string;
+  ack: number;
+};
+
+export type WhatsappInboundEvent = {
+  telefone: string;
+  mensagem: string;
+  messageId: string;
+  recebidoEm: Date;
+};
+
+type AckObserver = (event: WhatsappAckEvent) => void | Promise<void>;
+type InboundObserver = (event: WhatsappInboundEvent) => void | Promise<void>;
+const ackObservers = new Set<AckObserver>();
+const inboundObservers = new Set<InboundObserver>();
+
+export const registrarObservadorAckWhatsapp = (observer: AckObserver) => {
+  ackObservers.add(observer);
+  return () => ackObservers.delete(observer);
+};
+
+export const registrarObservadorMensagemWhatsapp = (observer: InboundObserver) => {
+  inboundObservers.add(observer);
+  return () => inboundObservers.delete(observer);
 };
 
 const TEMPLATE_BOAS_VINDAS_PADRAO =
@@ -712,6 +748,33 @@ function registrarHandlersClient(): void {
   registeredClient.on("remote_session_saved" as any, () => {
     console.log("[whatsapp] Sessao sincronizada com Firebase Storage");
   });
+
+  registeredClient.on("message_ack", (message, ack) => {
+    const messageId = message?.id?._serialized;
+    if (!messageId) return;
+    ackObservers.forEach((observer) => {
+      Promise.resolve(observer({ messageId, ack: Number(ack) })).catch((error) => {
+        console.warn("[whatsapp] Observador de confirmacao falhou:", error);
+      });
+    });
+  });
+
+  registeredClient.on("message", (message) => {
+    if (message?.fromMe) return;
+    const telefone = message?.from?.replace(/\D/g, "") ?? "";
+    if (!telefone) return;
+    const event: WhatsappInboundEvent = {
+      telefone,
+      mensagem: message.body ?? "",
+      messageId: message.id?._serialized ?? "",
+      recebidoEm: new Date((message.timestamp || Math.floor(Date.now() / 1000)) * 1000),
+    };
+    inboundObservers.forEach((observer) => {
+      Promise.resolve(observer(event)).catch((error) => {
+        console.warn("[whatsapp] Observador de mensagem recebida falhou:", error);
+      });
+    });
+  });
 }
 
 export async function desconectarWhatsApp(): Promise<void> {
@@ -831,6 +894,69 @@ const obterConfig = async (): Promise<WhatsappConfig> => {
   if (!snap.exists()) return {};
   return snap.data() as WhatsappConfig;
 };
+
+export async function enviarMensagemWhatsappGerenciada(
+  telefoneInformado: string,
+  mensagemInformada: string,
+  midia?: WhatsappMediaPayload,
+): Promise<ResultadoEnvio> {
+  const telefone = normalizarTelefone(telefoneInformado);
+  const mensagem = mensagemInformada.trim();
+  if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
+  if (!mensagem) return { enviado: false, motivo: "mensagem_vazia" };
+
+  iniciarWhatsApp();
+  clearIdleTimer();
+  const pronto = await aguardarWhatsAppPronto(WHATSAPP_SEND_READY_TIMEOUT_MS);
+  if (!pronto || !client) {
+    scheduleIdleShutdown();
+    return { enviado: false, motivo: "whatsapp_nao_conectado" };
+  }
+
+  let whatsappId: string | null;
+  try {
+    whatsappId = await obterNumeroWhatsapp(telefone);
+  } catch (error) {
+    handleInitFailure(error);
+    return { enviado: false, motivo: "whatsapp_nao_conectado" };
+  }
+  if (!whatsappId || !client) return { enviado: false, motivo: "telefone_sem_whatsapp" };
+
+  try {
+    let sent;
+    if (midia) {
+      const bucket = obterStorageBucketAdmin();
+      if (!bucket) return { enviado: false, motivo: "storage_indisponivel", telefone };
+      if (!/^crm-campanhas\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+$/.test(midia.storagePath)) {
+        return { enviado: false, motivo: "midia_invalida", telefone };
+      }
+      const [buffer] = await bucket.file(midia.storagePath).download();
+      if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
+        return { enviado: false, motivo: "midia_tamanho_invalido", telefone };
+      }
+      const media = new MessageMedia(
+        midia.mimeType,
+        buffer.toString("base64"),
+        midia.filename.slice(0, 120) || "campanha.jpg",
+        buffer.length,
+      );
+      sent = await client.sendMessage(whatsappId, media, { caption: mensagem, sendSeen: false });
+    } else {
+      sent = await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
+    }
+    scheduleIdleShutdown();
+    return {
+      enviado: true,
+      mensagem,
+      telefone,
+      messageId: sent?.id?._serialized,
+      midiaEnviada: Boolean(midia),
+    };
+  } catch (error: any) {
+    scheduleIdleShutdown();
+    return { enviado: false, motivo: error?.message || "erro_envio", telefone };
+  }
+}
 
 export async function enviarBoasVindasWhatsapp(
   reservaId: string,

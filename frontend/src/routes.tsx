@@ -103,6 +103,51 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: "/CRM/login",
+        lazy: async () => {
+          const { CRMLogin } = await import("./pages/CRMLogin");
+          return { Component: CRMLogin };
+        },
+      },
+      {
+        path: "/CRM",
+        lazy: async () => {
+          const [{ CRM }, { ProtectedRoute }] = await Promise.all([
+            import("./pages/CRM"),
+            import("./components/ProtectedRoute"),
+          ]);
+
+          function ProtectedCRM() {
+            return (
+              <ProtectedRoute redirectTo="/CRM/login">
+                <CRM />
+              </ProtectedRoute>
+            );
+          }
+
+          return { Component: ProtectedCRM };
+        },
+      },
+      {
+        path: "/agente",
+        lazy: async () => {
+          const [{ Agente }, { ProtectedRoute }] = await Promise.all([
+            import("./pages/Agente"),
+            import("./components/ProtectedRoute"),
+          ]);
+
+          function ProtectedAgent() {
+            return (
+              <ProtectedRoute redirectTo="/CRM/login">
+                <Agente />
+              </ProtectedRoute>
+            );
+          }
+
+          return { Component: ProtectedAgent };
+        },
+      },
+      {
         path: "*",
         lazy: async () => {
           const { NotFound } = await import("./pages/NotFound");

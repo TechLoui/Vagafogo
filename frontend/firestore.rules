@@ -58,6 +58,51 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Campanhas e auditoria sao escritas somente pelo backend autenticado.
+    match /crm_campanhas/{campaignId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+
+      match /destinatarios/{recipientId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+
+    // Resultado dos disparos unitarios de homologacao para o numero interno.
+    match /crm_campanhas_testes/{testId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Jornadas do checkout sao gravadas somente pelo backend. O painel
+    // autenticado recebe leitura para funil, origem e recuperacao consentida.
+    match /crm_jornadas/{journeyId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Resumo comercial produzido pelo Agente. A conversa bruta nao e salva.
+    match /crm_leads_agente/{leadId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /crm_whatsapp_contatos/{documentId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /crm_whatsapp_mensagens/{documentId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /whatsapp_notificacoes_internas/{documentId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     // O backend legado le configuracoes com o Web SDK sem login e atualiza a
     // cota de e-mail. A listagem da colecao continua restrita ao painel.
     match /configuracoes/{configId} {

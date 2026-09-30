@@ -1,4 +1,4 @@
-import express, { ErrorRequestHandler } from "express";
+import express, { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
 import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
@@ -25,6 +25,40 @@ import {
   encerrarWhatsAppSeMemoriaAlta,
   logarConfigWhatsapp,
 } from "../services/whatsapp";
+import {
+  cancelarCampanhaWhatsapp,
+  criarCampanhaWhatsapp,
+  armazenarMidiaCampanhaWhatsapp,
+  enviarTesteInternoCampanhaWhatsapp,
+  iniciarCampanhaWhatsapp,
+  iniciarProcessadorCampanhasWhatsapp,
+  obterCapacidadeCampanhasWhatsapp,
+  obterAtribuicaoCampanhaPorTelefone,
+  pausarCampanhaWhatsapp,
+  processarFilaCampanhasWhatsapp,
+  registrarAckCampanhaExterno,
+  registrarCliqueCampanha,
+  registrarRespostaCampanhaExterna,
+  reenfileirarErrosCampanhaWhatsapp,
+  removerMidiaCampanhaWhatsapp,
+  retomarCampanhaWhatsapp,
+} from "../services/whatsappCampaigns";
+import {
+  iniciarProcessadorAvisosNovaReserva,
+  processarAvisosNovaReservaEquipe,
+  reenfileirarAvisoNovaReservaEquipe,
+} from "../services/whatsappReservationAlerts";
+import { exigirAdminCrm, obterIdentidadeAdminCrm } from "../middleware/crmAdminAuth";
+import { limitarEventosJornada } from "../middleware/crmJourneyRateLimit";
+import { registrarEventoJornada } from "../services/crmJourneys";
+import { agentServiceConfigured, requestAgentService, type AgentResponse } from "../services/agentGateway";
+import { exigirServicoAgente } from "../middleware/agentInternalAuth";
+import {
+  criarLinkCartaoAgente,
+  listarExperienciasAgente,
+  registrarLeadAgente,
+  simularReservaAgente,
+} from "../services/agentReservationTools";
 
 const app = express();
 
@@ -35,6 +69,26 @@ app.set("trust proxy", 1);
 // Permitir requisições do localhost:5173 (seu front-end)
 app.use(cors());
 
+app.post('/crm/campanhas/midia', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '5mb' }), exigirAdminCrm, async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body)) {
+      res.status(400).json({ success: false, error: 'CAMPAIGN_MEDIA_BODY_INVALID' });
+      return;
+    }
+    const midia = await armazenarMidiaCampanhaWhatsapp(
+      req.body,
+      req.get('Content-Type'),
+      decodeURIComponent(req.get('X-File-Name') ?? 'campanha'),
+      obterIdentidadeAdminCrm(res),
+    );
+    res.status(201).json({ success: true, midia });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
 // Formularios extensos podem ultrapassar o default de 100 KB do body-parser.
 // A validacao de dominio ainda limita o documento normalizado antes do Firestore.
 app.use(express.json({ limit: "1mb" }));
@@ -44,12 +98,300 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/r/:campanhaId/:destinatarioId', async (req, res) => {
+  const base = (process.env.PUBLIC_SITE_BASE_URL ?? "https://vagafogo.com.br").trim().replace(/\/+$/, "");
+  const campaignId = String(req.params.campanhaId ?? "").slice(0, 100);
+  const recipientId = String(req.params.destinatarioId ?? "").slice(0, 100);
+  await registrarCliqueCampanha(campaignId, recipientId).catch((error) => {
+    console.error("[crm][campanha] Falha ao registrar clique:", error);
+  });
+  const query = new URLSearchParams({
+    cid: campaignId,
+    rid: recipientId,
+    source_channel: "whatsapp",
+    utm_source: "whatsapp",
+    utm_medium: "campaign",
+    utm_campaign: campaignId,
+  });
+  res.set("Cache-Control", "no-store");
+  res.redirect(302, `${base}/reservar?${query.toString()}`);
+});
+
+const responderProxyAgente = (res: Response, response: AgentResponse) => {
+  if (response.contentType.includes("application/json")) {
+    res.status(response.status).json(response.body);
+    return;
+  }
+  res.status(response.status).type(response.contentType).send(response.body);
+};
+
+// O painel /agente conversa somente com o backend principal. O segredo entre
+// servicos nunca e exposto no navegador.
+app.get('/crm/agente/status', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/status"));
+});
+
+app.get('/crm/agente/qrcode', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/qrcode", { timeoutMs: 15_000 }));
+});
+
+app.post('/crm/agente/logout', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/logout", { method: "POST" }));
+});
+
+app.post('/crm/agente/reset', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/reset", { method: "POST" }));
+});
+
+app.post('/crm/agente/teste-whatsapp', exigirAdminCrm, async (req, res) => {
+  const phone = String(req.body?.phone ?? "").replace(/\D/g, "").slice(0, 15);
+  const text = String(req.body?.text ?? "").trim().slice(0, 4096);
+  if (!phone || !text) {
+    res.status(400).json({ error: "Informe telefone e mensagem." });
+    return;
+  }
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/test", {
+    method: "POST",
+    body: { phone, text },
+  }));
+});
+
+app.get('/crm/agente/contatos', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/contacts"));
+});
+
+app.get('/crm/agente/contatos/:jid/mensagens', exigirAdminCrm, async (req, res) => {
+  const after = Number.isFinite(Number(req.query.after)) ? Math.max(0, Number(req.query.after)) : 0;
+  responderProxyAgente(res, await requestAgentService(
+    "gateway",
+    `/api/contacts/${encodeURIComponent(req.params.jid)}/messages?after=${after}`,
+  ));
+});
+
+app.post('/crm/agente/contatos/:jid/modo', exigirAdminCrm, async (req, res) => {
+  const mode = String(req.body?.mode ?? "").trim().toLowerCase();
+  if (!['bot', 'human', 'blocked'].includes(mode)) {
+    res.status(400).json({ error: "Modo invalido." });
+    return;
+  }
+  const identity = obterIdentidadeAdminCrm(res);
+  responderProxyAgente(res, await requestAgentService(
+    "gateway",
+    `/api/contacts/${encodeURIComponent(req.params.jid)}/mode`,
+    {
+      method: "POST",
+      body: {
+        mode,
+        reason: String(req.body?.reason ?? "").trim().slice(0, 250),
+        phone: String(req.body?.phone ?? "").replace(/\D/g, "").slice(0, 15),
+        name: String(req.body?.name ?? "").trim().slice(0, 120),
+        updatedBy: identity.email ?? identity.uid,
+      },
+    },
+  ));
+});
+
+app.post('/crm/agente/contatos/:jid/enviar', exigirAdminCrm, async (req, res) => {
+  const text = String(req.body?.text ?? "").trim().slice(0, 4096);
+  if (!text) {
+    res.status(400).json({ error: "Mensagem vazia." });
+    return;
+  }
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/send", {
+    method: "POST",
+    body: { jid: req.params.jid, text },
+  }));
+});
+
+app.delete('/crm/agente/contatos/:jid/sessao', exigirAdminCrm, async (req, res) => {
+  responderProxyAgente(res, await requestAgentService(
+    "gateway",
+    `/api/contacts/${encodeURIComponent(req.params.jid)}/session`,
+    { method: "DELETE" },
+  ));
+});
+
+app.get('/crm/agente/prompt', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("ai", "/api/prompt"));
+});
+
+app.post('/crm/agente/prompt', exigirAdminCrm, async (req, res) => {
+  const prompt = String(req.body?.prompt ?? "").trim();
+  if (!prompt || prompt.length > 50_000) {
+    res.status(400).json({ error: "Prompt invalido." });
+    return;
+  }
+  responderProxyAgente(res, await requestAgentService("ai", "/api/prompt", { method: "POST", body: { prompt } }));
+});
+
+app.get('/crm/agente/config', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("ai", "/api/config"));
+});
+
+app.post('/crm/agente/config', exigirAdminCrm, async (req, res) => {
+  responderProxyAgente(res, await requestAgentService("ai", "/api/config", { method: "POST", body: req.body ?? {} }));
+});
+
+app.post('/crm/agente/testar', exigirAdminCrm, async (req, res) => {
+  const pergunta = String(req.body?.pergunta ?? "").trim().slice(0, 4096);
+  const sessionId = String(req.body?.session_id ?? "").trim().slice(0, 160);
+  if (!pergunta) {
+    res.status(400).json({ error: "Mensagem vazia." });
+    return;
+  }
+  responderProxyAgente(res, await requestAgentService("ai", "/ask", {
+    method: "POST",
+    body: { pergunta, session_id: sessionId, mode: "test" },
+    timeoutMs: 100_000,
+  }));
+});
+
 // Webhook test - resposta instantânea
+app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
+  const [gateway, ai] = await Promise.all([
+    requestAgentService("gateway", "/api/whatsapp/status", { timeoutMs: 15_000 }),
+    requestAgentService("ai", "/", { timeoutMs: 15_000 }),
+  ]);
+  let reservas = { ok: false, pacotes: 0, erro: null as string | null };
+  try {
+    const pacotes = await listarExperienciasAgente();
+    reservas = { ok: true, pacotes: pacotes.length, erro: null };
+  } catch (error) {
+    reservas.erro = error instanceof Error ? error.message : String(error);
+  }
+  res.json({
+    ok: gateway.status < 400 && ai.status < 400 && reservas.ok,
+    configuracao: {
+      gatewayUrl: agentServiceConfigured("gateway"),
+      aiUrl: agentServiceConfigured("ai"),
+      tokenInterno: Boolean((process.env.AGENT_INTERNAL_API_TOKEN ?? "").trim()),
+      firebasePrincipal: Boolean((process.env.FIREBASE_SERVICE_ACCOUNT ?? "").trim()),
+      asaas: Boolean((process.env.ASAAS_API_KEY ?? "").trim()),
+    },
+    gateway: { ok: gateway.status < 400, status: gateway.status, dados: gateway.body },
+    ai: { ok: ai.status < 400, status: ai.status, dados: ai.body },
+    reservas,
+  });
+});
+
+app.get('/crm/agente/testes/pacotes', exigirAdminCrm, async (_req, res) => {
+  try {
+    res.json({ pacotes: await listarExperienciasAgente() });
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/crm/agente/testes/reserva', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json({ modo: "simulacao", gravaReserva: false, criaCobranca: false, resultado: await simularReservaAgente(req.body ?? {}) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Ferramentas consumidas exclusivamente pelo backend de IA. Nenhuma credencial
+// do banco principal e compartilhada com o servico do agente.
+app.get('/internal/agente/ferramentas/pacotes', exigirServicoAgente, async (_req, res) => {
+  try {
+    res.json({ pacotes: await listarExperienciasAgente() });
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/ferramentas/disponibilidade', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await simularReservaAgente(req.body ?? {}));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async (req, res) => {
+  const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
+  res.json(criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution }));
+});
+
+app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, res) => {
+  try {
+    res.status(201).json(await registrarLeadAgente(req.body ?? {}));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/eventos/ack', exigirServicoAgente, async (req, res) => {
+  const messageId = String(req.body?.messageId ?? "").trim().slice(0, 200);
+  const ack = Number(req.body?.ack);
+  if (!messageId || !Number.isFinite(ack)) {
+    res.status(400).json({ error: "AGENT_ACK_INVALID" });
+    return;
+  }
+  await registrarAckCampanhaExterno({ messageId, ack });
+  res.status(202).json({ ok: true });
+});
+
+app.post('/internal/agente/eventos/inbound', exigirServicoAgente, async (req, res) => {
+  const telefone = String(req.body?.telefone ?? "").replace(/\D/g, "").slice(0, 15);
+  const mensagem = String(req.body?.mensagem ?? "").trim().slice(0, 4096);
+  const messageId = String(req.body?.messageId ?? "").trim().slice(0, 200);
+  if (!telefone || !mensagem || !messageId) {
+    res.status(400).json({ error: "AGENT_INBOUND_INVALID" });
+    return;
+  }
+  await registrarRespostaCampanhaExterna({ telefone, mensagem, messageId, recebidoEm: new Date() });
+  res.status(202).json({ ok: true });
+});
+
+app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (req, res) => {
+  const idempotencyKey = String(req.body?.idempotencyKey ?? "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(idempotencyKey)) {
+    res.status(400).json({ error: "AGENT_PAYMENT_IDEMPOTENCY_KEY_INVALID" });
+    return;
+  }
+  if (req.body?.creditCard || req.body?.creditCardHolderInfo) {
+    res.status(400).json({ error: "AGENT_CARD_DATA_NOT_ACCEPTED" });
+    return;
+  }
+  const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
+  req.headers["idempotency-key"] = idempotencyKey;
+  req.body = {
+    ...(req.body ?? {}),
+    billingType: "PIX",
+    creditCard: undefined,
+    creditCardHolderInfo: undefined,
+    atribuicao: {
+      ...(req.body?.atribuicao && typeof req.body.atribuicao === "object" ? req.body.atribuicao : {}),
+      sessionId: String(req.body?.sessionId ?? req.body?.atribuicao?.sessionId ?? "").slice(0, 100),
+      sourceChannel: "whatsapp",
+      utmSource: "whatsapp",
+      utmMedium: "agente",
+      utmCampaign: "reserva_assistida",
+      capturedAt: new Date().toISOString(),
+      ...campaignAttribution,
+    },
+    whatsappMarketingOptIn: req.body?.whatsappMarketingOptIn === true,
+  };
+  await criarCobrancaHandler(req, res);
+});
+
 app.post('/webhook-test', (req, res) => {
   res.status(200).send('OK');
 });
 
 app.post("/criar-cobranca", criarCobrancaHandler);
+app.post("/crm/jornadas/evento", express.text({ type: "text/plain", limit: "20kb" }), limitarEventosJornada, async (req, res) => {
+  try {
+    const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body ?? {};
+    const resultado = await registrarEventoJornada(payload);
+    res.status(202).json({ success: true, ...resultado });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === "FIREBASE_ADMIN_UNAVAILABLE" ? 503 : 400;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
 app.use('/webhook', webhookRouter);
 app.use('/api', apiRouter);
 
@@ -192,16 +534,88 @@ app.post('/emails/:reservaId/excluir', async (req, res) => {
 });
 
 // Boas-vindas via WhatsApp ao marcar chegada do cliente
-app.get('/whatsapp/status', (_req, res) => {
+app.get('/whatsapp/status', exigirAdminCrm, (_req, res) => {
   res.json(obterStatusWhatsApp());
 });
 
-app.post('/whatsapp/start', (_req, res) => {
+app.get('/crm/campanhas/capacidade', exigirAdminCrm, (_req, res) => {
+  res.json(obterCapacidadeCampanhasWhatsapp());
+});
+
+app.delete('/crm/campanhas/midia', exigirAdminCrm, async (req, res) => {
+  try {
+    await removerMidiaCampanhaWhatsapp(req.body?.storagePath, obterIdentidadeAdminCrm(res));
+    res.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.post('/crm/campanhas', exigirAdminCrm, async (req, res) => {
+  try {
+    const resultado = await criarCampanhaWhatsapp(req.body ?? {}, obterIdentidadeAdminCrm(res));
+    res.status(201).json({ success: true, ...resultado });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.post('/crm/campanhas/teste-interno', exigirAdminCrm, async (req, res) => {
+  try {
+    const resultado = await enviarTesteInternoCampanhaWhatsapp(req.body ?? {}, obterIdentidadeAdminCrm(res));
+    res.json({ success: resultado.enviado, ...resultado });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.post('/crm/campanhas/:campanhaId/:acao', exigirAdminCrm, async (req, res) => {
+  try {
+    const { campanhaId, acao } = req.params;
+    if (acao === 'iniciar') await iniciarCampanhaWhatsapp(campanhaId);
+    else if (acao === 'pausar') await pausarCampanhaWhatsapp(campanhaId);
+    else if (acao === 'retomar') await retomarCampanhaWhatsapp(campanhaId);
+    else if (acao === 'cancelar') await cancelarCampanhaWhatsapp(campanhaId);
+    else if (acao === 'reenfileirar-erros') {
+      const reenfileirados = await reenfileirarErrosCampanhaWhatsapp(campanhaId);
+      res.json({ success: true, reenfileirados });
+      return;
+    } else {
+      res.status(404).json({ success: false, error: 'CAMPAIGN_ACTION_NOT_FOUND' });
+      return;
+    }
+    void processarFilaCampanhasWhatsapp();
+    res.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'CAMPAIGN_NOT_FOUND' ? 404 : message === 'CAMPAIGN_SENDING_DISABLED' || message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 409;
+    res.status(statusCode).json({ success: false, error: message });
+  }
+});
+
+app.post('/whatsapp/avisos-reserva/:reservaId/reenviar', exigirAdminCrm, async (req, res) => {
+  try {
+    await reenfileirarAvisoNovaReservaEquipe(req.params.reservaId);
+    void processarAvisosNovaReservaEquipe();
+    res.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'RESERVATION_ALERT_NOT_FOUND' ? 404 : 500).json({ success: false, error: message });
+  }
+});
+
+app.post('/whatsapp/start', exigirAdminCrm, (_req, res) => {
   iniciarWhatsApp();
   res.json(obterStatusWhatsApp());
 });
 
-app.post('/whatsapp/logout', async (_req, res) => {
+app.post('/whatsapp/logout', exigirAdminCrm, async (_req, res) => {
   try {
     await desconectarWhatsApp();
     res.json(obterStatusWhatsApp());
@@ -211,7 +625,7 @@ app.post('/whatsapp/logout', async (_req, res) => {
   }
 });
 
-app.post('/whatsapp/boas-vindas/:reservaId', async (req, res) => {
+app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) => {
   try {
     const { reservaId } = req.params;
     if (!reservaId) {
@@ -251,7 +665,7 @@ app.post('/whatsapp/boas-vindas/:reservaId', async (req, res) => {
 });
 
 // Reenvio manual de confirmacao WhatsApp (caso o webhook tenha falhado, por ex)
-app.post('/whatsapp/confirmacao/:reservaId', async (req, res) => {
+app.post('/whatsapp/confirmacao/:reservaId', exigirAdminCrm, async (req, res) => {
   try {
     const { reservaId } = req.params;
     if (!reservaId) {
@@ -375,6 +789,8 @@ const WHATSAPP_AUTO_START = (process.env.WHATSAPP_AUTO_START ?? "false").toLower
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
   iniciarLimpezaAutomaticaReservas();
+  iniciarProcessadorAvisosNovaReserva();
+  iniciarProcessadorCampanhasWhatsapp();
   logarConfigWhatsapp();
 
   // Monitor de memoria — encerra WhatsApp se RSS passar do limite (default 700MB)

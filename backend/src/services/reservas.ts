@@ -22,6 +22,64 @@ const normalizarMapa = (mapa?: Record<string, number>) => {
   );
 };
 
+export type AtribuicaoReservaPayload = Partial<Record<
+  | "sessionId"
+  | "entryDomain"
+  | "entryPath"
+  | "referringDomain"
+  | "sourceDomain"
+  | "sourceChannel"
+  | "capturedAt"
+  | "utmSource"
+  | "utmMedium"
+  | "utmCampaign"
+  | "utmContent"
+  | "utmTerm"
+  | "gclid"
+  | "fbclid"
+  | "campaignId"
+  | "recipientId"
+  | "agentSessionId",
+  unknown
+>>;
+
+const normalizarAtribuicao = (atribuicao?: AtribuicaoReservaPayload) => {
+  if (!atribuicao || typeof atribuicao !== "object") return undefined;
+  const limites: Record<keyof AtribuicaoReservaPayload, number> = {
+    sessionId: 100,
+    entryDomain: 180,
+    entryPath: 300,
+    referringDomain: 180,
+    sourceDomain: 180,
+    sourceChannel: 30,
+    capturedAt: 40,
+    utmSource: 180,
+    utmMedium: 180,
+    utmCampaign: 180,
+    utmContent: 180,
+    utmTerm: 180,
+    gclid: 250,
+    fbclid: 250,
+    campaignId: 100,
+    recipientId: 100,
+    agentSessionId: 100,
+  };
+  const normalizada = Object.entries(limites).reduce<Record<string, string>>(
+    (resultado, [campo, limite]) => {
+      const valor = atribuicao[campo as keyof AtribuicaoReservaPayload];
+      if (typeof valor === "string" && valor.trim()) {
+        const normalizado = valor.trim().slice(0, limite);
+        resultado[campo] = ["entryDomain", "referringDomain", "sourceDomain"].includes(campo)
+          ? normalizado.toLowerCase().replace(/^https?:\/\//, "").split("/")[0].replace(/^www\./, "").replace(/:\d+$/, "")
+          : normalizado;
+      }
+      return resultado;
+    },
+    {}
+  );
+  return Object.keys(normalizada).length > 0 ? normalizada : undefined;
+};
+
 export type GrupoParticipacaoPayload = {
   tipo: "combo" | "pacote";
   refId: string;
@@ -112,6 +170,8 @@ export type CriarReservaPayload = {
   observacao?: string;
   temPet?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
+  atribuicao?: AtribuicaoReservaPayload;
+  whatsappMarketingOptIn?: boolean;
 };
 
 export async function criarReserva(payload: CriarReservaPayload): Promise<string> {
@@ -139,6 +199,8 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     observacao = "",
     temPet,
     perguntasPersonalizadas,
+    atribuicao,
+    whatsappMarketingOptIn = false,
   } = payload;
 
   const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
@@ -166,6 +228,9 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     : [];
   const comboIdNormalizado = comboId ? comboId.toString() : null;
   const horariosPorPacoteNormalizado = normalizarHorariosPorPacote(horariosPorPacote);
+  const atribuicaoNormalizada = normalizarAtribuicao(atribuicao);
+  const dominioOrigem = atribuicaoNormalizada?.sourceDomain ?? atribuicaoNormalizada?.entryDomain;
+  const canalOrigem = atribuicaoNormalizada?.sourceChannel === "whatsapp" ? "whatsapp" : "site";
 
   const reservaId = reservaIdInformado?.trim() || uuidv4();
   const reservaRef = doc(db, "reservas", reservaId);
@@ -198,6 +263,14 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
       ? { horariosPorPacote: horariosPorPacoteNormalizado }
       : {}),
     status,
+    origem: "checkout",
+    canalOrigem,
+    ...(dominioOrigem ? { dominioOrigem } : {}),
+    ...(atribuicaoNormalizada ? { atribuicao: atribuicaoNormalizada } : {}),
+    whatsappMarketingOptIn: whatsappMarketingOptIn === true,
+    ...(whatsappMarketingOptIn === true
+      ? { dataWhatsappMarketingOptIn: new Date(), origemWhatsappMarketingOptIn: "checkout" }
+      : {}),
     confirmada: reservaEstaConfirmada({ status }),
     observacao,
     temPet,

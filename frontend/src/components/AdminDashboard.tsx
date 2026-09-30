@@ -3,7 +3,7 @@
 import React from 'react';
 
 import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, getDocFromServer, setDoc, onSnapshot, writeBatch, deleteField, Timestamp } from 'firebase/firestore';
-import { db, storage } from '../../firebase';
+import { auth, db, storage } from '../../firebase';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import {
   normalizarStatusReserva as normalizarStatus,
@@ -103,6 +103,9 @@ const whatsappTemplateMensagemManualPadrao =
 const whatsappTemplateBoasVindasPadrao =
   'Olá {nome}! 🌿 Seja muito bem-vindo(a) ao Santuário Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.';
 
+const whatsappTemplateAvisoNovaReservaPadrao =
+  '🌿 Nova reserva recebida\n\nCódigo: {id}\nCliente: {nome}\nTelefone: {telefone}\nE-mail: {email}\nData: {data}\nHorário: {horario}\nAtividade: {atividade}\nParticipantes: {participantes}\nValor: {valor}\nPagamento: {pagamento}\nStatus: {status}';
+
 const emailAssuntoConfirmacaoPadrao = 'Confirmação de reserva - Vagafogo';
 
 const whatsappPlaceholders = [
@@ -114,6 +117,20 @@ const whatsappPlaceholders = [
   '{participantes}',
   '{telefone}',
   '{valor}',
+  '{status}',
+];
+
+const whatsappAvisoReservaPlaceholders = [
+  '{id}',
+  '{nome}',
+  '{telefone}',
+  '{email}',
+  '{data}',
+  '{horario}',
+  '{atividade}',
+  '{participantes}',
+  '{valor}',
+  '{pagamento}',
   '{status}',
 ];
 
@@ -427,7 +444,26 @@ interface WhatsappConfig {
   /** Template do WhatsApp enviado automaticamente quando a reserva e paga. */
   whatsappMensagemConfirmacao?: string;
 
+  /** Aviso interno enviado quando uma nova reserva entra no sistema. */
+  avisoNovaReservaEquipeAtivo?: boolean;
+  avisoNovaReservaEquipeNumero?: string;
+  mensagemAvisoNovaReservaEquipe?: string;
+
 }
+
+type WhatsappReservationAlert = {
+  id: string;
+  reservaId: string;
+  nome: string;
+  data: string;
+  horario: string;
+  status: 'aguardando' | 'enviando' | 'enviado' | 'erro';
+  tentativas: number;
+  destino?: string;
+  ultimoErro?: string;
+  criadoEm?: Timestamp;
+  enviadoEm?: Timestamp;
+};
 
 interface TipoCliente {
 
@@ -1951,10 +1987,16 @@ export default function AdminDashboard() {
     mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
     mensagemBoasVindas: whatsappTemplateBoasVindasPadrao,
     modelosMensagemManual: [],
+    avisoNovaReservaEquipeAtivo: true,
+    avisoNovaReservaEquipeNumero: '5562991150376',
+    mensagemAvisoNovaReservaEquipe: whatsappTemplateAvisoNovaReservaPadrao,
 
   });
 
   const [whatsappSalvando, setWhatsappSalvando] = useState(false);
+  const [whatsappTestando, setWhatsappTestando] = useState<'aviso-reserva' | 'agradecimento' | null>(null);
+  const [whatsappReservationAlerts, setWhatsappReservationAlerts] = useState<WhatsappReservationAlert[]>([]);
+  const [whatsappAlertRetryingId, setWhatsappAlertRetryingId] = useState<string | null>(null);
 
   const [emailFila, setEmailFila] = useState<EmailFilaResumo>({
     emailHabilitado: false,
@@ -3351,6 +3393,16 @@ const totalParticipantesDoDia = useMemo(() => {
     return montarMensagemWhatsApp(template, dadosExemploWhatsapp);
   }, [dadosExemploWhatsapp, whatsappConfig.mensagemBoasVindas]);
 
+  const mensagemPreviewAvisoNovaReserva = useMemo(() => {
+    const template = whatsappConfig.mensagemAvisoNovaReservaEquipe || whatsappTemplateAvisoNovaReservaPadrao;
+    return montarMensagemWhatsApp(template, {
+      ...dadosExemploWhatsapp,
+      id: 'ABC123',
+      email: 'cliente@exemplo.com',
+      pagamento: 'PIX',
+    });
+  }, [dadosExemploWhatsapp, whatsappConfig.mensagemAvisoNovaReservaEquipe]);
+
   const modelosPreviewWhatsappManual = useMemo(() => {
     const modelosCustomizados = (whatsappConfig.modelosMensagemManual ?? []).map((modelo) => {
       const mensagem = modelo.mensagem?.trim() || '';
@@ -4203,8 +4255,10 @@ const totalParticipantesDoDia = useMemo(() => {
       // Quando MARCA chegada, dispara mensagem de boas-vindas no WhatsApp do cliente
       if (!chegou) {
         try {
+          const token = await auth.currentUser?.getIdToken();
           const resp = await fetch(`${API_BASE}/whatsapp/boas-vindas/${reserva.id}`, {
             method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
           });
           const data = await resp.json().catch(() => ({}));
           if (data?.enviado) {
@@ -5423,6 +5477,14 @@ const totalParticipantesDoDia = useMemo(() => {
           typeof rawLegado.mensagemConfirmacaoAutomatica === 'string'
             ? rawLegado.mensagemConfirmacaoAutomatica
             : '';
+        const avisoNovaReservaEquipeNumero =
+          typeof rawLegado.avisoNovaReservaEquipeNumero === 'string' && rawLegado.avisoNovaReservaEquipeNumero.trim()
+            ? rawLegado.avisoNovaReservaEquipeNumero.trim()
+            : '5562991150376';
+        const mensagemAvisoNovaReservaEquipe =
+          typeof rawLegado.mensagemAvisoNovaReservaEquipe === 'string' && rawLegado.mensagemAvisoNovaReservaEquipe.trim()
+            ? rawLegado.mensagemAvisoNovaReservaEquipe
+            : whatsappTemplateAvisoNovaReservaPadrao;
 
         setWhatsappConfig({
           ativo: rawEmail.ativo !== false,
@@ -5433,6 +5495,9 @@ const totalParticipantesDoDia = useMemo(() => {
           modelosMensagemManual,
           whatsappConfirmacaoAtiva,
           whatsappMensagemConfirmacao,
+          avisoNovaReservaEquipeAtivo: rawLegado.avisoNovaReservaEquipeAtivo !== false,
+          avisoNovaReservaEquipeNumero,
+          mensagemAvisoNovaReservaEquipe,
         });
 
     } catch (error) {
@@ -5446,6 +5511,9 @@ const totalParticipantesDoDia = useMemo(() => {
         mensagemConfirmacaoManual: whatsappTemplateMensagemManualPadrao,
         mensagemBoasVindas: whatsappTemplateBoasVindasPadrao,
         modelosMensagemManual: [],
+        avisoNovaReservaEquipeAtivo: true,
+        avisoNovaReservaEquipeNumero: '5562991150376',
+        mensagemAvisoNovaReservaEquipe: whatsappTemplateAvisoNovaReservaPadrao,
       });
 
     }
@@ -5552,6 +5620,8 @@ const totalParticipantesDoDia = useMemo(() => {
   const salvarMensagensWhatsapp = async () => {
     const mensagemManual = whatsappConfig.mensagemConfirmacaoManual.trim();
     const mensagemBoasVindas = (whatsappConfig.mensagemBoasVindas ?? '').trim();
+    const avisoNovaReservaEquipeNumero = (whatsappConfig.avisoNovaReservaEquipeNumero ?? '').replace(/\D/g, '');
+    const mensagemAvisoNovaReservaEquipe = (whatsappConfig.mensagemAvisoNovaReservaEquipe ?? '').trim();
 
     if (!mensagemManual) {
       setFeedback({ type: 'error', message: 'Informe a mensagem padrão do WhatsApp.' });
@@ -5560,6 +5630,16 @@ const totalParticipantesDoDia = useMemo(() => {
 
     if (!mensagemBoasVindas) {
       setFeedback({ type: 'error', message: 'Informe a mensagem do Disparador Agradecimento.' });
+      return;
+    }
+
+    if (whatsappConfig.avisoNovaReservaEquipeAtivo !== false && avisoNovaReservaEquipeNumero.length < 12) {
+      setFeedback({ type: 'error', message: 'Informe o WhatsApp interno com país e DDD.' });
+      return;
+    }
+
+    if (whatsappConfig.avisoNovaReservaEquipeAtivo !== false && !mensagemAvisoNovaReservaEquipe) {
+      setFeedback({ type: 'error', message: 'Informe a mensagem do aviso de nova reserva.' });
       return;
     }
 
@@ -5586,6 +5666,9 @@ const totalParticipantesDoDia = useMemo(() => {
             // Disparo automatico de WhatsApp quando reserva e paga
             confirmacaoAutomaticaAtiva: whatsappConfig.whatsappConfirmacaoAtiva ?? false,
             mensagemConfirmacaoAutomatica: (whatsappConfig.whatsappMensagemConfirmacao ?? '').trim(),
+            avisoNovaReservaEquipeAtivo: whatsappConfig.avisoNovaReservaEquipeAtivo !== false,
+            avisoNovaReservaEquipeNumero,
+            mensagemAvisoNovaReservaEquipe,
             atualizadoEm: new Date(),
           },
           { merge: true }
@@ -5597,6 +5680,8 @@ const totalParticipantesDoDia = useMemo(() => {
         mensagemConfirmacaoManual: mensagemManual,
         mensagemBoasVindas,
         modelosMensagemManual: modelos,
+        avisoNovaReservaEquipeNumero,
+        mensagemAvisoNovaReservaEquipe,
       }));
 
       setFeedback({
@@ -5789,7 +5874,12 @@ const totalParticipantesDoDia = useMemo(() => {
   const carregarStatusWhatsapp = useCallback(async () => {
     try {
       setWhatsappStatusCarregando(true);
-      const response = await fetch(`${API_BASE}/whatsapp/status`);
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sua sessão expirou. Entre novamente.');
+      const token = await user.getIdToken();
+      const response = await fetch(`${API_BASE}/whatsapp/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data?.error || `Status ${response.status}`);
@@ -5813,7 +5903,13 @@ const totalParticipantesDoDia = useMemo(() => {
   const iniciarConexaoWhatsapp = async () => {
     try {
       setWhatsappAcaoCarregando('start');
-      const response = await fetch(`${API_BASE}/whatsapp/start`, { method: 'POST' });
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sua sessão expirou. Entre novamente.');
+      const token = await user.getIdToken();
+      const response = await fetch(`${API_BASE}/whatsapp/start`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data?.error || `Status ${response.status}`);
@@ -5838,7 +5934,13 @@ const totalParticipantesDoDia = useMemo(() => {
   const desconectarConexaoWhatsapp = async () => {
     try {
       setWhatsappAcaoCarregando('logout');
-      const response = await fetch(`${API_BASE}/whatsapp/logout`, { method: 'POST' });
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sua sessão expirou. Entre novamente.');
+      const token = await user.getIdToken();
+      const response = await fetch(`${API_BASE}/whatsapp/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data?.error || `Status ${response.status}`);
@@ -5857,6 +5959,84 @@ const totalParticipantesDoDia = useMemo(() => {
       setFeedback({ type: 'error', message: error?.message || 'Erro ao desconectar WhatsApp.' });
     } finally {
       setWhatsappAcaoCarregando(null);
+    }
+  };
+
+  const enviarTesteAutomacaoWhatsapp = async (tipo: 'aviso-reserva' | 'agradecimento') => {
+    const user = auth.currentUser;
+    if (!user) {
+      setFeedback({ type: 'error', message: 'Sua sessão expirou. Entre novamente.' });
+      return;
+    }
+
+    if (whatsappStatus.status !== 'ready') {
+      setFeedback({ type: 'error', message: 'Conecte o WhatsApp pelo QR Code antes de enviar o teste.' });
+      return;
+    }
+
+    const mensagem = tipo === 'aviso-reserva'
+      ? mensagemPreviewAvisoNovaReserva.trim()
+      : mensagemPreviewDisparadorAgradecimento.trim();
+    const descricao = tipo === 'aviso-reserva' ? 'aviso de nova reserva' : 'agradecimento';
+    const numero = (whatsappConfig.avisoNovaReservaEquipeNumero ?? '5562991150376').replace(/\D/g, '');
+
+    if (!mensagem) {
+      setFeedback({ type: 'error', message: `Informe a mensagem de ${descricao} antes do teste.` });
+      return;
+    }
+
+    if (!window.confirm(`Enviar um teste de ${descricao} para o número interno terminado em ${numero.slice(-4)}?`)) return;
+
+    setWhatsappTestando(tipo);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`${API_BASE}/crm/campanhas/teste-interno`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ variacoes: [mensagem] }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.enviado !== true) {
+        const motivo = data?.error || data?.motivo || `Status ${response.status}`;
+        throw new Error(motivo === 'whatsapp_nao_conectado' ? 'O WhatsApp não está conectado.' : motivo);
+      }
+      setFeedback({
+        type: 'success',
+        message: `Teste de ${descricao} enviado para ${data?.destinoMascarado ?? `***${numero.slice(-4)}`}.`,
+      });
+    } catch (error: unknown) {
+      setFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : `Não foi possível enviar o teste de ${descricao}.`,
+      });
+    } finally {
+      setWhatsappTestando(null);
+    }
+  };
+
+  const reenviarAvisoNovaReserva = async (reservaId: string) => {
+    const user = auth.currentUser;
+    if (!user) {
+      setFeedback({ type: 'error', message: 'Sua sessão expirou. Entre novamente.' });
+      return;
+    }
+    setWhatsappAlertRetryingId(reservaId);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`${API_BASE}/whatsapp/avisos-reserva/${encodeURIComponent(reservaId)}/reenviar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || `Status ${response.status}`);
+      setFeedback({ type: 'success', message: 'Aviso recolocado na fila de envio.' });
+    } catch (error: unknown) {
+      setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível reenfileirar o aviso.' });
+    } finally {
+      setWhatsappAlertRetryingId(null);
     }
   };
 
@@ -6216,6 +6396,33 @@ const totalParticipantesDoDia = useMemo(() => {
 
     return () => window.clearInterval(intervalId);
   }, [aba, carregarStatusWhatsapp, whatsappStatus.status]);
+
+  useEffect(() => {
+    if (aba !== 'whatsapp') return;
+    return onSnapshot(
+      collection(db, 'whatsapp_notificacoes_internas'),
+      (snapshot) => {
+        const alerts = snapshot.docs.map((document) => {
+          const raw = document.data() as Partial<WhatsappReservationAlert>;
+          return {
+            id: document.id,
+            reservaId: String(raw.reservaId ?? document.id),
+            nome: String(raw.nome ?? 'Cliente'),
+            data: String(raw.data ?? ''),
+            horario: String(raw.horario ?? ''),
+            status: (raw.status ?? 'aguardando') as WhatsappReservationAlert['status'],
+            tentativas: Number(raw.tentativas ?? 0),
+            destino: raw.destino ? String(raw.destino) : undefined,
+            ultimoErro: raw.ultimoErro ? String(raw.ultimoErro) : undefined,
+            criadoEm: raw.criadoEm,
+            enviadoEm: raw.enviadoEm,
+          } satisfies WhatsappReservationAlert;
+        }).sort((a, b) => (b.criadoEm?.toMillis?.() ?? 0) - (a.criadoEm?.toMillis?.() ?? 0));
+        setWhatsappReservationAlerts(alerts);
+      },
+      (error) => console.warn('Não foi possível acompanhar os avisos internos:', error),
+    );
+  }, [aba]);
 
   useEffect(() => {
     if (aba !== 'email') return;
@@ -15436,28 +15643,16 @@ const totalParticipantesDoDia = useMemo(() => {
         <section className="admin-tab-content space-y-6">
 
           <AdminTabHeader
-            title="WhatsApp"
-            description={'Conecte o WhatsApp do Disparador Agradecimento e configure a mensagem automatica enviada ao marcar chegada.'}
+            title="Central do WhatsApp"
+            description="Conecte o número remetente, configure cada automação e faça testes internos antes de liberar os disparos."
             icon={FaWhatsapp}
             actions={[
               {
-                label: whatsappStatus.status === 'ready' ? 'Atualizar status' : 'Gerar QR Code',
-                icon: whatsappStatus.status === 'ready' ? FaSyncAlt : FaQrcode,
-                onClick: whatsappStatus.status === 'ready' ? carregarStatusWhatsapp : iniciarConexaoWhatsapp,
-                variant: whatsappStatus.status === 'ready' ? undefined : 'primary',
-                disabled: whatsappStatusCarregando || whatsappAcaoCarregando === 'start',
-              },
-              {
-                label: 'Desconectar',
-                icon: FaSignOutAlt,
-                onClick: desconectarConexaoWhatsapp,
-                disabled: whatsappAcaoCarregando === 'logout' || whatsappStatus.status === 'idle',
-              },
-              {
-                label: 'Salvar WhatsApp',
+                label: whatsappSalvando ? 'Salvando...' : 'Salvar configurações',
                 icon: FaCheck,
                 onClick: salvarMensagensWhatsapp,
                 disabled: whatsappSalvando,
+                variant: 'primary',
               },
             ]}
             metrics={[
@@ -15467,13 +15662,6 @@ const totalParticipantesDoDia = useMemo(() => {
                 hint: whatsappStatusInfo.hint,
                 icon: FaWhatsapp,
                 tone: whatsappStatusInfo.tone,
-              },
-              {
-                label: 'Disparador',
-                value: 'Disparador Agradecimento',
-                hint: 'Nome exibido ao vincular pelo QR Code',
-                icon: FaQrcode,
-                tone: 'indigo',
               },
               {
                 label: 'Sessao',
@@ -15493,28 +15681,85 @@ const totalParticipantesDoDia = useMemo(() => {
                 tone: whatsappStatus.authStrategy === 'remote' ? 'emerald' : 'amber',
               },
               {
-                label: 'Mensagem',
-                value: whatsappConfig.mensagemBoasVindas.trim() ? 'Pronta' : 'Pendente',
-                hint: 'Enviada quando a chegada e confirmada',
-                icon: FaClipboardList,
-                tone: whatsappConfig.mensagemBoasVindas.trim() ? 'emerald' : 'amber',
+                label: 'Automações',
+                value: `${[
+                  whatsappConfig.avisoNovaReservaEquipeAtivo !== false,
+                  whatsappConfig.whatsappConfirmacaoAtiva === true,
+                  Boolean(whatsappConfig.mensagemBoasVindas.trim()),
+                ].filter(Boolean).length}/3 prontas`,
+                hint: 'Nova reserva, confirmação e agradecimento',
+                icon: FaPaperPlane,
+                tone: 'indigo',
               },
               {
-                label: 'Modelos manuais',
-                value: `${modelosPreviewWhatsappManual.length} modelo(s)`,
-                hint: 'Aparecem antes de abrir o WhatsApp do cliente',
-                icon: FaEye,
-                tone: 'sky',
+                label: 'Avisos de reserva',
+                value: whatsappReservationAlerts.filter((item) => item.status === 'enviado').length.toLocaleString('pt-BR'),
+                hint: `${whatsappReservationAlerts.filter((item) => item.status === 'aguardando' || item.status === 'enviando').length} na fila · ${whatsappReservationAlerts.filter((item) => item.status === 'erro').length} com erro`,
+                icon: FaPaperPlane,
+                tone: whatsappReservationAlerts.some((item) => item.status === 'erro') ? 'amber' : 'emerald',
               },
             ]}
+            metricsClassName="xl:grid-cols-4"
           />
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.82fr)]">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <nav className="admin-whatsapp-shortcuts" aria-label="Atalhos da configuração do WhatsApp">
+            {[
+              { id: 'whatsapp-conexao', label: '1. Conexão', hint: 'QR Code e sessão remetente', icon: FaQrcode },
+              { id: 'whatsapp-nova-reserva', label: '2. Nova reserva', hint: 'Aviso interno da equipe', icon: FaCalendarAlt },
+              { id: 'whatsapp-agradecimento', label: '3. Agradecimento', hint: 'Mensagem após a chegada', icon: FaWhatsapp },
+              { id: 'whatsapp-testes', label: '4. Testes', hint: 'Envio somente ao número interno', icon: FaPaperPlane },
+            ].map(({ id, label, hint, icon: ShortcutIcon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="admin-whatsapp-shortcut"
+              >
+                <span><ShortcutIcon className="h-4 w-4" /></span>
+                <span><strong>{label}</strong><small>{hint}</small></span>
+                <FaChevronRight className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          </nav>
+
+          <div id="whatsapp-testes" className="admin-whatsapp-section admin-whatsapp-test-center rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Central de testes</p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">Teste as automações sem envolver clientes</h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  O teste usa a sessão conectada e envia somente para o número interno salvo em “Nova reserva”. Salve alterações antes de testar.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => enviarTesteAutomacaoWhatsapp('aviso-reserva')}
+                  disabled={whatsappStatus.status !== 'ready' || whatsappTestando !== null}
+                  className="admin-whatsapp-test-button"
+                >
+                  <FaCalendarAlt className="h-4 w-4" />
+                  {whatsappTestando === 'aviso-reserva' ? 'Enviando...' : 'Testar nova reserva'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => enviarTesteAutomacaoWhatsapp('agradecimento')}
+                  disabled={whatsappStatus.status !== 'ready' || whatsappTestando !== null}
+                  className="admin-whatsapp-test-button"
+                >
+                  <FaWhatsapp className="h-4 w-4" />
+                  {whatsappTestando === 'agradecimento' ? 'Enviando...' : 'Testar agradecimento'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="admin-whatsapp-config-grid grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.82fr)]">
+            <div id="whatsapp-conexao" className="admin-whatsapp-section admin-whatsapp-card--connection rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Conexao do disparador</h3>
-                  <p className="text-sm text-slate-500">Vincule o WhatsApp que enviara o Disparador Agradecimento.</p>
+                  <h3 className="text-lg font-semibold text-slate-900">Conexão do número remetente</h3>
+                  <p className="text-sm text-slate-500">Esta única sessão envia campanhas, avisos de reserva, confirmações e agradecimentos.</p>
                 </div>
 
                 <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
@@ -15548,7 +15793,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <div className="space-y-3">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-xs font-semibold uppercase text-slate-500">Nome da conexao</p>
-                    <p className="mt-1 text-base font-semibold text-slate-900">Disparador Agradecimento</p>
+                    <p className="mt-1 text-base font-semibold text-slate-900">Central WhatsApp Vagafogo</p>
                     <p className="mt-1 text-sm text-slate-500">Esse nome aparece nos dispositivos vinculados do WhatsApp.</p>
                   </div>
 
@@ -15582,16 +15827,33 @@ const totalParticipantesDoDia = useMemo(() => {
                       <FaSyncAlt className="h-3.5 w-3.5" />
                       Atualizar
                     </button>
+                    <button
+                      type="button"
+                      onClick={desconectarConexaoWhatsapp}
+                      disabled={whatsappAcaoCarregando === 'logout' || whatsappStatus.status === 'idle'}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-rose-200 px-4 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FaSignOutAlt className="h-3.5 w-3.5" />
+                      {whatsappAcaoCarregando === 'logout' ? 'Desconectando...' : 'Desconectar'}
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
 
+            <div className="admin-whatsapp-automation-heading xl:col-span-2">
+              <span>Automações</span>
+              <div>
+                <h3>Configure quando cada mensagem será enviada</h3>
+                <p>Os disparos abaixo usam a mesma sessão conectada acima, mas têm destinatários e gatilhos diferentes.</p>
+              </div>
+            </div>
+
             {/* Confirmacao automatica (quando reserva e paga) */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div id="whatsapp-confirmacao" className="admin-whatsapp-section admin-whatsapp-card--confirmation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Confirmacao automatica</h3>
+                  <h3 className="text-lg font-semibold text-slate-900">3. Confirmação de pagamento <span className="text-sm font-medium text-slate-400">(opcional)</span></h3>
                   <p className="text-sm text-slate-500">
                     WhatsApp disparado automaticamente quando o pagamento da reserva e confirmado.
                   </p>
@@ -15647,10 +15909,123 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div id="whatsapp-nova-reserva" className="admin-whatsapp-section admin-whatsapp-card--new-reservation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+              <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">1. Aviso interno de nova reserva</h3>
+                  <p className="text-sm text-slate-500">
+                    Cada nova reserva do checkout online entra em uma fila idempotente e envia os detalhes pela sessão da Central WhatsApp.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                  <input
+                    type="checkbox"
+                    checked={whatsappConfig.avisoNovaReservaEquipeAtivo !== false}
+                    onChange={(event) => setWhatsappConfig((prev) => ({ ...prev, avisoNovaReservaEquipeAtivo: event.target.checked }))}
+                  />
+                  {whatsappConfig.avisoNovaReservaEquipeAtivo !== false ? 'Ativado' : 'Desativado'}
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)]">
+                <div className="space-y-4">
+                  <label className="block text-xs font-semibold uppercase text-slate-500">
+                    WhatsApp que recebe os avisos
+                    <input
+                      type="tel"
+                      value={whatsappConfig.avisoNovaReservaEquipeNumero ?? '5562991150376'}
+                      onChange={(event) => setWhatsappConfig((prev) => ({ ...prev, avisoNovaReservaEquipeNumero: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    />
+                  </label>
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                    <p className="text-xs font-semibold uppercase text-emerald-700">Funcionamento</p>
+                    <ul className="mt-2 space-y-1 text-xs leading-relaxed text-emerald-900">
+                      <li>• Uma entrada por reserva, sem duplicar em tentativas de pagamento.</li>
+                      <li>• Reservas criadas manualmente no painel não geram este aviso.</li>
+                      <li>• Até cinco tentativas com espera progressiva quando houver falha.</li>
+                      <li>• Histórico de enviados, fila e erros preservado no Firestore.</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="block text-xs font-semibold uppercase text-slate-500">
+                    Mensagem com os detalhes da reserva
+                    <textarea
+                      value={whatsappConfig.mensagemAvisoNovaReservaEquipe ?? whatsappTemplateAvisoNovaReservaPadrao}
+                      onChange={(event) => setWhatsappConfig((prev) => ({ ...prev, mensagemAvisoNovaReservaEquipe: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      rows={10}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {whatsappAvisoReservaPlaceholders.map((placeholder) => (
+                      <button
+                        key={`aviso-reserva-${placeholder}`}
+                        type="button"
+                        onClick={() => setWhatsappConfig((prev) => ({
+                          ...prev,
+                          mensagemAvisoNovaReservaEquipe: `${prev.mensagemAvisoNovaReservaEquipe ?? ''}${placeholder}`,
+                        }))}
+                        className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-600"
+                      >
+                        {placeholder}
+                      </button>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-500">Prévia</p>
+                    <div className="mt-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3">
+                      <div className="max-w-[92%] whitespace-pre-wrap rounded-2xl rounded-tl-md bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 shadow-sm">
+                        {mensagemPreviewAvisoNovaReserva || '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-slate-100 pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-900">Últimos avisos</h4>
+                    <p className="text-xs text-slate-500">Acompanhe tentativas e reenvie somente os registros que falharam.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={salvarMensagensWhatsapp}
+                    disabled={whatsappSalvando}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:bg-slate-300"
+                  >
+                    <FaCheck className="h-3.5 w-3.5" /> Salvar configuração
+                  </button>
+                </div>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead><tr className="border-b border-slate-100 text-slate-500"><th className="px-2 py-2">Reserva</th><th className="px-2 py-2">Cliente</th><th className="px-2 py-2">Visita</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Tentativas</th><th className="px-2 py-2">Detalhe</th><th className="px-2 py-2"></th></tr></thead>
+                    <tbody>
+                      {whatsappReservationAlerts.slice(0, 15).map((alert) => (
+                        <tr key={alert.id} className="border-b border-slate-50 text-slate-700">
+                          <td className="px-2 py-2 font-mono">#{alert.reservaId.slice(-8)}</td>
+                          <td className="px-2 py-2 font-semibold">{alert.nome}</td>
+                          <td className="px-2 py-2">{alert.data || '-'} {alert.horario || ''}</td>
+                          <td className="px-2 py-2"><span className={`rounded-full px-2 py-1 font-semibold ${alert.status === 'enviado' ? 'bg-emerald-50 text-emerald-700' : alert.status === 'erro' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{alert.status}</span></td>
+                          <td className="px-2 py-2">{alert.tentativas}</td>
+                          <td className="max-w-[260px] truncate px-2 py-2 text-slate-500" title={alert.ultimoErro}>{alert.ultimoErro || (alert.enviadoEm ? `Enviado em ${dayjs(alert.enviadoEm.toDate()).format('DD/MM HH:mm')}` : 'Aguardando processamento')}</td>
+                          <td className="px-2 py-2 text-right">{alert.status === 'erro' ? <button type="button" onClick={() => reenviarAvisoNovaReserva(alert.reservaId)} disabled={whatsappAlertRetryingId === alert.reservaId} className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-600 disabled:opacity-50">{whatsappAlertRetryingId === alert.reservaId ? 'Reenviando...' : 'Reenviar'}</button> : null}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!whatsappReservationAlerts.length ? <p className="py-6 text-center text-sm text-slate-500">Os avisos das próximas reservas aparecerão aqui.</p> : null}
+                </div>
+              </div>
+            </div>
+
+            <div id="whatsapp-agradecimento" className="admin-whatsapp-section admin-whatsapp-card--gratitude rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="border-b border-slate-100 pb-4">
-                <h3 className="text-lg font-semibold text-slate-900">Disparador Agradecimento</h3>
-                <p className="text-sm text-slate-500">Mensagem automatica enviada no WhatsApp quando a chegada do cliente e confirmada.</p>
+                <h3 className="text-lg font-semibold text-slate-900">2. Agradecimento após a chegada</h3>
+                <p className="text-sm text-slate-500">Mensagem automática enviada ao cliente quando a equipe confirma a chegada.</p>
               </div>
 
               <div className="mt-4 space-y-4">

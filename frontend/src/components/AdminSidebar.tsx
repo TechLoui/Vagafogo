@@ -69,7 +69,7 @@ export function AdminSidebar() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-white text-xs font-semibold truncate">Administrador</p>
-            <p className="text-white/40 text-[10px] truncate">admin@vagafogo.com</p>
+            <p className="text-white/40 text-[10px] truncate">admin@vagafogo.com.br</p>
           </div>
         </div>
         <button className="w-full flex items-center justify-center gap-2 py-2 bg-white/8 hover:bg-white/15 rounded-lg text-white/60 hover:text-white text-xs font-medium transition-all duration-200">

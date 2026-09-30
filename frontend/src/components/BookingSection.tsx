@@ -5,6 +5,12 @@ import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { ptBR } from "date-fns/locale";
 import { reservaContaParaOcupacao } from "../utils/reservaStatus";
+import {
+  obterAtribuicaoReserva,
+  registrarEventoJornadaReserva,
+  reiniciarJornadaReserva,
+  type EventoJornadaReserva,
+} from "../features/crm/attribution";
 import brunchExperiencePhoto from "../assets/brunch/brunch-3-800.webp";
 import trailExperiencePhoto from "../assets/trilhaecologica/trilhaecologica-1.jpg";
 import {
@@ -502,9 +508,11 @@ const calcularParticipantesReserva = (reserva: ReservaResumo) => {
 type BookingSectionProps = {
   initialExperience?: ExperienceSlug;
   initialPackageId?: string;
+  initialDate?: string;
+  initialTime?: string;
 };
 
-export function BookingSection({ initialExperience, initialPackageId }: BookingSectionProps = {}) {
+export function BookingSection({ initialExperience, initialPackageId, initialDate, initialTime }: BookingSectionProps = {}) {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -518,6 +526,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const [nome, setNome] = useState<string>("");
   const [email, setEmail] = useState<string>("");
   const [telefone, setTelefone] = useState<string>("");
+  const [whatsappMarketingOptIn, setWhatsappMarketingOptIn] = useState(false);
   const [cpf, setCpf] = useState<string>("");
   const [selectedDay, setSelectedDay] = useState<Date | undefined>();
   const [horario, setHorario] = useState<string>("");
@@ -541,6 +550,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   const [loading, setLoading] = useState<boolean>(false);
   const paymentSubmissionLockRef = useRef(false);
   const paymentIdempotencyKeyRef = useRef<string | null>(null);
+  const journeyStartedRef = useRef(false);
+  const journeyLatestPayloadRef = useRef<EventoJornadaReserva | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>("PIX");
   const [modalReembolsoAberto, setModalReembolsoAberto] = useState<boolean>(false);
@@ -668,12 +679,15 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   }, [cartaoCvvMaxLength]);
 
   const resetFormulario = () => {
+    reiniciarJornadaReserva();
+    registrarEventoJornadaReserva({ evento: "iniciou", etapa: 0 });
     paymentIdempotencyKeyRef.current = null;
     setEtapa(0);
     setSelectedPackages([]);
     setNome("");
     setEmail("");
     setTelefone("");
+    setWhatsappMarketingOptIn(false);
     setCpf("");
     setSelectedDay(undefined);
     setHorario("");
@@ -1025,7 +1039,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
   useEffect(() => {
     if (loadingPacotes || pacotes.length === 0) return;
 
-    const selectionKey = `${initialPackageId ?? ""}:${initialExperience ?? ""}`;
+    const selectionKey = `${initialPackageId ?? ""}:${initialExperience ?? ""}:${initialDate ?? ""}:${initialTime ?? ""}`;
     if (selectionKey === ":" || initialSelectionAppliedRef.current === selectionKey) return;
     const linkAnterior = initialSelectionAppliedRef.current;
 
@@ -1043,7 +1057,18 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       linkFoiTrocado || atuais.length === 0 ? [pacoteInicial.id!] : atuais
     );
 
-    if (linkFoiTrocado) {
+    const dataInicial = initialDate ? new Date(`${initialDate}T12:00:00`) : undefined;
+    const dataInicialValida = dataInicial && !Number.isNaN(dataInicial.getTime()) ? dataInicial : undefined;
+    if (dataInicialValida) {
+      setSelectedDay(dataInicialValida);
+      setEtapa(initialTime ? 2 : 1);
+      if (initialTime) {
+        setHorario(initialTime);
+        setHorariosPorPacote({ [pacoteInicial.id]: initialTime });
+      }
+    }
+
+    if (linkFoiTrocado && !dataInicialValida) {
       setEtapa(0);
       setSelectedDay(undefined);
       setHorario("");
@@ -1053,7 +1078,7 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
       setTemPet(null);
       setFormErrors({});
     }
-  }, [initialExperience, initialPackageId, loadingPacotes, pacotes]);
+  }, [initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
@@ -1768,46 +1793,6 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     }, 50);
     return () => window.clearTimeout(timeoutId);
   }, [etapa, subEtapaPagamento]);
-
-  if (loadingPacotes) {
-    return (
-      <section id="reservas" className="flex h-full items-center justify-center p-4">
-        <div className="w-full max-w-xl">
-          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-              Reserva
-            </p>
-            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
-              Carregando pacotes...
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Aguarde um instante enquanto preparamos o formulário.
-            </p>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  if (pacotes.length === 0) {
-    return (
-      <section id="reservas" className="flex h-full items-center justify-center p-4">
-        <div className="w-full max-w-xl">
-          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-              Reserva
-            </p>
-            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
-              Nenhum pacote disponível para reserva
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Tente novamente mais tarde ou entre em contato via WhatsApp.
-            </p>
-          </div>
-        </div>
-      </section>
-    );
-  }
 
   // Calcula total: soma de pacotes selecionados × qtd participantes por tipo.
   // Se a seleção bater com um combo, aplica preço/desconto especial.
@@ -2744,6 +2729,8 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         temPet,
         pacoteIds: selectedPackages,
         comboId: grupoComboPrincipal?.refId || null,
+        atribuicao: obterAtribuicaoReserva(),
+        whatsappMarketingOptIn,
       };
 
       if (formaPagamento === "CREDIT_CARD" && cartaoExpiracao) {
@@ -2784,6 +2771,13 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
         paymentIdempotencyKeyRef.current ?? criarChaveIdempotenciaPagamento();
       paymentIdempotencyKeyRef.current = idempotencyKey;
 
+      registrarEventoJornadaReserva({
+        ...(journeyLatestPayloadRef.current ?? {}),
+        evento: "tentativa_pagamento",
+        etapa: 4,
+        subEtapa: subEtapaPagamento,
+      });
+
       const rawResponse = await fetch(`${API_BASE}/criar-cobranca`, {
         method: "POST",
         headers: {
@@ -2817,6 +2811,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           resposta,
           "Erro ao criar a cobranca."
         );
+        registrarEventoJornadaReserva({
+          ...(journeyLatestPayloadRef.current ?? {}),
+          evento: "erro_pagamento",
+          etapa: 4,
+          subEtapa: subEtapaPagamento,
+          contato: {
+            ...(whatsappMarketingOptIn ? { nome, email, telefone } : {}),
+            erro: mensagemErro,
+          },
+        });
         if (formaPagamento === "CREDIT_CARD") {
           setCartaoResultado({
             status: tentativaAindaEmAndamento ? "retry" : "error",
@@ -2888,6 +2892,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           resposta,
           "Erro ao criar a cobranca. Verifique os dados ou tente novamente."
         );
+        registrarEventoJornadaReserva({
+          ...(journeyLatestPayloadRef.current ?? {}),
+          evento: "erro_pagamento",
+          etapa: 4,
+          subEtapa: subEtapaPagamento,
+          contato: {
+            ...(whatsappMarketingOptIn ? { nome, email, telefone } : {}),
+            erro: mensagemErro,
+          },
+        });
         if (formaPagamento === "CREDIT_CARD") {
           setCartaoResultado({
             status: "error",
@@ -2900,6 +2914,16 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
 
     } catch (error) {
       console.error("Erro ao processar reserva:", error);
+      registrarEventoJornadaReserva({
+        ...(journeyLatestPayloadRef.current ?? {}),
+        evento: "erro_pagamento",
+        etapa: 4,
+        subEtapa: subEtapaPagamento,
+        contato: {
+          ...(whatsappMarketingOptIn ? { nome, email, telefone } : {}),
+          erro: error instanceof Error ? error.message : "erro_processamento",
+        },
+      });
       if (formaPagamento === "CREDIT_CARD") {
         setCartaoResultado({
           status: "error",
@@ -2926,6 +2950,103 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
     : faixasResumo.length > 0
     ? faixasResumo.join(" / ")
     : "Sem horário específico";
+
+  useEffect(() => {
+    if (loadingPacotes || pacotes.length === 0) return;
+    if (!journeyStartedRef.current) {
+      journeyStartedRef.current = true;
+      registrarEventoJornadaReserva({ evento: "iniciou", etapa: 0 });
+    }
+    const payload: EventoJornadaReserva = {
+      evento: "progresso",
+      etapa,
+      subEtapa: etapa === 4 ? subEtapaPagamento : etapa === 3 ? `participantes-${subPassoParticipantes}` : undefined,
+      contexto: {
+        pacoteIds: selectedPackages,
+        atividades: selectedPacotes.map((pacote) => pacote.nome),
+        dataDesejada: selectedDay?.toISOString().slice(0, 10),
+        horario: horario || undefined,
+        participantes: somarMapa(participantesPorTipo) + naoPagante,
+        valorEstimado: totalResumo,
+        formaPagamento,
+      },
+      consentimentoRecuperacao: whatsappMarketingOptIn,
+      ...(whatsappMarketingOptIn
+        ? { contato: { nome, email, telefone } }
+        : {}),
+    };
+    journeyLatestPayloadRef.current = payload;
+    const timer = window.setTimeout(() => registrarEventoJornadaReserva(payload), 800);
+    return () => window.clearTimeout(timer);
+  }, [
+    email,
+    etapa,
+    formaPagamento,
+    horario,
+    loadingPacotes,
+    naoPagante,
+    nome,
+    pacotes.length,
+    participantesPorTipo,
+    selectedDay,
+    selectedPackages,
+    selectedPacotes,
+    subEtapaPagamento,
+    subPassoParticipantes,
+    telefone,
+    totalResumo,
+    whatsappMarketingOptIn,
+  ]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      const latest = journeyLatestPayloadRef.current;
+      if (!latest) return;
+      registrarEventoJornadaReserva({ ...latest, evento: "saida" }, { beacon: true });
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, []);
+
+  if (loadingPacotes) {
+    return (
+      <section id="reservas" className="flex h-full items-center justify-center p-4">
+        <div className="w-full max-w-xl">
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Reserva
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
+              Carregando pacotes...
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Aguarde um instante enquanto preparamos o formulário.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (pacotes.length === 0) {
+    return (
+      <section id="reservas" className="flex h-full items-center justify-center p-4">
+        <div className="w-full max-w-xl">
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-8 text-center shadow-xl backdrop-blur md:p-10">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              Reserva
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-[#8B4F23] md:text-3xl">
+              Nenhum pacote disponível para reserva
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Tente novamente mais tarde ou entre em contato via WhatsApp.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const atividadesResumoMobile =
     pacotesResumo.length > 0
@@ -3035,6 +3156,17 @@ export function BookingSection({ initialExperience, initialPackageId }: BookingS
           )}
         </div>
       </div>
+      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-sm leading-relaxed text-slate-600">
+        <input
+          type="checkbox"
+          checked={whatsappMarketingOptIn}
+          onChange={(event) => setWhatsappMarketingOptIn(event.target.checked)}
+          className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
+        />
+        <span>
+          Aceito receber pelo WhatsApp ajuda para concluir uma reserva iniciada, além de novidades, convites e campanhas da Vagafogo. A autorização é opcional e pode ser cancelada a qualquer momento respondendo <strong>SAIR</strong>.
+        </span>
+      </label>
     </div>
   );
 

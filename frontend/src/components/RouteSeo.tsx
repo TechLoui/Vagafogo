@@ -21,6 +21,14 @@ const privatePages: Record<string, { title: string; description: string }> = {
     title: "Acesso administrativo | Santuário Vagafogo",
     description: "Acesso restrito à equipe do Santuário Vagafogo.",
   },
+  "/CRM": {
+    title: "CRM | Santuário Vagafogo",
+    description: "Gestão de reservas, leads, clientes e campanhas do Santuário Vagafogo.",
+  },
+  "/CRM/login": {
+    title: "Acesso ao CRM | Santuário Vagafogo",
+    description: "Acesso seguro e restrito ao CRM do Santuário Vagafogo.",
+  },
   "/minha-reserva": {
     title: "Consultar minha reserva | Santuário Vagafogo",
     description: "Consulte os dados e o status da sua reserva no Santuário Vagafogo.",
