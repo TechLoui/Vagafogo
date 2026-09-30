@@ -100,6 +100,7 @@ type AgentCustomerType = {
 
 type AgentLead = {
   id: string;
+  sessionId?: string;
   phone: string;
   name?: string;
   stage: string;
@@ -179,6 +180,36 @@ const numericValue = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
+const normalizedLeadToken = (value: unknown) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+const canonicalLeadStage = (value: unknown) => {
+  const stage = normalizedLeadToken(value);
+  if (["contato_iniciado", "interesse_identificado", "cotacao", "dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "concluida", "atendimento_humano", "encerrado_sem_reserva"].includes(stage)) return stage;
+  if (/conclu|confirmad|reserva_realizada|pagamento_aprovado/.test(stage)) return "concluida";
+  if (/humano/.test(stage)) return "atendimento_humano";
+  if (/encerr|perdid|desist|sem_interesse/.test(stage)) return "encerrado_sem_reserva";
+  if (/pagamento|pix|cobranca/.test(stage)) return "pagamento_pendente";
+  if (/aguard.*confirm/.test(stage)) return "aguardando_confirmacao";
+  if (/dado|colet/.test(stage)) return "dados_em_coleta";
+  if (/cotac|disponib|orcamento/.test(stage)) return "cotacao";
+  if (/interess/.test(stage)) return "interesse_identificado";
+  return "contato_iniciado";
+};
+const canonicalLeadOutcome = (value: unknown) => {
+  const outcome = normalizedLeadToken(value);
+  if (["em_andamento", "aguardando_cliente", "pagamento_pendente", "reserva_confirmada", "nao_convertido", "atendimento_humano"].includes(outcome)) return outcome;
+  if (/reserva_confirm|pagamento_(aprovado|confirmado)|pago|conclu/.test(outcome)) return "reserva_confirmada";
+  if (/humano/.test(outcome)) return "atendimento_humano";
+  if (/nao_convert|perdid|encerr|desist|sem_interesse/.test(outcome)) return "nao_convertido";
+  if (/pagamento|pix|cobranca/.test(outcome)) return "pagamento_pendente";
+  if (/aguard/.test(outcome)) return "aguardando_cliente";
+  return "em_andamento";
+};
 const phoneDigits = (value: string) => value.replace(/\D/g, "").slice(0, 13);
 const formatPhone = (value?: string | null) => {
   let digits = phoneDigits(value ?? "");
@@ -249,12 +280,15 @@ export function Agente() {
   useEffect(() => onSnapshot(collection(db, "crm_leads_agente"), (snapshot) => {
     const next = snapshot.docs.map((document) => {
       const raw = document.data() as Record<string, unknown>;
+      const sessionId = raw.sessionId ? String(raw.sessionId) : undefined;
+      const sessionPhone = sessionId?.match(/whatsapp_(\d{10,15})/)?.[1];
       return {
         id: document.id,
-        phone: String(raw.telefone ?? ""),
+        sessionId,
+        phone: sessionPhone || String(raw.telefone ?? ""),
         name: raw.nome ? String(raw.nome) : undefined,
-        stage: String(raw.etapa ?? "contato_iniciado"),
-        outcome: String(raw.resultado ?? "em_andamento"),
+        stage: canonicalLeadStage(raw.etapa),
+        outcome: canonicalLeadOutcome(raw.resultado),
         reason: raw.motivo ? String(raw.motivo) : undefined,
         activities: Array.isArray(raw.atividades) ? raw.atividades.map(String) : [],
         desiredDate: raw.dataDesejada ? String(raw.dataDesejada) : undefined,
@@ -268,7 +302,13 @@ export function Agente() {
         updatedAt: normalizeTimestamp(raw.atualizadoEm ?? raw.criadoEm),
       } satisfies AgentLead;
     }).sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
-    setLeads(next);
+    const unique = new Map<string, AgentLead>();
+    next.forEach((lead) => {
+      const normalizedPhone = lead.phone.replace(/\D/g, "");
+      const key = normalizedPhone ? `telefone:${normalizedPhone}` : lead.sessionId || lead.id;
+      if (!unique.has(key)) unique.set(key, lead);
+    });
+    setLeads(Array.from(unique.values()));
     setLeadsError("");
     setLeadsLoading(false);
   }, () => {

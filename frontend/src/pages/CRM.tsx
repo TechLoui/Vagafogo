@@ -447,7 +447,7 @@ export function CRM() {
     const unique = new Map<string, AgentLeadRecord>();
     leads.forEach((lead) => {
       const phoneDigits = lead.phone.replace(/\D/g, "");
-      const key = lead.sessionId || (phoneDigits ? `telefone:${phoneDigits}` : lead.id);
+      const key = phoneDigits ? `telefone:${phoneDigits}` : lead.sessionId || lead.id;
       if (!unique.has(key)) unique.set(key, lead);
     });
     setAgentLeads(Array.from(unique.values()));
