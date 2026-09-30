@@ -58,6 +58,7 @@ import {
   criarLinkCartaoAgente,
   excluirLeadAgente,
   excluirTodosLeadsAgente,
+  iniciarFinalizadorLeadsAgente,
   listarCatalogoAgente,
   registrarLeadAgente,
   simularReservaAgente,
@@ -306,22 +307,6 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
     ai: { ok: ai.status < 400, status: ai.status, dados: ai.body },
     reservas,
   });
-});
-
-app.get('/crm/agente/testes/pacotes', exigirAdminCrm, async (_req, res) => {
-  try {
-    res.json(await listarCatalogoAgente());
-  } catch (error) {
-    res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-app.post('/crm/agente/testes/reserva', exigirAdminCrm, async (req, res) => {
-  try {
-    res.json({ modo: "simulacao", gravaReserva: false, criaCobranca: false, resultado: await simularReservaAgente(req.body ?? {}) });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-  }
 });
 
 // Ferramentas consumidas exclusivamente pelo backend de IA. Nenhuma credencial
@@ -862,6 +847,7 @@ app.listen(port, () => {
   iniciarLimpezaAutomaticaReservas();
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorCampanhasWhatsapp();
+  iniciarFinalizadorLeadsAgente();
   logarConfigWhatsapp();
 
   // Monitor de memoria — encerra WhatsApp se RSS passar do limite (default 700MB)

@@ -71,7 +71,13 @@ type CustomerType = {
 type PackageRecord = { id: string; raw: FirebaseFirestore.DocumentData };
 type ComboRecord = { id: string; raw: FirebaseFirestore.DocumentData };
 
+const AGENT_LEADS_COLLECTION = "crm_leads_agente";
+const AGENT_LEAD_DRAFTS_COLLECTION = "crm_leads_agente_rascunhos";
+const AGENT_LEAD_INACTIVITY_MS = 2 * 60 * 60 * 1000;
+const AGENT_LEAD_FINALIZER_INTERVAL_MS = 5 * 60 * 1000;
+
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
+const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const normalizeText = (value: unknown) => clean(value, 300).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 const canonicalLeadValue = (value: unknown) => normalizeText(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const canonicalLeadStage = (value: unknown) => {
@@ -589,6 +595,109 @@ export const criarLinkCartaoAgente = (input: AgentAvailabilityInput & { sessionI
   return { url: `${baseUrl}/reservar?${query.toString()}`, expiraEmMinutos: 120 };
 };
 
+const agentLeadIdentity = (isTest: boolean, sessionId: string, phone: string) =>
+  isTest ? `teste\0${sessionId}` : `whatsapp\0${phone}`;
+
+const agentLeadId = (isTest: boolean, sessionId: string, phone: string) => createHash("sha256")
+  .update(`agente-lead:v3\0${agentLeadIdentity(isTest, sessionId, phone)}`)
+  .digest("hex");
+
+const agentLeadDraftId = (isTest: boolean, sessionId: string, phone: string) => createHash("sha256")
+  .update(`agente-lead-draft:v1\0${agentLeadIdentity(isTest, sessionId, phone)}`)
+  .digest("hex");
+
+const leadArray = (value: unknown, maximum = 10) => Array.isArray(value)
+  ? value.map((item) => clean(item, 160)).filter(Boolean).slice(0, maximum)
+  : [];
+
+const buildAgentLeadPatch = (input: AgentLeadInput, sessionId: string, phone: string, isTest: boolean) => {
+  const patch: FirebaseFirestore.DocumentData = {
+    canal: isTest ? "teste_privado" : "whatsapp",
+    teste: isTest,
+    origem: isTest ? "simulador_agente" : "agente_whatsapp",
+    telefone: phone,
+    sessionId,
+    etapa: canonicalLeadStage(input.etapa),
+    resultado: canonicalLeadOutcome(input.resultado),
+    marketingOptIn: input.marketingOptIn === true,
+  };
+  const copyText = (key: keyof AgentLeadInput, maximum: number) => {
+    if (!owns(input, key)) return;
+    const value = clean(input[key], maximum);
+    if (value) patch[key] = value;
+  };
+  copyText("nome", 160);
+  copyText("email", 240);
+  copyText("motivo", 240);
+  copyText("dataDesejada", 20);
+  copyText("horarioDesejado", 40);
+  copyText("formaPagamento", 30);
+  copyText("reservaId", 100);
+  copyText("pagamentoId", 100);
+  copyText("proximaAcao", 240);
+  copyText("resumo", 600);
+  if (owns(input, "pacoteIds")) {
+    const values = leadArray(input.pacoteIds);
+    if (values.length) patch.pacoteIds = values;
+  }
+  if (owns(input, "atividades")) {
+    const values = leadArray(input.atividades);
+    if (values.length) patch.atividades = values;
+  }
+  if (owns(input, "participantes")) {
+    const participants = nonNegativeInteger(input.participantes);
+    if (participants > 0) patch.participantes = participants;
+  }
+  if (owns(input, "valorEstimado")) {
+    const estimatedValue = Number(input.valorEstimado);
+    if (Number.isFinite(estimatedValue) && estimatedValue >= 0) patch.valorEstimado = estimatedValue;
+  }
+  return patch;
+};
+
+const finalLeadDataFromDraft = (draft: FirebaseFirestore.DocumentData) => {
+  const data = { ...draft };
+  delete data.finalizarApos;
+  delete data.ultimaInteracaoEm;
+  delete data.atualizadoEm;
+  delete data.criadoEm;
+  delete data.consolidadoEm;
+  return data;
+};
+
+const consolidateAgentLead = async (
+  db: FirebaseFirestore.Firestore,
+  draftRef: FirebaseFirestore.DocumentReference,
+  draft: FirebaseFirestore.DocumentData,
+  overrides: FirebaseFirestore.DocumentData = {},
+  deleteDraft = false,
+) => {
+  const isTest = draft.teste === true;
+  const sessionId = clean(draft.sessionId, 100);
+  const phone = normalizePhone(draft.telefone);
+  if (!sessionId || !phone) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
+  const id = agentLeadId(isTest, sessionId, phone);
+  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(id);
+  const existing = await leadRef.get();
+  const data = {
+    ...finalLeadDataFromDraft(draft),
+    ...overrides,
+    atualizadoEm: FieldValue.serverTimestamp(),
+    finalizadoEm: FieldValue.serverTimestamp(),
+    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+  };
+  if (deleteDraft) {
+    const batch = db.batch();
+    batch.set(leadRef, data, { merge: true });
+    batch.delete(draftRef);
+    await batch.commit();
+  } else {
+    await leadRef.set(data, { merge: true });
+    await draftRef.set({ consolidadoEm: FieldValue.serverTimestamp() }, { merge: true });
+  }
+  return id;
+};
+
 export const registrarLeadAgente = async (input: AgentLeadInput) => {
   const sessionId = clean(input.sessionId, 100);
   const phone = normalizePhone(input.telefone);
@@ -596,40 +705,37 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const isTest = input.teste === true;
-  const leadIdentity = isTest ? `teste\0${sessionId}` : `whatsapp\0${phone}`;
-  const leadId = createHash("sha256").update(`agente-lead:v2\0${leadIdentity}`).digest("hex");
-  const array = (value: unknown, maximum = 10) => Array.isArray(value) ? value.map((item) => clean(item, 160)).filter(Boolean).slice(0, maximum) : [];
-  const participants = nonNegativeInteger(input.participantes);
-  const estimatedValue = Number(input.valorEstimado);
-  const patch: FirebaseFirestore.DocumentData = {
-    canal: isTest ? "teste_privado" : "whatsapp",
-    teste: isTest,
-    origem: isTest ? "simulador_agente" : "agente_whatsapp",
-    telefone: phone,
-    sessionId,
-    nome: clean(input.nome, 160) || null,
-    email: clean(input.email, 240) || null,
-    etapa: canonicalLeadStage(input.etapa),
-    resultado: canonicalLeadOutcome(input.resultado),
-    motivo: clean(input.motivo, 240) || null,
-    pacoteIds: array(input.pacoteIds),
-    atividades: array(input.atividades),
-    dataDesejada: clean(input.dataDesejada, 20) || null,
-    horarioDesejado: clean(input.horarioDesejado, 40) || null,
-    participantes: participants || null,
-    valorEstimado: Number.isFinite(estimatedValue) && estimatedValue >= 0 ? estimatedValue : null,
-    formaPagamento: clean(input.formaPagamento, 30) || null,
-    reservaId: clean(input.reservaId, 100) || null,
-    pagamentoId: clean(input.pagamentoId, 100) || null,
-    marketingOptIn: input.marketingOptIn === true,
-    proximaAcao: clean(input.proximaAcao, 240) || null,
-    resumo: clean(input.resumo, 600) || null,
+  const draftId = agentLeadDraftId(isTest, sessionId, phone);
+  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(draftId);
+  const existing = await draftRef.get();
+  const patch = buildAgentLeadPatch(input, sessionId, phone, isTest);
+  const existingData = existing.exists ? existing.data()! : {};
+  // Depois que uma cobranca foi gerada, uma nova interpretacao da IA nao pode
+  // rebaixar o atendimento para uma etapa anterior enquanto o webhook decide.
+  if (existingData.resultado === "pagamento_pendente") {
+    patch.etapa = "pagamento_pendente";
+    patch.resultado = "pagamento_pendente";
+  }
+  const draft = { ...existingData, ...patch };
+  await draftRef.set({
+    ...patch,
+    ultimaInteracaoEm: FieldValue.serverTimestamp(),
+    finalizarApos: new Date(Date.now() + AGENT_LEAD_INACTIVITY_MS),
     atualizadoEm: FieldValue.serverTimestamp(),
+    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+  }, { merge: true });
+
+  // A IA pode interpretar a conversa, mas nunca confirma uma reserva por conta
+  // propria. A confirmacao final e escrita exclusivamente pelo webhook.
+  const immediate = patch.etapa === "pagamento_pendente" || patch.resultado === "pagamento_pendente";
+  const id = immediate ? await consolidateAgentLead(db, draftRef, draft) : null;
+  return {
+    id,
+    rascunhoId: draftId,
+    registrado: immediate,
+    rascunho: !immediate,
+    finalizaAposMinutos: immediate ? null : AGENT_LEAD_INACTIVITY_MS / 60_000,
   };
-  const leadRef = db.collection("crm_leads_agente").doc(leadId);
-  const existing = await leadRef.get();
-  await leadRef.set({ ...patch, ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }) }, { merge: true });
-  return { id: leadId, registrado: true };
 };
 
 const requireLeadId = (value: unknown) => {
@@ -642,7 +748,7 @@ export const atualizarLeadAgente = async (idValue: unknown, input: AgentLeadUpda
   const id = requireLeadId(idValue);
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const ref = db.collection("crm_leads_agente").doc(id);
+  const ref = db.collection(AGENT_LEADS_COLLECTION).doc(id);
   const existing = await ref.get();
   if (!existing.exists) throw new Error("AGENT_LEAD_NOT_FOUND");
   const patch: FirebaseFirestore.DocumentData = {
@@ -662,7 +768,7 @@ export const excluirLeadAgente = async (idValue: unknown) => {
   const id = requireLeadId(idValue);
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const ref = db.collection("crm_leads_agente").doc(id);
+  const ref = db.collection(AGENT_LEADS_COLLECTION).doc(id);
   const existing = await ref.get();
   if (!existing.exists) return { id, excluido: false };
   await ref.delete();
@@ -672,16 +778,66 @@ export const excluirLeadAgente = async (idValue: unknown) => {
 export const excluirTodosLeadsAgente = async () => {
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const snapshot = await db.collection("crm_leads_agente").get();
-  let removed = 0;
-  for (let offset = 0; offset < snapshot.docs.length; offset += 450) {
-    const batch = db.batch();
-    const chunk = snapshot.docs.slice(offset, offset + 450);
-    chunk.forEach((document) => batch.delete(document.ref));
-    await batch.commit();
-    removed += chunk.length;
+  const removeCollection = async (collectionName: string) => {
+    const snapshot = await db.collection(collectionName).get();
+    let removed = 0;
+    for (let offset = 0; offset < snapshot.docs.length; offset += 450) {
+      const batch = db.batch();
+      const chunk = snapshot.docs.slice(offset, offset + 450);
+      chunk.forEach((document) => batch.delete(document.ref));
+      await batch.commit();
+      removed += chunk.length;
+    }
+    return removed;
+  };
+  const [leads, drafts] = await Promise.all([
+    removeCollection(AGENT_LEADS_COLLECTION),
+    removeCollection(AGENT_LEAD_DRAFTS_COLLECTION),
+  ]);
+  return { excluidos: leads, rascunhosExcluidos: drafts };
+};
+
+export const processarRascunhosLeadsAgente = async () => {
+  const db = obterFirestoreAdmin();
+  if (!db) return { processados: 0, erros: 0 };
+  const snapshot = await db.collection(AGENT_LEAD_DRAFTS_COLLECTION)
+    .where("finalizarApos", "<=", new Date())
+    .limit(100)
+    .get();
+  let processed = 0;
+  let errors = 0;
+  for (const document of snapshot.docs) {
+    try {
+      const draft = document.data();
+      const paymentPending = draft.etapa === "pagamento_pendente" || draft.resultado === "pagamento_pendente";
+      await consolidateAgentLead(db, document.ref, draft, paymentPending ? {
+        etapa: "pagamento_pendente",
+        resultado: "pagamento_pendente",
+        motivo: "pagamento_nao_identificado_apos_2h",
+        proximaAcao: "Avaliar recuperacao do pagamento",
+      } : {
+        resultado: draft.resultado === "atendimento_humano" ? "atendimento_humano" : "aguardando_cliente",
+        motivo: "sem_resposta_ha_2h",
+        proximaAcao: "Avaliar recuperacao do atendimento",
+      }, true);
+      processed += 1;
+    } catch (error) {
+      errors += 1;
+      console.error("[agent-leads] Falha ao consolidar rascunho:", error);
+    }
   }
-  return { excluidos: removed };
+  return { processados: processed, erros: errors };
+};
+
+let agentLeadFinalizerStarted = false;
+export const iniciarFinalizadorLeadsAgente = () => {
+  if (agentLeadFinalizerStarted) return;
+  agentLeadFinalizerStarted = true;
+  const run = () => void processarRascunhosLeadsAgente().catch((error) => {
+    console.error("[agent-leads] Falha no finalizador:", error);
+  });
+  setTimeout(run, 15_000).unref();
+  setInterval(run, AGENT_LEAD_FINALIZER_INTERVAL_MS).unref();
 };
 
 export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId: unknown, pagamentoId?: unknown) => {
@@ -690,16 +846,33 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
   if (!phone || !reservationId) return false;
   const db = obterFirestoreAdmin();
   if (!db) return false;
-  const leadId = createHash("sha256").update(`agente-lead:v2\0whatsapp\0${phone}`).digest("hex");
-  await db.collection("crm_leads_agente").doc(leadId).set({
+  const sessionId = `whatsapp_${phone}`;
+  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+  const draftSnapshot = await draftRef.get();
+  const leadId = agentLeadId(false, sessionId, phone);
+  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(leadId);
+  const existing = await leadRef.get();
+  const base = draftSnapshot.exists ? finalLeadDataFromDraft(draftSnapshot.data()!) : {
     canal: "whatsapp",
+    teste: false,
+    origem: "agente_whatsapp",
     telefone: phone,
+    sessionId,
+  };
+  const batch = db.batch();
+  batch.set(leadRef, {
+    ...base,
     etapa: "concluida",
     resultado: "reserva_confirmada",
+    motivo: null,
     reservaId: reservationId,
     pagamentoId: clean(pagamentoId, 100) || null,
     proximaAcao: null,
     atualizadoEm: FieldValue.serverTimestamp(),
+    finalizadoEm: FieldValue.serverTimestamp(),
+    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: true });
+  if (draftSnapshot.exists) batch.delete(draftRef);
+  await batch.commit();
   return true;
 };
