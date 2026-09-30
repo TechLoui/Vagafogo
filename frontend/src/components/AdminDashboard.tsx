@@ -5632,7 +5632,7 @@ const totalParticipantesDoDia = useMemo(() => {
   const salvarMensagensWhatsapp = async () => {
     const mensagemManual = whatsappConfig.mensagemConfirmacaoManual.trim();
     const mensagemBoasVindas = (whatsappConfig.mensagemBoasVindas ?? '').trim();
-    const avisoNovaReservaEquipeNumero = (whatsappConfig.avisoNovaReservaEquipeNumero ?? '').replace(/\D/g, '');
+    const avisoNovaReservaEquipeNumero = (whatsappConfig.avisoNovaReservaEquipeNumero || '5562991150376').replace(/\D/g, '');
     const mensagemAvisoNovaReservaEquipe = (whatsappConfig.mensagemAvisoNovaReservaEquipe ?? '').trim();
 
     if (!mensagemManual) {
@@ -5990,7 +5990,7 @@ const totalParticipantesDoDia = useMemo(() => {
       ? mensagemPreviewAvisoNovaReserva.trim()
       : mensagemPreviewDisparadorAgradecimento.trim();
     const descricao = tipo === 'aviso-reserva' ? 'aviso de nova reserva' : 'agradecimento';
-    const numero = (whatsappConfig.avisoNovaReservaEquipeNumero ?? '5562991150376').replace(/\D/g, '');
+    const numero = (whatsappConfig.avisoNovaReservaEquipeNumero || '5562991150376').replace(/\D/g, '');
 
     if (!mensagem) {
       setFeedback({ type: 'error', message: `Informe a mensagem de ${descricao} antes do teste.` });
@@ -16010,7 +16010,7 @@ const totalParticipantesDoDia = useMemo(() => {
                     WhatsApp que recebe os avisos
                     <input
                       type="tel"
-                      value={whatsappConfig.avisoNovaReservaEquipeNumero ?? '5562991150376'}
+                      value={whatsappConfig.avisoNovaReservaEquipeNumero || '5562991150376'}
                       onChange={(event) => setWhatsappConfig((prev) => ({ ...prev, avisoNovaReservaEquipeNumero: event.target.value }))}
                       className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                     />

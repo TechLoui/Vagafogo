@@ -562,7 +562,7 @@ export const enviarTesteInternoCampanhaWhatsapp = async (
     atividades: ["Experiência Vagafogo"],
   })}`;
   const configSnapshot = await db.collection("configuracoes").doc("whatsapp").get();
-  const destination = normalizePhone(configSnapshot.data()?.avisoNovaReservaEquipeNumero ?? INTERNAL_TEST_DESTINATION);
+  const destination = normalizePhone(configSnapshot.data()?.avisoNovaReservaEquipeNumero) || INTERNAL_TEST_DESTINATION;
   if (!destination) throw new Error("INTERNAL_TEST_DESTINATION_INVALID");
   const auditRef = db.collection("crm_campanhas_testes").doc();
   await auditRef.set({

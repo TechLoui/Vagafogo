@@ -128,7 +128,9 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     await document.ref.update({ status: "aguardando", atualizadoEm: FieldValue.serverTimestamp() });
     return;
   }
-  const destination = normalizePhone(config.avisoNovaReservaEquipeNumero ?? acquired.data.destino ?? DESTINATION_DEFAULT);
+  const destination = normalizePhone(config.avisoNovaReservaEquipeNumero)
+    || normalizePhone(acquired.data.destino)
+    || DESTINATION_DEFAULT;
   const template = clean(config.mensagemAvisoNovaReservaEquipe, 3000) || DEFAULT_TEMPLATE;
   const message = renderTemplate(template, acquired.data);
   const result: ResultadoEnvio = await enviarMensagemWhatsappGerenciada(destination, message).catch((error): ResultadoEnvio => ({
