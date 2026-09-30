@@ -555,7 +555,7 @@ export const enviarTesteInternoCampanhaWhatsapp = async (
   if (!variants.length) throw new Error("CAMPAIGN_VARIANT_REQUIRED");
   const media = await validateStoredMedia(input.midia, actor);
   const variantIndex = Math.floor(Math.random() * variants.length);
-  const message = `[TESTE INTERNO CRM]\n\n${renderMessage(variants[variantIndex], {
+  const message = `[TESTE INTERNO CRM — CAMPANHA]\n\n${renderMessage(variants[variantIndex], {
     nome: "Equipe Vagafogo",
     reservas: 2,
     ultimaVisita: dateKey(new Date()),

@@ -281,11 +281,13 @@ export function Agente() {
     const next = snapshot.docs.map((document) => {
       const raw = document.data() as Record<string, unknown>;
       const sessionId = raw.sessionId ? String(raw.sessionId) : undefined;
-      const sessionPhone = sessionId?.match(/whatsapp_(\d{10,15})/)?.[1];
+      const sessionPhone = sessionId?.match(/^whatsapp_(\d{10,15})$/)?.[1];
+      const rawPhone = String(raw.telefone ?? "");
+      const isLegacyLid = Boolean(sessionId?.includes("@lid"));
       return {
         id: document.id,
         sessionId,
-        phone: sessionPhone || String(raw.telefone ?? ""),
+        phone: sessionPhone || (isLegacyLid ? "" : rawPhone),
         name: raw.nome ? String(raw.nome) : undefined,
         stage: canonicalLeadStage(raw.etapa),
         outcome: canonicalLeadOutcome(raw.resultado),
@@ -305,7 +307,8 @@ export function Agente() {
     const unique = new Map<string, AgentLead>();
     next.forEach((lead) => {
       const normalizedPhone = lead.phone.replace(/\D/g, "");
-      const key = normalizedPhone ? `telefone:${normalizedPhone}` : lead.sessionId || lead.id;
+      const nameAndIntent = `${normalizedLeadToken(lead.name)}:${lead.desiredDate || ""}:${lead.activities.map(normalizedLeadToken).sort().join(",")}`;
+      const key = normalizedPhone ? `telefone:${normalizedPhone}` : nameAndIntent !== "::" ? `contexto:${nameAndIntent}` : lead.sessionId || lead.id;
       if (!unique.has(key)) unique.set(key, lead);
     });
     setLeads(Array.from(unique.values()));
