@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { signOut } from "firebase/auth";
+import { collection, onSnapshot } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import {
   FaArrowLeft,
   FaBan,
   FaBars,
   FaCalendarAlt,
+  FaChartLine,
   FaCheckCircle,
   FaCog,
   FaComments,
@@ -27,11 +29,11 @@ import {
   FaWhatsapp,
 } from "react-icons/fa";
 import type { IconType } from "react-icons";
-import { auth } from "../../firebase";
+import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import "./Agente.css";
 
-type TabKey = "overview" | "sessions" | "whatsapp" | "prompt" | "tests" | "settings";
+type TabKey = "overview" | "sessions" | "leads" | "whatsapp" | "prompt" | "tests" | "settings";
 type ContactMode = "bot" | "human" | "blocked";
 
 type AgentStatus = {
@@ -86,11 +88,31 @@ type AgentPackage = {
   horarioFim?: string;
 };
 
+type AgentLead = {
+  id: string;
+  phone: string;
+  name?: string;
+  stage: string;
+  outcome: string;
+  reason?: string;
+  activities: string[];
+  desiredDate?: string;
+  participants?: number;
+  estimatedValue?: number;
+  paymentMethod?: string;
+  reservationId?: string;
+  marketingOptIn: boolean;
+  nextAction?: string;
+  summary?: string;
+  updatedAt?: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://vagafogo-production.up.railway.app";
 
 const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
   { key: "overview", label: "Visão geral", icon: FaRobot },
   { key: "sessions", label: "Atendimentos", icon: FaHeadset },
+  { key: "leads", label: "Leads gerados", icon: FaChartLine },
   { key: "whatsapp", label: "WhatsApp", icon: FaWhatsapp },
   { key: "prompt", label: "Assistente", icon: FaEdit },
   { key: "tests", label: "Testar reserva", icon: FaCalendarAlt },
@@ -100,6 +122,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
 const titles: Record<TabKey, { title: string; subtitle: string }> = {
   overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp em um só lugar." },
   sessions: { title: "Atendimentos ativos", subtitle: "Assuma, devolva ao bot ou bloqueie contatos específicos." },
+  leads: { title: "Leads gerados", subtitle: "Confira os dados estruturados enviados pelo agente, sem armazenar a conversa." },
   whatsapp: { title: "Conexão do WhatsApp", subtitle: "Conecte o número do agente e valide o envio antes de operar." },
   prompt: { title: "Assistente e prompt", subtitle: "Ajuste o comportamento da IA e teste sem enviar mensagens reais." },
   tests: { title: "Homologação da reserva", subtitle: "Valide integrações, disponibilidade e preço sem criar reserva ou cobrança." },
@@ -133,6 +156,19 @@ const durationLabel = (seconds?: number) => {
   if (seconds % 3600 === 0) return `${seconds / 3600} horas`;
   return `${Math.round(seconds / 60)} minutos`;
 };
+const normalizeTimestamp = (value: unknown) => {
+  if (!value) return undefined;
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object" && value && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    return (value as { toDate: () => Date }).toDate().toISOString();
+  }
+  return undefined;
+};
+const numericValue = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 export function Agente() {
   const navigate = useNavigate();
@@ -142,6 +178,9 @@ export function Agente() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
+  const [leads, setLeads] = useState<AgentLead[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(true);
+  const [leadsError, setLeadsError] = useState("");
   const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [notice, setNotice] = useState("");
@@ -185,6 +224,36 @@ export function Agente() {
     };
   }, [loadContacts, loadStatus]);
 
+  useEffect(() => onSnapshot(collection(db, "crm_leads_agente"), (snapshot) => {
+    const next = snapshot.docs.map((document) => {
+      const raw = document.data() as Record<string, unknown>;
+      return {
+        id: document.id,
+        phone: String(raw.telefone ?? ""),
+        name: raw.nome ? String(raw.nome) : undefined,
+        stage: String(raw.etapa ?? "contato_iniciado"),
+        outcome: String(raw.resultado ?? "em_andamento"),
+        reason: raw.motivo ? String(raw.motivo) : undefined,
+        activities: Array.isArray(raw.atividades) ? raw.atividades.map(String) : [],
+        desiredDate: raw.dataDesejada ? String(raw.dataDesejada) : undefined,
+        participants: numericValue(raw.participantes),
+        estimatedValue: numericValue(raw.valorEstimado),
+        paymentMethod: raw.formaPagamento ? String(raw.formaPagamento) : undefined,
+        reservationId: raw.reservaId ? String(raw.reservaId) : undefined,
+        marketingOptIn: raw.marketingOptIn === true,
+        nextAction: raw.proximaAcao ? String(raw.proximaAcao) : undefined,
+        summary: raw.resumo ? String(raw.resumo) : undefined,
+        updatedAt: normalizeTimestamp(raw.atualizadoEm ?? raw.criadoEm),
+      } satisfies AgentLead;
+    }).sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+    setLeads(next);
+    setLeadsError("");
+    setLeadsLoading(false);
+  }, () => {
+    setLeadsError("Não foi possível carregar os leads estruturados.");
+    setLeadsLoading(false);
+  }), []);
+
   const showMessage = (text: string) => {
     setError("");
     setNotice(text);
@@ -217,7 +286,7 @@ export function Agente() {
           <small>Operação</small>
           {tabs.map((item) => {
             const Icon = item.icon;
-            return <button key={item.key} className={tab === item.key ? "is-active" : ""} onClick={() => selectTab(item.key)}><Icon /><span>{item.label}</span>{item.key === "sessions" && modeCounts.human ? <b>{modeCounts.human}</b> : null}</button>;
+            return <button key={item.key} className={tab === item.key ? "is-active" : ""} onClick={() => selectTab(item.key)}><Icon /><span>{item.label}</span>{item.key === "sessions" && modeCounts.human ? <b>{modeCounts.human}</b> : item.key === "leads" && leads.length ? <b>{leads.length}</b> : null}</button>;
           })}
         </nav>
         <div className="agent-sidebar__privacy"><FaShieldAlt /><strong>Sem histórico permanente</strong><span>Mensagens e áudios existem apenas durante a sessão ativa.</span></div>
@@ -301,6 +370,8 @@ export function Agente() {
                 } catch (caught) { showError(caught); }
               }}
             />
+          ) : tab === "leads" ? (
+            <LeadsPanel leads={leads} loading={leadsLoading} error={leadsError} />
           ) : tab === "whatsapp" ? (
             <WhatsappPanel status={status} onReload={() => loadStatus()} onMessage={showMessage} onError={showError} />
           ) : tab === "prompt" ? (
@@ -344,6 +415,46 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
       </article>
     </section>
   </>;
+}
+
+const readableLeadValue = (value: string) => value
+  .replace(/_/g, " ")
+  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+function LeadsPanel({ leads, loading, error }: { leads: AgentLead[]; loading: boolean; error: string }) {
+  const [search, setSearch] = useState("");
+  const [outcome, setOutcome] = useState("all");
+  const outcomes = useMemo(() => Array.from(new Set(leads.map((lead) => lead.outcome))).sort(), [leads]);
+  const filtered = useMemo(() => leads.filter((lead) => {
+    if (outcome !== "all" && lead.outcome !== outcome) return false;
+    const haystack = `${lead.name || ""} ${lead.phone} ${lead.activities.join(" ")} ${lead.summary || ""} ${lead.reservationId || ""}`.toLowerCase();
+    return haystack.includes(search.trim().toLowerCase());
+  }), [leads, outcome, search]);
+  const confirmed = leads.filter((lead) => lead.outcome === "reserva_confirmada" || Boolean(lead.reservationId)).length;
+  const inProgress = leads.filter((lead) => !lead.reservationId && !["perdido", "encerrado", "sem_interesse"].includes(lead.outcome)).length;
+  const optedIn = leads.filter((lead) => lead.marketingOptIn).length;
+
+  return <section className="agent-leads">
+    <div className="agent-lead-metrics">
+      <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>Sem conversa armazenada</span></article>
+      <article><small>Em andamento</small><strong>{inProgress}</strong><span>Podem exigir próxima ação</span></article>
+      <article><small>Reservas vinculadas</small><strong>{confirmed}</strong><span>Conversão identificada</span></article>
+      <article><small>Opt-in de marketing</small><strong>{optedIn}</strong><span>Elegíveis para campanhas</span></article>
+    </div>
+    <article className="agent-card agent-leads-card">
+      <div className="agent-card__title"><span><FaChartLine /></span><div><h2>Dados interpretados pelo agente</h2><p>Use esta lista para validar se a IA encerrou o atendimento com as informações comerciais corretas.</p></div></div>
+      <div className="agent-lead-filters">
+        <label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone, interesse ou reserva" /></label>
+        <select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="all">Todos os resultados</option>{outcomes.map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select>
+      </div>
+      {loading ? <p className="agent-empty">Carregando leads estruturados…</p> : error ? <div className="agent-lead-error"><FaBan />{error}</div> : filtered.length === 0 ? <p className="agent-empty">Nenhum lead encontrado com esses filtros.</p> : <div className="agent-lead-list">{filtered.map((lead) => <article key={lead.id}>
+        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>+{lead.phone}</small></div><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></header>
+        <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span></div>
+        {lead.summary ? <p>{lead.summary}</p> : null}
+        <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}</footer>
+      </article>)}</div>}
+    </article>
+  </section>;
 }
 
 type SessionsProps = {
