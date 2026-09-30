@@ -380,6 +380,7 @@ export type CriarCobrancaPayload = {
   cartaoTitularNomeCompleto?: string;
   cartaoTitularNascimento?: string;
   temPet?: boolean;
+  confirmouCarteirinhaBariatrica?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
   atribuicao?: AtribuicaoReservaPayload;
   whatsappMarketingOptIn?: boolean;
@@ -421,6 +422,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     cartaoTitularNomeCompleto,
     cartaoTitularNascimento,
     temPet,
+    confirmouCarteirinhaBariatrica,
     perguntasPersonalizadas,
     atribuicao,
     whatsappMarketingOptIn,
@@ -440,9 +442,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   const participantesCalculadosBase = mapaAtivo
     ? somarMapa(participantesPorTipoNormalizado)
     : (adultos ?? 0) + (criancas ?? 0) + (bariatrica ?? 0);
-  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (mapaAtivo ? 0 : (naoPagante ?? 0));
+  // gruposParticipacao ja representam todas as categorias do grupo. Somar
+  // naoPagante novamente duplicava categorias gratuitas vindas do agente.
   const participantesConsiderados = Math.max(
-    participantesGrupos + (naoPagante ?? 0),
+    participantesGrupos,
     participantesCalculados,
     Number.isFinite(participantes) ? participantes : 0
   );
@@ -903,6 +907,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       horariosPorPacote: horariosPorPacoteNormalizado,
       status: "aguardando",
       temPet,
+      confirmouCarteirinhaBariatrica,
       perguntasPersonalizadas,
       atribuicao,
       whatsappMarketingOptIn,

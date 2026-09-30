@@ -82,10 +82,20 @@ type AgentConfig = {
 type AgentPackage = {
   id: string;
   nome: string;
+  tipoOferta?: "pacote" | "combo";
+  pacoteIds?: string[];
+  inclui?: Array<{ id: string; nome: string; modoHorario?: string; horarios?: string[]; horarioInicio?: string; horarioFim?: string }>;
   modoHorario?: string;
   horarios?: string[];
   horarioInicio?: string;
   horarioFim?: string;
+};
+
+type AgentCustomerType = {
+  id: string;
+  nome: string;
+  descricao?: string;
+  perguntarIdade?: boolean;
 };
 
 type AgentLead = {
@@ -168,6 +178,18 @@ const normalizeTimestamp = (value: unknown) => {
 const numericValue = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+const phoneDigits = (value: string) => value.replace(/\D/g, "").slice(0, 13);
+const formatPhone = (value?: string | null) => {
+  let digits = phoneDigits(value ?? "");
+  if (!digits) return "";
+  if (!digits.startsWith("55") && digits.length <= 11) digits = `55${digits}`;
+  const country = digits.slice(0, 2);
+  const area = digits.slice(2, 4);
+  const local = digits.slice(4);
+  const first = local.length > 8 ? local.slice(0, 5) : local.slice(0, 4);
+  const last = local.length > 8 ? local.slice(5, 9) : local.slice(4, 8);
+  return `+${country}${area ? ` (${area}` : ""}${area.length === 2 ? ")" : ""}${first ? ` ${first}` : ""}${last ? `-${last}` : ""}`;
 };
 
 export function Agente() {
@@ -448,7 +470,7 @@ function LeadsPanel({ leads, loading, error }: { leads: AgentLead[]; loading: bo
         <select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="all">Todos os resultados</option>{outcomes.map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select>
       </div>
       {loading ? <p className="agent-empty">Carregando leads estruturados…</p> : error ? <div className="agent-lead-error"><FaBan />{error}</div> : filtered.length === 0 ? <p className="agent-empty">Nenhum lead encontrado com esses filtros.</p> : <div className="agent-lead-list">{filtered.map((lead) => <article key={lead.id}>
-        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>+{lead.phone}</small></div><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></header>
+        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></header>
         <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span></div>
         {lead.summary ? <p>{lead.summary}</p> : null}
         <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}</footer>
@@ -474,7 +496,7 @@ type SessionsProps = {
 function Sessions(props: SessionsProps) {
   const [search, setSearch] = useState("");
   const [showBlockForm, setShowBlockForm] = useState(false);
-  const [phone, setPhone] = useState("55");
+  const [phone, setPhone] = useState(() => formatPhone("55"));
   const [name, setName] = useState("");
   const [reason, setReason] = useState("");
   const [reply, setReply] = useState("");
@@ -501,7 +523,7 @@ function Sessions(props: SessionsProps) {
     if (phone.replace(/\D/g, "").length < 10) return;
     props.onBlockNumber({ phone, name, reason });
     setShowBlockForm(false);
-    setPhone("55"); setName(""); setReason("");
+    setPhone(formatPhone("55")); setName(""); setReason("");
   };
 
   const send = async () => {
@@ -514,17 +536,17 @@ function Sessions(props: SessionsProps) {
   return <section className="agent-sessions">
     <aside className={`agent-contact-list ${props.selected ? "has-selection" : ""}`}>
       <div className="agent-contact-tools"><label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome ou telefone" /></label><button onClick={() => setShowBlockForm((value) => !value)}><FaBan /> Bloquear número</button></div>
-      {showBlockForm ? <form className="agent-block-form" onSubmit={submitBlock}><strong>Novo bloqueio</strong><input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="5562999999999" /><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome opcional" /><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Motivo opcional" /><div><button type="button" onClick={() => setShowBlockForm(false)}>Cancelar</button><button type="submit">Bloquear</button></div></form> : null}
+      {showBlockForm ? <form className="agent-block-form" onSubmit={submitBlock}><strong>Novo bloqueio</strong><input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} placeholder="+55 (62) 99999-9999" /><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome opcional" /><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Motivo opcional" /><div><button type="button" onClick={() => setShowBlockForm(false)}>Cancelar</button><button type="submit">Bloquear</button></div></form> : null}
       <div className="agent-contact-scroll">
         {props.loading ? <p className="agent-empty">Carregando contatos…</p> : filtered.length === 0 ? <p className="agent-empty">Nenhum contato ativo ou bloqueado.</p> : filtered.map((item) => {
           const mode = contactMode(item);
-          return <button key={item.jid} className={props.selected?.jid === item.jid ? "is-active" : ""} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || contactPhone(item)}</small><em className={`mode-${mode}`}>{mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
+          return <button key={item.jid} className={props.selected?.jid === item.jid ? "is-active" : ""} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || formatPhone(contactPhone(item))}</small><em className={`mode-${mode}`}>{mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
         })}
       </div>
     </aside>
     <div className={`agent-thread ${props.selected ? "has-selection" : ""}`}>
       {!props.selected ? <div className="agent-thread-empty"><FaComments /><strong>Selecione um atendimento</strong><span>As mensagens aparecem somente enquanto a sessão estiver ativa.</span></div> : <>
-        <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>+{contactPhone(props.selected)}</small></div><div className="agent-thread-actions">
+        <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>{formatPhone(contactPhone(props.selected))}</small></div><div className="agent-thread-actions">
           {contactMode(props.selected) === "blocked" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Desbloquear e devolver ao bot</button> : <>
             {contactMode(props.selected) === "human" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Devolver ao bot</button> : <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button>}
             <button className="is-block" onClick={() => props.onMode(props.selected!, "blocked", "Bloqueado pelo painel do agente")}><FaBan /> Bloquear</button>
@@ -542,7 +564,7 @@ function Sessions(props: SessionsProps) {
 function WhatsappPanel({ status, onReload, onMessage, onError }: { status: AgentStatus; onReload: () => Promise<void>; onMessage: (text: string) => void; onError: (error: unknown) => void }) {
   const [qr, setQr] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [phone, setPhone] = useState("5562991150376");
+  const [phone, setPhone] = useState(() => formatPhone("5562991150376"));
   const [text, setText] = useState("Teste do Agente Vagafogo. Se você recebeu esta mensagem, a conexão está funcionando.");
   const [sending, setSending] = useState(false);
 
@@ -566,12 +588,12 @@ function WhatsappPanel({ status, onReload, onMessage, onError }: { status: Agent
 
   const canSend = Boolean(status.ready && status.contactControls?.ready !== false);
   return <div className="agent-two-columns">
-    <article className="agent-card agent-whatsapp-card"><div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Número do agente</h2><p>Use apenas este gateway para o número conectado.</p></div></div><div className={`agent-connection-state ${status.ready ? "is-online" : ""}`}><i /><div><strong>{status.ready ? "Conectado e pronto" : "Desconectado"}</strong><span>{status.connectedNumber ? `+${status.connectedNumber}` : status.lastState || "Aguardando conexão"}</span></div></div>
+    <article className="agent-card agent-whatsapp-card"><div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Número do agente</h2><p>Use apenas este gateway para o número conectado.</p></div></div><div className={`agent-connection-state ${status.ready ? "is-online" : ""}`}><i /><div><strong>{status.ready ? "Conectado e pronto" : "Desconectado"}</strong><span>{status.connectedNumber ? formatPhone(status.connectedNumber) : status.lastState || "Aguardando conexão"}</span></div></div>
       {!status.ready ? <button className="agent-primary" onClick={() => void connect()} disabled={connecting}><FaPlug />{connecting ? "Gerando QR Code…" : "Conectar por QR Code"}</button> : <button className="agent-danger-outline" onClick={async () => { try { await api("/crm/agente/logout", { method: "POST" }); setQr(""); await onReload(); onMessage("WhatsApp desconectado."); } catch (caught) { onError(caught); } }}><FaUnlink /> Desconectar</button>}
       {qr ? <div className="agent-qr"><img src={qr} alt="QR Code do WhatsApp" /><strong>Escaneie em Aparelhos conectados</strong><span>WhatsApp → Menu → Aparelhos conectados → Conectar aparelho</span></div> : null}
       {status.lastError || status.contactControls?.lastError ? <p className="agent-inline-error">{status.contactControls?.lastError || status.lastError}</p> : null}
     </article>
-    <article className="agent-card agent-test-card"><div className="agent-card__title"><span><FaPaperPlane /></span><div><h2>Disparo de teste</h2><p>Valide uma mensagem isolada antes de ativar os fluxos.</p></div></div><label>Telefone com DDI<input value={phone} onChange={(event) => setPhone(event.target.value)} /></label><label>Mensagem<textarea value={text} onChange={(event) => setText(event.target.value)} /></label><button className="agent-primary" disabled={sending || !canSend || !phone || !text.trim()} onClick={async () => { setSending(true); try { await api("/crm/agente/teste-whatsapp", { method: "POST", body: JSON.stringify({ phone, text }) }); onMessage("Mensagem de teste enviada."); } catch (caught) { onError(caught); } finally { setSending(false); } }}><FaPaperPlane />{sending ? "Enviando…" : "Enviar teste"}</button><small>Contatos bloqueados não recebem nem mesmo disparos de teste.</small></article>
+    <article className="agent-card agent-test-card"><div className="agent-card__title"><span><FaPaperPlane /></span><div><h2>Disparo de teste</h2><p>Valide uma mensagem isolada antes de ativar os fluxos.</p></div></div><label>Telefone com DDI<input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} placeholder="+55 (62) 99999-9999" /></label><label>Mensagem<textarea value={text} onChange={(event) => setText(event.target.value)} /></label><button className="agent-primary" disabled={sending || !canSend || !phone || !text.trim()} onClick={async () => { setSending(true); try { await api("/crm/agente/teste-whatsapp", { method: "POST", body: JSON.stringify({ phone, text }) }); onMessage("Mensagem de teste enviada."); } catch (caught) { onError(caught); } finally { setSending(false); } }}><FaPaperPlane />{sending ? "Enviando…" : "Enviar teste"}</button><small>Contatos bloqueados não recebem nem mesmo disparos de teste.</small></article>
   </div>;
 }
 
@@ -590,30 +612,39 @@ function PromptPanel({ onMessage, onError }: { onMessage: (text: string) => void
 
 function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }) {
   const [diagnostic, setDiagnostic] = useState<Record<string, unknown> | null>(null);
-  const [packages, setPackages] = useState<AgentPackage[]>([]);
-  const [packageId, setPackageId] = useState("");
+  const [offers, setOffers] = useState<AgentPackage[]>([]);
+  const [customerTypes, setCustomerTypes] = useState<AgentCustomerType[]>([]);
+  const [offerKey, setOfferKey] = useState("");
   const [date, setDate] = useState(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
   const [time, setTime] = useState("");
   const [adults, setAdults] = useState(1);
   const [bariatric, setBariatric] = useState(0);
   const [children, setChildren] = useState(0);
   const [nonPaying, setNonPaying] = useState(0);
+  const [childAges, setChildAges] = useState("");
+  const [nonPayingAges, setNonPayingAges] = useState("");
+  const [bariatricConfirmed, setBariatricConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const parseAges = (value: string) => value.split(/[,;\s]+/).map(Number).filter((item) => Number.isFinite(item) && item >= 0 && item <= 120);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [diagnosticData, packageData] = await Promise.all([
+      const [diagnosticData, catalog] = await Promise.all([
         api("/crm/agente/diagnostico") as Promise<Record<string, unknown>>,
-        api("/crm/agente/testes/pacotes") as Promise<{ pacotes?: AgentPackage[] }>,
+        api("/crm/agente/testes/pacotes") as Promise<{ pacotes?: AgentPackage[]; combos?: AgentPackage[]; tiposClientes?: AgentCustomerType[] }>,
       ]);
-      const nextPackages = Array.isArray(packageData.pacotes) ? packageData.pacotes : [];
+      const packages = Array.isArray(catalog.pacotes) ? catalog.pacotes.map((item) => ({ ...item, tipoOferta: "pacote" as const })) : [];
+      const combos = Array.isArray(catalog.combos) ? catalog.combos.map((item) => ({ ...item, tipoOferta: "combo" as const })) : [];
+      const nextOffers = [...combos, ...packages];
       setDiagnostic(diagnosticData);
-      setPackages(nextPackages);
-      setPackageId((current) => current || nextPackages[0]?.id || "");
-      setTime((current) => current || nextPackages[0]?.horarios?.[0] || nextPackages[0]?.horarioInicio || "");
+      setOffers(nextOffers);
+      setCustomerTypes(Array.isArray(catalog.tiposClientes) ? catalog.tiposClientes : []);
+      setOfferKey((current) => current || (nextOffers[0] ? `${nextOffers[0].tipoOferta}:${nextOffers[0].id}` : ""));
+      setTime((current) => current || nextOffers[0]?.horarios?.[0] || nextOffers[0]?.horarioInicio || "");
     } catch (caught) {
       onError(caught);
     } finally {
@@ -623,15 +654,41 @@ function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }
 
   useEffect(() => { void load(); }, [load]);
 
-  const selectedPackage = packages.find((item) => item.id === packageId);
+  const selectedOffer = offers.find((item) => `${item.tipoOferta}:${item.id}` === offerKey);
   const simulate = async (event: FormEvent) => {
     event.preventDefault();
+    if (!selectedOffer) return;
+    const participantsByType = Object.fromEntries(customerTypes.map((type) => {
+      const name = normalize(type.nome);
+      const quantity = name.includes("adult") ? adults : name.includes("bariat") ? bariatric : name.includes("crian") ? children : name.includes("nao pag") ? nonPaying : 0;
+      return [type.id, quantity];
+    }));
+    const agesByType = Object.fromEntries(customerTypes.flatMap((type) => {
+      const name = normalize(type.nome);
+      if (name.includes("crian")) return [[type.id, parseAges(childAges)]];
+      if (name.includes("nao pag")) return [[type.id, parseAges(nonPayingAges)]];
+      return [];
+    }));
+    const included = selectedOffer.tipoOferta === "combo" ? selectedOffer.inclui ?? [] : [selectedOffer];
+    const times = Object.fromEntries(included
+      .filter((item) => item.modoHorario !== "intervalo" && time)
+      .map((item) => [item.id, time]));
     setTesting(true);
     setResult(null);
     try {
       const data = await api("/crm/agente/testes/reserva", {
         method: "POST",
-        body: JSON.stringify({ pacoteId: packageId, data: date, horario: time, adultos: adults, bariatrica: bariatric, criancas: children, naoPagantes: nonPaying }),
+        body: JSON.stringify({
+          tipoOferta: selectedOffer.tipoOferta,
+          ofertaId: selectedOffer.id,
+          data: date,
+          horario: time,
+          horariosPorPacote: times,
+          participantesPorTipo: participantsByType,
+          idadesPorTipo: agesByType,
+          confirmouCarteirinhaBariatrica: bariatric === 0 || bariatricConfirmed,
+          perguntasPersonalizadas: [],
+        }),
       }) as { resultado?: Record<string, unknown> };
       setResult(data.resultado ?? null);
     } catch (caught) {
@@ -652,10 +709,31 @@ function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }
     { label: "Token entre serviços", ok: config.tokenInterno === true },
     { label: "Asaas no Vagafogo", ok: config.asaas === true },
   ];
+  const pending = Array.isArray(result?.requisitosPendentes) ? result.requisitosPendentes.map(String) : [];
+  const offerResult = result?.oferta && typeof result.oferta === "object" ? result.oferta as { nome?: string } : {};
+  const needsTime = selectedOffer?.tipoOferta === "combo"
+    ? (selectedOffer.inclui ?? []).some((item) => item.modoHorario !== "intervalo")
+    : selectedOffer?.modoHorario !== "intervalo";
 
   return <div className="agent-reservation-tests">
     <article className="agent-card agent-diagnostic-card"><div className="agent-card__title"><span><FaPlug /></span><div><h2>Diagnóstico dos serviços</h2><p>Confirma a ponte entre os dois Railways sem expor credenciais.</p></div></div>{loading ? <p className="agent-empty">Verificando integrações…</p> : <div className="agent-diagnostic-list">{checks.map((check) => <div className={check.ok ? "is-ok" : "is-failed"} key={check.label}><span>{check.ok ? <FaCheckCircle /> : <FaTimes />}</span><strong>{check.label}</strong><em>{check.ok ? "Pronto" : "Pendente"}</em></div>)}</div>}<button className="agent-primary" type="button" onClick={() => void load()} disabled={loading}><FaSyncAlt /> Atualizar diagnóstico</button></article>
-    <form className="agent-card agent-simulation-card" onSubmit={simulate}><div className="agent-card__title"><span><FaCalendarAlt /></span><div><h2>Simular disponibilidade</h2><p>Consulta dados reais, mas não grava reserva e não cria cobrança.</p></div></div><label>Experiência<select value={packageId} onChange={(event) => { const nextId = event.target.value; const next = packages.find((item) => item.id === nextId); setPackageId(nextId); setTime(next?.horarios?.[0] || next?.horarioInicio || ""); }}>{packages.map((item) => <option value={item.id} key={item.id}>{item.nome}</option>)}</select></label><div className="agent-simulation-grid"><label>Data<input type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Horário{selectedPackage?.horarios?.length ? <select value={time} onChange={(event) => setTime(event.target.value)} required>{selectedPackage.horarios.map((item) => <option value={item} key={item}>{item}</option>)}</select> : <input type="time" value={time} min={selectedPackage?.horarioInicio} max={selectedPackage?.horarioFim} onChange={(event) => setTime(event.target.value)} required />}</label><label>Adultos<input type="number" min="0" max="100" value={adults} onChange={(event) => setAdults(Number(event.target.value))} /></label><label>Bariátrica<input type="number" min="0" max="100" value={bariatric} onChange={(event) => setBariatric(Number(event.target.value))} /></label><label>Crianças<input type="number" min="0" max="100" value={children} onChange={(event) => setChildren(Number(event.target.value))} /></label><label>Não pagantes<input type="number" min="0" max="100" value={nonPaying} onChange={(event) => setNonPaying(Number(event.target.value))} /></label></div><button className="agent-primary" disabled={testing || loading || !packageId || !date || !time}><FaSearch />{testing ? "Consultando…" : "Consultar vaga e preço"}</button>{result ? <div className={`agent-simulation-result ${result.disponivel === true ? "is-ok" : "is-failed"}`}><strong>{result.disponivel === true ? "Disponível" : "Indisponível"}</strong><span>{String((result.pacote as { nome?: string } | undefined)?.nome || selectedPackage?.nome || "Experiência")} · {String(result.data || date)} às {String(result.horario || time)}</span><dl><div><dt>Participantes</dt><dd>{String(result.participantes ?? 0)}</dd></div><div><dt>Vagas restantes</dt><dd>{result.vagasRestantes == null ? "Sem limite" : String(result.vagasRestantes)}</dd></div><div><dt>Valor</dt><dd>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(result.valor ?? 0))}</dd></div></dl>{Array.isArray(result.motivos) && result.motivos.length ? <small>Motivos: {result.motivos.map(String).join(", ")}</small> : null}</div> : null}</form>
+    <form className="agent-card agent-simulation-card" onSubmit={simulate}>
+      <div className="agent-card__title"><span><FaCalendarAlt /></span><div><h2>Simular disponibilidade</h2><p>Testa experiências e combos reais sem gravar reserva ou cobrança.</p></div></div>
+      <label>Oferta<select value={offerKey} onChange={(event) => { const nextKey = event.target.value; const next = offers.find((item) => `${item.tipoOferta}:${item.id}` === nextKey); setOfferKey(nextKey); setTime(next?.horarios?.[0] || next?.horarioInicio || ""); }}>{offers.map((item) => <option value={`${item.tipoOferta}:${item.id}`} key={`${item.tipoOferta}:${item.id}`}>{item.tipoOferta === "combo" ? "Combo · " : ""}{item.nome}</option>)}</select></label>
+      <div className="agent-simulation-grid">
+        <label>Data<input type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
+        <label>Horário principal<input type="time" value={time} min={selectedOffer?.horarioInicio} max={selectedOffer?.horarioFim} onChange={(event) => setTime(event.target.value)} required={needsTime} /></label>
+        <label>Adultos<input type="number" min="0" max="100" value={adults} onChange={(event) => setAdults(Number(event.target.value))} /></label>
+        <label>Bariátrica<input type="number" min="0" max="100" value={bariatric} onChange={(event) => setBariatric(Number(event.target.value))} /></label>
+        <label>Crianças<input type="number" min="0" max="100" value={children} onChange={(event) => setChildren(Number(event.target.value))} /></label>
+        <label>Não pagantes<input type="number" min="0" max="100" value={nonPaying} onChange={(event) => setNonPaying(Number(event.target.value))} /></label>
+        {children > 0 ? <label>Idades das crianças<input value={childAges} onChange={(event) => setChildAges(event.target.value)} placeholder="Ex.: 6, 10" /></label> : null}
+        {nonPaying > 0 ? <label>Idades dos não pagantes<input value={nonPayingAges} onChange={(event) => setNonPayingAges(event.target.value)} placeholder="Ex.: 2, 3" /></label> : null}
+      </div>
+      {bariatric > 0 ? <label className="agent-toggle"><input type="checkbox" checked={bariatricConfirmed} onChange={(event) => setBariatricConfirmed(event.target.checked)} /><span /><div><strong>Carteirinha bariátrica explicada</strong><small>Confirma que a exigência de validação foi informada.</small></div></label> : null}
+      <button className="agent-primary" disabled={testing || loading || !selectedOffer || !date || (needsTime && !time)}><FaSearch />{testing ? "Consultando…" : "Consultar vaga e preço"}</button>
+      {result ? <div className={`agent-simulation-result ${result.disponivel === true ? "is-ok" : "is-failed"}`}><strong>{result.disponivel === true ? result.prontoParaPagamento === true ? "Disponível e completo" : "Disponível, com dados pendentes" : "Indisponível"}</strong><span>{String(offerResult.nome || selectedOffer?.nome || "Oferta")} · {String(result.data || date)}{time ? ` às ${String(result.horario || time)}` : ""}</span><dl><div><dt>Participantes</dt><dd>{String(result.participantes ?? 0)}</dd></div><div><dt>Vagas restantes</dt><dd>{result.vagasRestantes == null ? "Sem limite" : String(result.vagasRestantes)}</dd></div><div><dt>Valor</dt><dd>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(result.valor ?? 0))}</dd></div></dl>{pending.length ? <small>Pendente: {pending.join(" · ")}</small> : null}{Array.isArray(result.motivos) && result.motivos.length ? <small>Motivos: {result.motivos.map(String).join(", ")}</small> : null}</div> : null}
+    </form>
   </div>;
 }
 

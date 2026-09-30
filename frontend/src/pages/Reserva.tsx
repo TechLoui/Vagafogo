@@ -10,6 +10,7 @@ export function Reserva() {
       ? experienceParam
       : undefined;
   const initialPackageId = searchParams.get("pacote")?.trim() || undefined;
+  const initialComboId = searchParams.get("combo")?.trim() || undefined;
   const initialDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get("data") ?? "")
     ? searchParams.get("data")!
     : undefined;
@@ -62,6 +63,7 @@ export function Reserva() {
         <BookingSection
           initialExperience={initialExperience}
           initialPackageId={initialPackageId}
+          initialComboId={initialComboId}
           initialDate={initialDate}
           initialTime={initialTime}
         />

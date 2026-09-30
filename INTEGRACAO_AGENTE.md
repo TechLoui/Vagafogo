@@ -7,9 +7,35 @@ Os servicos continuam separados e cada Railway acompanha seu proprio repositorio
 - `TechLoui/Agente-Vagafogo`: gateway Baileys e backend Python/DeepSeek.
 
 O Firebase original do Agente nao deve ser trocado. Ele preserva a sessao do
-WhatsApp, o prompt e o modo `human`/`blocked` por contato. Conversas, audios e
-transcricoes ficam somente em memoria. Dados comerciais sao gravados apenas no
+WhatsApp, o prompt e o modo `human`/`blocked` por contato. Conversas ficam
+somente em memoria; audios nao sao armazenados nem transcritos. Dados comerciais sao gravados apenas no
 `banco-vagafogo`, por APIs internas autenticadas.
+
+## Fluxo oficial de reserva pelo Agente
+
+1. Consultar o catalogo atual, incluindo experiencias individuais, combos,
+   categorias, precos, horarios, avisos e perguntas obrigatorias.
+2. Receber os dados em qualquer ordem. A cada mensagem, atualizar o checklist
+   temporario e perguntar somente o que ainda falta.
+3. Para combos, validar cada pacote incluído. Cada pacote com hora marcada
+   recebe seu horario; pacotes em faixa usam inicio/fim configurados.
+4. Coletar uma idade para cada categoria marcada com `perguntarIdade=true`.
+5. Havendo participante bariatrico, explicar a carteirinha e registrar que o
+   cliente confirmou essa orientacao.
+6. Consultar disponibilidade e valor no backend Vagafogo. O retorno
+   `prontoParaPagamento=false` impede a cobranca e lista os requisitos faltantes.
+7. Coletar nome, e-mail, CPF, pet, perguntas de todos os pacotes, preferencia de
+   pagamento e consentimento de marketing separado.
+8. Recapitular oferta, itens do combo, data, horarios, categorias, idades e valor;
+   gerar pagamento somente apos confirmacao explicita.
+9. PIX: enviar a imagem do QR sem legenda e, em seguida, somente o copia e cola.
+   URLs do Asaas nunca sao expostas.
+10. Cartao: enviar apenas uma URL `https://vagafogo.com.br/reservar?...` com a
+    oferta/data/horario preselecionados. Dados do cartao nunca passam pelo bot.
+11. A confirmacao ocorre somente pelo webhook. Depois do pagamento, enviar
+    codigo, detalhes dos itens, participantes e orientacoes da visita.
+12. Audio: nao baixar, transcrever ou guardar; orientar texto ou o formulario
+    oficial em `https://vagafogo.com.br/reservar`.
 
 ## Variaveis do Railway
 
@@ -77,6 +103,10 @@ Manter a chave DeepSeek e o Firebase original do Agente.
 - Cada destinatario recebe um link individual; a reserva e a receita voltam
   para a campanha de origem.
 - Cartao nunca e coletado no WhatsApp; o cliente recebe o link seguro do site.
+- O Agente sempre apresenta combos ativos aplicaveis, coleta idades obrigatorias
+  e bloqueia o PIX enquanto houver requisito pendente.
+- Nenhuma resposta do Agente contem `invoiceUrl` ou qualquer URL do Asaas.
+- O QR PIX e enviado sem legenda; o copia e cola vai na mensagem seguinte.
 - O Agente nao possui credenciais do banco principal ou do Asaas.
 - O banco do Agente nao recebe mensagens, audios, transcricoes, leads,
   pagamentos ou reservas.

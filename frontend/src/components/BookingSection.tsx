@@ -66,6 +66,8 @@ type TipoCliente = {
   nome: string;
   descricao?: string;
   perguntarIdade?: boolean;
+  idadeMinima?: number;
+  idadeMaxima?: number;
 };
 
 type TipoClienteQuantidade = Record<string, number>;
@@ -508,11 +510,12 @@ const calcularParticipantesReserva = (reserva: ReservaResumo) => {
 type BookingSectionProps = {
   initialExperience?: ExperienceSlug;
   initialPackageId?: string;
+  initialComboId?: string;
   initialDate?: string;
   initialTime?: string;
 };
 
-export function BookingSection({ initialExperience, initialPackageId, initialDate, initialTime }: BookingSectionProps = {}) {
+export function BookingSection({ initialExperience, initialPackageId, initialComboId, initialDate, initialTime }: BookingSectionProps = {}) {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -950,6 +953,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
               nome: data.nome ?? "",
               descricao: data.descricao ?? "",
               perguntarIdade: data.perguntarIdade === true,
+              ...(Number.isFinite(Number(data.idadeMinima)) ? { idadeMinima: Number(data.idadeMinima) } : {}),
+              ...(Number.isFinite(Number(data.idadeMaxima)) ? { idadeMaxima: Number(data.idadeMaxima) } : {}),
             } as TipoCliente;
           })
           .filter((tipo) => tipo.nome.trim().length > 0)
@@ -1039,22 +1044,26 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
   useEffect(() => {
     if (loadingPacotes || pacotes.length === 0) return;
 
-    const selectionKey = `${initialPackageId ?? ""}:${initialExperience ?? ""}:${initialDate ?? ""}:${initialTime ?? ""}`;
-    if (selectionKey === ":" || initialSelectionAppliedRef.current === selectionKey) return;
+    const selectionKey = `${initialPackageId ?? ""}:${initialComboId ?? ""}:${initialExperience ?? ""}:${initialDate ?? ""}:${initialTime ?? ""}`;
+    if (selectionKey === "::::" || initialSelectionAppliedRef.current === selectionKey) return;
     const linkAnterior = initialSelectionAppliedRef.current;
 
+    const comboInicial = initialComboId ? combos.find((combo) => combo.id === initialComboId) : undefined;
     const pacoteInicial =
       (initialPackageId ? pacotes.find((pacote) => pacote.id === initialPackageId) : undefined) ??
       (initialExperience
         ? pacotes.find((pacote) => pacote.id && pacoteCorrespondeExperiencia(pacote, initialExperience))
         : undefined);
 
-    if (!pacoteInicial?.id) return;
+    const pacoteIdsIniciais = comboInicial?.pacoteIds?.length
+      ? comboInicial.pacoteIds.filter((id) => pacotes.some((pacote) => pacote.id === id))
+      : pacoteInicial?.id ? [pacoteInicial.id] : [];
+    if (pacoteIdsIniciais.length === 0) return;
     initialSelectionAppliedRef.current = selectionKey;
 
     const linkFoiTrocado = linkAnterior !== null;
     setSelectedPackages((atuais) =>
-      linkFoiTrocado || atuais.length === 0 ? [pacoteInicial.id!] : atuais
+      linkFoiTrocado || atuais.length === 0 ? pacoteIdsIniciais : atuais
     );
 
     const dataInicial = initialDate ? new Date(`${initialDate}T12:00:00`) : undefined;
@@ -1064,7 +1073,12 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
       setEtapa(initialTime ? 2 : 1);
       if (initialTime) {
         setHorario(initialTime);
-        setHorariosPorPacote({ [pacoteInicial.id]: initialTime });
+        const horariosIniciais = Object.fromEntries(
+          pacotes
+            .filter((pacote) => pacote.id && pacoteIdsIniciais.includes(pacote.id) && pacote.modoHorario !== "intervalo" && (pacote.horarios ?? []).includes(initialTime))
+            .map((pacote) => [pacote.id!, initialTime])
+        );
+        setHorariosPorPacote(horariosIniciais);
       }
     }
 
@@ -1078,7 +1092,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
       setTemPet(null);
       setFormErrors({});
     }
-  }, [initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
+  }, [combos, initialComboId, initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 
@@ -2348,11 +2362,16 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
               const valorLimpo = (idadeStr ?? "").trim();
               if (!valorLimpo) return true;
               const idadeNum = Number(valorLimpo);
-              return !Number.isFinite(idadeNum) || idadeNum < 0 || idadeNum > 120;
+              const idadeMinima = tipo.idadeMinima ?? 0;
+              const idadeMaxima = tipo.idadeMaxima ?? 120;
+              return !Number.isFinite(idadeNum) || idadeNum < idadeMinima || idadeNum > idadeMaxima;
             });
           });
           if (tipoComIdadeFaltando) {
-            errors.participantes = `Informe a idade de cada ${tipoComIdadeFaltando.nome.toLowerCase()} em "${grupo.nome}".`;
+            const faixa = tipoComIdadeFaltando.idadeMinima !== undefined || tipoComIdadeFaltando.idadeMaxima !== undefined
+              ? ` (de ${tipoComIdadeFaltando.idadeMinima ?? 0} a ${tipoComIdadeFaltando.idadeMaxima ?? 120} anos)`
+              : "";
+            errors.participantes = `Informe uma idade válida para cada ${tipoComIdadeFaltando.nome.toLowerCase()}${faixa} em "${grupo.nome}".`;
             break;
           }
         }
@@ -4164,8 +4183,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
                                           <span className="text-[10px] font-semibold text-slate-500">#{idx + 1}</span>
                                           <input
                                             type="number"
-                                            min={0}
-                                            max={120}
+                                            min={tipo.idadeMinima ?? 0}
+                                            max={tipo.idadeMaxima ?? 120}
                                             inputMode="numeric"
                                             value={idadeValor}
                                             onChange={(e) => {
@@ -4398,8 +4417,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialDat
                                           </span>
                                           <input
                                             type="number"
-                                            min={0}
-                                            max={120}
+                                            min={tipo.idadeMinima ?? 0}
+                                            max={tipo.idadeMaxima ?? 120}
                                             inputMode="numeric"
                                             value={idadeValor}
                                             onChange={(e) => {

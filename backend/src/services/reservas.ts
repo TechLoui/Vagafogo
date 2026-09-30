@@ -169,6 +169,7 @@ export type CriarReservaPayload = {
   status?: string;
   observacao?: string;
   temPet?: boolean;
+  confirmouCarteirinhaBariatrica?: boolean;
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
   atribuicao?: AtribuicaoReservaPayload;
   whatsappMarketingOptIn?: boolean;
@@ -198,6 +199,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     status = "aguardando",
     observacao = "",
     temPet,
+    confirmouCarteirinhaBariatrica,
     perguntasPersonalizadas,
     atribuicao,
     whatsappMarketingOptIn = false,
@@ -215,9 +217,9 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
   const participantesCalculadosBase = mapaAtivo
     ? somarMapa(participantesPorTipoNormalizado)
     : (adultos ?? 0) + (bariatrica ?? 0) + (criancas ?? 0);
-  const participantesCalculados = participantesCalculadosBase + (naoPagante ?? 0);
+  const participantesCalculados = participantesCalculadosBase + (mapaAtivo ? 0 : (naoPagante ?? 0));
   const participantesConsiderados = Math.max(
-    participantesGrupos + (naoPagante ?? 0),
+    participantesGrupos,
     participantesCalculados,
     Number.isFinite(participantes) ? participantes : 0
   );
@@ -274,6 +276,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     confirmada: reservaEstaConfirmada({ status }),
     observacao,
     temPet,
+    confirmouCarteirinhaBariatrica: confirmouCarteirinhaBariatrica === true,
     perguntasPersonalizadas: perguntasPersonalizadas ?? [],
     ...camposRetencao,
   });

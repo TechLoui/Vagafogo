@@ -55,7 +55,7 @@ import { agentServiceConfigured, requestAgentService, type AgentResponse } from 
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   criarLinkCartaoAgente,
-  listarExperienciasAgente,
+  listarCatalogoAgente,
   registrarLeadAgente,
   simularReservaAgente,
 } from "../services/agentReservationTools";
@@ -254,8 +254,8 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
   ]);
   let reservas = { ok: false, pacotes: 0, erro: null as string | null };
   try {
-    const pacotes = await listarExperienciasAgente();
-    reservas = { ok: true, pacotes: pacotes.length, erro: null };
+    const catalogo = await listarCatalogoAgente();
+    reservas = { ok: true, pacotes: catalogo.pacotes.length + catalogo.combos.length, erro: null };
   } catch (error) {
     reservas.erro = error instanceof Error ? error.message : String(error);
   }
@@ -276,7 +276,7 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
 
 app.get('/crm/agente/testes/pacotes', exigirAdminCrm, async (_req, res) => {
   try {
-    res.json({ pacotes: await listarExperienciasAgente() });
+    res.json(await listarCatalogoAgente());
   } catch (error) {
     res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
   }
@@ -294,7 +294,7 @@ app.post('/crm/agente/testes/reserva', exigirAdminCrm, async (req, res) => {
 // do banco principal e compartilhada com o servico do agente.
 app.get('/internal/agente/ferramentas/pacotes', exigirServicoAgente, async (_req, res) => {
   try {
-    res.json({ pacotes: await listarExperienciasAgente() });
+    res.json(await listarCatalogoAgente());
   } catch (error) {
     res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
   }
@@ -354,26 +354,63 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
     res.status(400).json({ error: "AGENT_CARD_DATA_NOT_ACCEPTED" });
     return;
   }
-  const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
-  req.headers["idempotency-key"] = idempotencyKey;
-  req.body = {
-    ...(req.body ?? {}),
-    billingType: "PIX",
-    creditCard: undefined,
-    creditCardHolderInfo: undefined,
-    atribuicao: {
-      ...(req.body?.atribuicao && typeof req.body.atribuicao === "object" ? req.body.atribuicao : {}),
-      sessionId: String(req.body?.sessionId ?? req.body?.atribuicao?.sessionId ?? "").slice(0, 100),
-      sourceChannel: "whatsapp",
-      utmSource: "whatsapp",
-      utmMedium: "agente",
-      utmCampaign: "reserva_assistida",
-      capturedAt: new Date().toISOString(),
-      ...campaignAttribution,
-    },
-    whatsappMarketingOptIn: req.body?.whatsappMarketingOptIn === true,
-  };
-  await criarCobrancaHandler(req, res);
+  try {
+    // A cobranca nunca confia no valor ou na composicao enviados pela IA. Tudo
+    // e recalculado no sistema Vagafogo imediatamente antes de criar o PIX.
+    const disponibilidade = await simularReservaAgente(req.body ?? {});
+    if (!disponibilidade.disponivel) {
+      res.status(409).json({ error: "AGENT_AVAILABILITY_CHANGED", disponibilidade });
+      return;
+    }
+    if (!disponibilidade.prontoParaPagamento) {
+      res.status(400).json({ error: "AGENT_RESERVATION_DATA_INCOMPLETE", requisitosPendentes: disponibilidade.requisitosPendentes });
+      return;
+    }
+    const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
+    const categorias = disponibilidade.categoriasLegadas;
+    req.headers["idempotency-key"] = idempotencyKey;
+    req.body = {
+      ...(req.body ?? {}),
+      valor: disponibilidade.valor,
+      atividade: disponibilidade.oferta.nome,
+      participantes: disponibilidade.participantes,
+      participantesPorTipo: disponibilidade.participantesPorTipo,
+      adultos: categorias.adultos,
+      bariatrica: categorias.bariatrica,
+      criancas: categorias.criancas,
+      naoPagante: categorias.naoPagantes,
+      pacoteIds: disponibilidade.oferta.pacoteIds,
+      comboId: disponibilidade.oferta.tipo === "combo" ? disponibilidade.oferta.id : null,
+      horario: disponibilidade.horario,
+      horariosPorPacote: disponibilidade.horariosPorPacote,
+      gruposParticipacao: [{
+        tipo: disponibilidade.oferta.tipo,
+        refId: disponibilidade.oferta.id,
+        nome: disponibilidade.oferta.nome,
+        pacoteIds: disponibilidade.oferta.pacoteIds,
+        participantesPorTipo: disponibilidade.participantesPorTipo,
+        participantes: disponibilidade.participantes,
+        idadesPorTipo: disponibilidade.idadesPorTipo,
+      }],
+      billingType: "PIX",
+      creditCard: undefined,
+      creditCardHolderInfo: undefined,
+      atribuicao: {
+        ...(req.body?.atribuicao && typeof req.body.atribuicao === "object" ? req.body.atribuicao : {}),
+        sessionId: String(req.body?.sessionId ?? req.body?.atribuicao?.sessionId ?? "").slice(0, 100),
+        sourceChannel: "whatsapp",
+        utmSource: "whatsapp",
+        utmMedium: "agente",
+        utmCampaign: "reserva_assistida",
+        capturedAt: new Date().toISOString(),
+        ...campaignAttribution,
+      },
+      whatsappMarketingOptIn: req.body?.whatsappMarketingOptIn === true,
+    };
+    await criarCobrancaHandler(req, res);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.post('/webhook-test', (req, res) => {

@@ -476,6 +476,10 @@ interface TipoCliente {
   /** Se true, o formulario de reserva pergunta a idade de cada participante desse tipo. */
   perguntarIdade?: boolean;
 
+  idadeMinima?: number;
+
+  idadeMaxima?: number;
+
 }
 
 interface Reserva {
@@ -1197,6 +1201,10 @@ const criarTipoClienteVazio = (): TipoCliente => ({
   descricao: '',
 
   perguntarIdade: false,
+
+  idadeMinima: undefined,
+
+  idadeMaxima: undefined,
 
 });
 
@@ -5401,6 +5409,10 @@ const totalParticipantesDoDia = useMemo(() => {
 
             perguntarIdade: data.perguntarIdade === true,
 
+            ...(Number.isFinite(Number(data.idadeMinima)) ? { idadeMinima: Number(data.idadeMinima) } : {}),
+
+            ...(Number.isFinite(Number(data.idadeMaxima)) ? { idadeMaxima: Number(data.idadeMaxima) } : {}),
+
           } as TipoCliente;
 
         })
@@ -6448,6 +6460,12 @@ const totalParticipantesDoDia = useMemo(() => {
 
       descricao: tipo.descricao ?? '',
 
+      perguntarIdade: tipo.perguntarIdade === true,
+
+      idadeMinima: tipo.idadeMinima,
+
+      idadeMaxima: tipo.idadeMaxima,
+
     });
 
     setIsEditingTipoCliente(true);
@@ -6484,6 +6502,22 @@ const totalParticipantesDoDia = useMemo(() => {
 
     const descricao = (editTipoCliente.descricao ?? '').trim();
 
+    const idadeMinima = Number.isFinite(editTipoCliente.idadeMinima)
+      ? Math.max(0, Math.trunc(Number(editTipoCliente.idadeMinima)))
+      : undefined;
+
+    const idadeMaxima = Number.isFinite(editTipoCliente.idadeMaxima)
+      ? Math.min(120, Math.max(0, Math.trunc(Number(editTipoCliente.idadeMaxima))))
+      : undefined;
+
+    if (idadeMinima !== undefined && idadeMaxima !== undefined && idadeMinima > idadeMaxima) {
+
+      setFeedback({ type: 'error', message: 'A idade mínima não pode ser maior que a idade máxima.' });
+
+      return;
+
+    }
+
     const payload = {
 
       nome,
@@ -6491,6 +6525,10 @@ const totalParticipantesDoDia = useMemo(() => {
       ...(descricao ? { descricao } : {}),
 
       perguntarIdade: editTipoCliente.perguntarIdade === true,
+
+      ...(editTipoCliente.perguntarIdade === true && idadeMinima !== undefined ? { idadeMinima } : {}),
+
+      ...(editTipoCliente.perguntarIdade === true && idadeMaxima !== undefined ? { idadeMaxima } : {}),
 
     };
 
@@ -6500,7 +6538,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
       if (isEditingTipoCliente && editTipoCliente.id) {
 
-        await updateDoc(doc(db, 'tipos_clientes', editTipoCliente.id), payload);
+        await updateDoc(doc(db, 'tipos_clientes', editTipoCliente.id), {
+          ...payload,
+          idadeMinima: editTipoCliente.perguntarIdade === true && idadeMinima !== undefined ? idadeMinima : deleteField(),
+          idadeMaxima: editTipoCliente.perguntarIdade === true && idadeMaxima !== undefined ? idadeMaxima : deleteField(),
+        });
 
         setFeedback({ type: 'success', message: 'Tipo atualizado com sucesso!' });
 
@@ -14865,6 +14907,41 @@ const totalParticipantesDoDia = useMemo(() => {
                     </span>
                   </span>
                 </label>
+
+                {editTipoCliente.perguntarIdade === true && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Idade mínima (opcional)
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        value={editTipoCliente.idadeMinima ?? ''}
+                        onChange={(e) => setEditTipoCliente((prev) => ({
+                          ...prev,
+                          idadeMinima: e.target.value === '' ? undefined : Number(e.target.value),
+                        }))}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        placeholder="Ex: 6"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold uppercase text-slate-500">
+                      Idade máxima (opcional)
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        value={editTipoCliente.idadeMaxima ?? ''}
+                        onChange={(e) => setEditTipoCliente((prev) => ({
+                          ...prev,
+                          idadeMaxima: e.target.value === '' ? undefined : Number(e.target.value),
+                        }))}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        placeholder="Ex: 12"
+                      />
+                    </label>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-2 sm:flex-row">
 

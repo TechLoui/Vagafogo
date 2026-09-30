@@ -37,12 +37,90 @@ const reservaVeioDoAgente = (reserva: Record<string, any>) => {
     && (String(attribution.utmMedium ?? "").toLowerCase() === "agente" || String(attribution.sessionId ?? "").startsWith("whatsapp_"));
 };
 
-const mensagemConfirmacaoAgente = (reservaId: string, reserva: Record<string, any>) => {
+const formatarDataReserva = (value: unknown) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ""));
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : String(value ?? "");
+};
+
+const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<string, any>) => {
   const name = String(reserva.nome ?? reserva.Nome ?? "").trim().split(/\s+/)[0] || "cliente";
   const activity = String(reserva.atividade ?? reserva.Atividade ?? "experiencia Vagafogo").trim();
-  const date = String(reserva.data ?? reserva.Data ?? "").trim();
+  const date = formatarDataReserva(reserva.data ?? reserva.Data);
   const time = String(reserva.horario ?? reserva.Horario ?? "").trim();
-  return `Pagamento confirmado, ${name}! ✅\n\nSua reserva para ${activity}${date ? ` em ${date}` : ""}${time ? ` às ${time}` : ""} foi concluída com sucesso.\nCódigo da reserva: ${reservaId}\n\nGuarde esta mensagem. Esperamos você na Vagafogo!`;
+  const packageIds = Array.from(new Set<string>([
+    ...(Array.isArray(reserva.pacoteIds) ? reserva.pacoteIds.map(String) : []),
+    ...(Array.isArray(reserva.gruposParticipacao)
+      ? reserva.gruposParticipacao.flatMap((group: Record<string, unknown>) => Array.isArray(group.pacoteIds) ? group.pacoteIds.map(String) : [])
+      : []),
+  ])).slice(0, 10);
+  const packageDocs = await Promise.all(packageIds.map((id) => getDoc(doc(db, "pacotes", id)).catch(() => null)));
+  const packages = packageDocs.map((snapshot, index) => snapshot?.exists() ? { id: packageIds[index], ...(snapshot.data() as Record<string, unknown>) } : null).filter(Boolean) as Array<Record<string, any>>;
+
+  const participantMap = reserva.participantesPorTipo && typeof reserva.participantesPorTipo === "object"
+    ? reserva.participantesPorTipo as Record<string, unknown>
+    : {};
+  const ages = Array.isArray(reserva.gruposParticipacao)
+    ? reserva.gruposParticipacao.reduce<Record<string, number[]>>((map, group: Record<string, any>) => {
+        if (!group.idadesPorTipo || typeof group.idadesPorTipo !== "object") return map;
+        Object.entries(group.idadesPorTipo).forEach(([key, values]) => {
+          if (Array.isArray(values)) map[key] = values.map(Number).filter(Number.isFinite);
+        });
+        return map;
+      }, {})
+    : {};
+  const typeIds = Object.keys(participantMap).slice(0, 20);
+  const typeDocs = await Promise.all(typeIds.map((id) => getDoc(doc(db, "tipos_clientes", id)).catch(() => null)));
+  const typeNames = Object.fromEntries(typeIds.map((id, index) => [id, typeDocs[index]?.exists() ? String(typeDocs[index]!.data()?.nome ?? id) : id]));
+  const participantLines = typeIds
+    .filter((id) => Number(participantMap[id]) > 0)
+    .map((id) => {
+      const typeAges = ages[id]?.length ? ` (${ages[id].join(", ")} anos)` : "";
+      return `• ${typeNames[id]}: ${Number(participantMap[id])}${typeAges}`;
+    });
+  if (participantLines.length === 0) {
+    if (Number(reserva.adultos) > 0) participantLines.push(`• Adultos: ${Number(reserva.adultos)}`);
+    if (Number(reserva.criancas) > 0) participantLines.push(`• Crianças: ${Number(reserva.criancas)}`);
+    if (Number(reserva.bariatrica) > 0) participantLines.push(`• Bariátrica: ${Number(reserva.bariatrica)}`);
+    if (Number(reserva.naoPagante) > 0) participantLines.push(`• Não pagantes: ${Number(reserva.naoPagante)}`);
+  }
+
+  const details = packages.map((item) => {
+    const packageName = String(item.nome ?? "Experiência").trim();
+    const packageTime = String(reserva.horariosPorPacote?.[String(item.id)] ?? "").trim();
+    const schedule = item.modoHorario === "intervalo"
+      ? `faixa das ${String(item.horarioInicio ?? "")} às ${String(item.horarioFim ?? "")}`
+      : packageTime ? `horário ${packageTime}` : "";
+    return `• ${packageName}${schedule ? ` — ${schedule}` : ""}`;
+  });
+  const normalizedActivities = packages.map((item) => String(item.nome ?? "")).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const instructions: string[] = [];
+  if (normalizedActivities.includes("brunch")) instructions.push("• Brunch: o horário reservado é o horário para estar sentado à mesa; há 15 minutos de tolerância.");
+  if (normalizedActivities.includes("trilha")) {
+    instructions.push("• Trilha: percurso autoguiado; entrada até 15h e saída até 16h.");
+    instructions.push("• Na trilha não entram pets e não é permitido levar alimentos; água é permitida.");
+  }
+  packages.forEach((item) => {
+    const warning = String(item.aviso ?? "").trim();
+    if (warning && !instructions.some((line) => line.includes(warning))) instructions.push(`• ${String(item.nome ?? "Experiência")}: ${warning}`);
+  });
+  const hasBariatric = Number(reserva.bariatrica) > 0 || Object.entries(participantMap).some(([id, quantity]) => Number(quantity) > 0 && String(typeNames[id] ?? id).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("bariat"));
+  if (hasBariatric) instructions.push("• Bariátrica: envie a foto da carteirinha por este WhatsApp para validação e leve o documento no dia.");
+
+  return [
+    `Pagamento confirmado, ${name}! ✅`,
+    "",
+    `Sua reserva foi concluída com sucesso.`,
+    `Código: ${reservaId}`,
+    `Data: ${date || "—"}`,
+    ...(details.length ? ["", reserva.comboId ? `Combo: ${activity}` : `Experiência: ${activity}`, ...details] : [`Experiência: ${activity}${time ? ` às ${time}` : ""}`]),
+    ...(participantLines.length ? ["", "Participantes:", ...participantLines] : []),
+    ...(instructions.length ? ["", "Orientações importantes:", ...instructions] : []),
+    "",
+    "Consulte sua reserva em:",
+    "https://vagafogo.com.br/minha-reserva",
+    "",
+    "Esperamos você na Vagafogo! 🌿",
+  ].join("\n").slice(0, 4096);
 };
 
 const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<string, any>) => {
@@ -50,7 +128,7 @@ const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<st
   if (!phone) return { enviado: false, motivo: "telefone_ausente" };
   const response = await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
     method: "POST",
-    body: { phone, text: mensagemConfirmacaoAgente(reservaId, reserva) },
+    body: { phone, text: await mensagemConfirmacaoAgente(reservaId, reserva) },
     timeoutMs: 30_000,
   });
   const body = response.body && typeof response.body === "object" ? response.body as Record<string, unknown> : {};
