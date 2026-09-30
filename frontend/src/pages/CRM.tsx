@@ -257,6 +257,7 @@ type AgentLeadRecord = {
   nextAction?: string;
   summary?: string;
   updatedAt?: string;
+  isTest: boolean;
 };
 
 const API_BASE =
@@ -829,6 +830,7 @@ export function CRM() {
                   : undefined,
                 summary: raw.resumo ? String(raw.resumo) : undefined,
                 updatedAt: normalizeTimestamp(raw.atualizadoEm ?? raw.criadoEm),
+                isTest: raw.teste === true,
               } satisfies AgentLeadRecord;
             })
             .sort((a, b) =>
@@ -2592,7 +2594,7 @@ function JourneysSection({
                             <span>{initials(item.name ?? "Lead")}</span>
                             <div>
                               <strong>{item.name ?? "Lead do WhatsApp"}</strong>
-                              <small>{formatPhone(item.phone)}</small>
+                              <small>{formatPhone(item.phone)}{item.isTest ? " · TESTE PRIVADO" : ""}</small>
                             </div>
                           </div>
                         </td>

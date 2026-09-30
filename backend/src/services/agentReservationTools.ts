@@ -47,6 +47,16 @@ type AgentLeadInput = {
   marketingOptIn?: unknown;
   proximaAcao?: unknown;
   resumo?: unknown;
+  teste?: unknown;
+};
+
+type AgentLeadUpdateInput = {
+  nome?: unknown;
+  etapa?: unknown;
+  resultado?: unknown;
+  motivo?: unknown;
+  proximaAcao?: unknown;
+  marketingOptIn?: unknown;
 };
 
 type CustomerType = {
@@ -585,12 +595,16 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   if (!sessionId || !phone) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const leadId = createHash("sha256").update(`agente-lead:v1\0${phone}`).digest("hex");
+  const isTest = input.teste === true;
+  const leadIdentity = isTest ? `teste\0${sessionId}` : `whatsapp\0${phone}`;
+  const leadId = createHash("sha256").update(`agente-lead:v2\0${leadIdentity}`).digest("hex");
   const array = (value: unknown, maximum = 10) => Array.isArray(value) ? value.map((item) => clean(item, 160)).filter(Boolean).slice(0, maximum) : [];
   const participants = nonNegativeInteger(input.participantes);
   const estimatedValue = Number(input.valorEstimado);
   const patch: FirebaseFirestore.DocumentData = {
-    canal: "whatsapp",
+    canal: isTest ? "teste_privado" : "whatsapp",
+    teste: isTest,
+    origem: isTest ? "simulador_agente" : "agente_whatsapp",
     telefone: phone,
     sessionId,
     nome: clean(input.nome, 160) || null,
@@ -618,13 +632,65 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   return { id: leadId, registrado: true };
 };
 
+const requireLeadId = (value: unknown) => {
+  const id = clean(value, 180);
+  if (!id || id.includes("/")) throw new Error("AGENT_LEAD_ID_INVALID");
+  return id;
+};
+
+export const atualizarLeadAgente = async (idValue: unknown, input: AgentLeadUpdateInput) => {
+  const id = requireLeadId(idValue);
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection("crm_leads_agente").doc(id);
+  const existing = await ref.get();
+  if (!existing.exists) throw new Error("AGENT_LEAD_NOT_FOUND");
+  const patch: FirebaseFirestore.DocumentData = {
+    atualizadoEm: FieldValue.serverTimestamp(),
+  };
+  if (Object.prototype.hasOwnProperty.call(input, "nome")) patch.nome = clean(input.nome, 160) || null;
+  if (Object.prototype.hasOwnProperty.call(input, "etapa")) patch.etapa = canonicalLeadStage(input.etapa);
+  if (Object.prototype.hasOwnProperty.call(input, "resultado")) patch.resultado = canonicalLeadOutcome(input.resultado);
+  if (Object.prototype.hasOwnProperty.call(input, "motivo")) patch.motivo = clean(input.motivo, 240) || null;
+  if (Object.prototype.hasOwnProperty.call(input, "proximaAcao")) patch.proximaAcao = clean(input.proximaAcao, 240) || null;
+  if (Object.prototype.hasOwnProperty.call(input, "marketingOptIn")) patch.marketingOptIn = input.marketingOptIn === true;
+  await ref.set(patch, { merge: true });
+  return { id, atualizado: true };
+};
+
+export const excluirLeadAgente = async (idValue: unknown) => {
+  const id = requireLeadId(idValue);
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection("crm_leads_agente").doc(id);
+  const existing = await ref.get();
+  if (!existing.exists) return { id, excluido: false };
+  await ref.delete();
+  return { id, excluido: true };
+};
+
+export const excluirTodosLeadsAgente = async () => {
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const snapshot = await db.collection("crm_leads_agente").get();
+  let removed = 0;
+  for (let offset = 0; offset < snapshot.docs.length; offset += 450) {
+    const batch = db.batch();
+    const chunk = snapshot.docs.slice(offset, offset + 450);
+    chunk.forEach((document) => batch.delete(document.ref));
+    await batch.commit();
+    removed += chunk.length;
+  }
+  return { excluidos: removed };
+};
+
 export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId: unknown, pagamentoId?: unknown) => {
   const phone = normalizePhone(telefone);
   const reservationId = clean(reservaId, 100);
   if (!phone || !reservationId) return false;
   const db = obterFirestoreAdmin();
   if (!db) return false;
-  const leadId = createHash("sha256").update(`agente-lead:v1\0${phone}`).digest("hex");
+  const leadId = createHash("sha256").update(`agente-lead:v2\0whatsapp\0${phone}`).digest("hex");
   await db.collection("crm_leads_agente").doc(leadId).set({
     canal: "whatsapp",
     telefone: phone,

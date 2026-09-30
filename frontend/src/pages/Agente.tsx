@@ -44,7 +44,7 @@ type AgentStatus = {
   lastState?: string | null;
   lastError?: string | null;
   lastMessageAt?: string | null;
-  privacy?: { conversationStorage?: string; ttlSeconds?: number; firestoreMessages?: boolean };
+  privacy?: { conversationStorage?: string; ttlSeconds?: number; firestoreMessages?: boolean; mediaBinariesStored?: boolean };
   contactControls?: { ready?: boolean; lastError?: string | null };
 };
 
@@ -116,6 +116,7 @@ type AgentLead = {
   nextAction?: string;
   summary?: string;
   updatedAt?: string;
+  isTest: boolean;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://vagafogo-production.up.railway.app";
@@ -302,6 +303,7 @@ export function Agente() {
         nextAction: raw.proximaAcao ? String(raw.proximaAcao) : undefined,
         summary: raw.resumo ? String(raw.resumo) : undefined,
         updatedAt: normalizeTimestamp(raw.atualizadoEm ?? raw.criadoEm),
+        isTest: raw.teste === true,
       } satisfies AgentLead;
     }).sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
     const unique = new Map<string, AgentLead>();
@@ -354,7 +356,7 @@ export function Agente() {
             return <button key={item.key} className={tab === item.key ? "is-active" : ""} onClick={() => selectTab(item.key)}><Icon /><span>{item.label}</span>{item.key === "sessions" && modeCounts.human ? <b>{modeCounts.human}</b> : item.key === "leads" && leads.length ? <b>{leads.length}</b> : null}</button>;
           })}
         </nav>
-        <div className="agent-sidebar__privacy"><FaShieldAlt /><strong>Sem histórico permanente</strong><span>Mensagens e áudios existem apenas durante a sessão ativa.</span></div>
+        <div className="agent-sidebar__privacy"><FaShieldAlt /><strong>Histórico temporário</strong><span>Mensagens e marcadores de mídia expiram automaticamente em 7 dias.</span></div>
         <button className="agent-sidebar__back" onClick={() => navigate("/CRM")}><FaArrowLeft /> Voltar ao CRM</button>
       </aside>
 
@@ -436,7 +438,7 @@ export function Agente() {
               }}
             />
           ) : tab === "leads" ? (
-            <LeadsPanel leads={leads} loading={leadsLoading} error={leadsError} />
+            <LeadsPanel leads={leads} loading={leadsLoading} error={leadsError} onMessage={showMessage} onError={showError} />
           ) : tab === "whatsapp" ? (
             <WhatsappPanel status={status} onReload={() => loadStatus()} onMessage={showMessage} onError={showError} />
           ) : tab === "prompt" ? (
@@ -471,7 +473,7 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
       </article>
       <article className="agent-card agent-privacy-card">
         <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Privacidade das conversas</h2><p>Configuração aplicada no gateway.</p></div></div>
-        <ul><li><FaCheckCircle /><span><strong>Sem Firestore para mensagens</strong>O conteúdo não é gravado no banco.</span></li><li><FaCheckCircle /><span><strong>Memória temporária</strong>Expiração em {durationLabel(status.privacy?.ttlSeconds)}.</span></li><li><FaCheckCircle /><span><strong>Controle separado</strong>Somente o modo bot, humano ou bloqueado permanece.</span></li></ul>
+        <ul><li><FaCheckCircle /><span><strong>Retenção temporária</strong>Mensagens de texto e marcadores de mídia sobrevivem a redeploys por até 7 dias.</span></li><li><FaCheckCircle /><span><strong>Expiração automática</strong>Remoção em {durationLabel(status.privacy?.ttlSeconds)}.</span></li><li><FaCheckCircle /><span><strong>Sem arquivo de mídia</strong>Áudios e imagens não são copiados para o banco.</span></li></ul>
       </article>
       <article className="agent-card agent-next-card">
         <div className="agent-card__title"><span><FaQrcode /></span><div><h2>Fluxo de reserva</h2><p>Integração preparada para homologação.</p></div></div>
@@ -486,22 +488,63 @@ const readableLeadValue = (value: string) => value
   .replace(/_/g, " ")
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-function LeadsPanel({ leads, loading, error }: { leads: AgentLead[]; loading: boolean; error: string }) {
+function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: AgentLead[]; loading: boolean; error: string; onMessage: (message: string) => void; onError: (error: unknown) => void }) {
   const [search, setSearch] = useState("");
   const [outcome, setOutcome] = useState("all");
+  const [origin, setOrigin] = useState("all");
+  const [editing, setEditing] = useState<AgentLead | null>(null);
+  const [saving, setSaving] = useState(false);
   const outcomes = useMemo(() => Array.from(new Set(leads.map((lead) => lead.outcome))).sort(), [leads]);
   const filtered = useMemo(() => leads.filter((lead) => {
     if (outcome !== "all" && lead.outcome !== outcome) return false;
+    if (origin === "real" && lead.isTest) return false;
+    if (origin === "test" && !lead.isTest) return false;
     const haystack = `${lead.name || ""} ${lead.phone} ${lead.activities.join(" ")} ${lead.summary || ""} ${lead.reservationId || ""}`.toLowerCase();
     return haystack.includes(search.trim().toLowerCase());
-  }), [leads, outcome, search]);
+  }), [leads, origin, outcome, search]);
   const confirmed = leads.filter((lead) => lead.outcome === "reserva_confirmada" || Boolean(lead.reservationId)).length;
   const inProgress = leads.filter((lead) => !lead.reservationId && !["perdido", "encerrado", "sem_interesse"].includes(lead.outcome)).length;
   const optedIn = leads.filter((lead) => lead.marketingOptIn).length;
+  const testCount = leads.filter((lead) => lead.isTest).length;
+
+  const saveLead = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await api(`/crm/agente/leads/${encodeURIComponent(editing.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          nome: editing.name || "",
+          etapa: editing.stage,
+          resultado: editing.outcome,
+          motivo: editing.reason || "",
+          proximaAcao: editing.nextAction || "",
+          marketingOptIn: editing.marketingOptIn,
+        }),
+      });
+      setEditing(null);
+      onMessage("Lead atualizado.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteLead = async (lead: AgentLead) => {
+    if (!window.confirm(`Excluir definitivamente o lead de ${lead.name || formatPhone(lead.phone) || "contato sem nome"}?`)) return;
+    try {
+      await api(`/crm/agente/leads/${encodeURIComponent(lead.id)}`, { method: "DELETE" });
+      if (editing?.id === lead.id) setEditing(null);
+      onMessage("Lead excluído.");
+    } catch (caught) {
+      onError(caught);
+    }
+  };
 
   return <section className="agent-leads">
     <div className="agent-lead-metrics">
-      <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>Sem conversa armazenada</span></article>
+      <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>{testCount} de teste</span></article>
       <article><small>Em andamento</small><strong>{inProgress}</strong><span>Podem exigir próxima ação</span></article>
       <article><small>Reservas vinculadas</small><strong>{confirmed}</strong><span>Conversão identificada</span></article>
       <article><small>Opt-in de marketing</small><strong>{optedIn}</strong><span>Elegíveis para campanhas</span></article>
@@ -511,14 +554,16 @@ function LeadsPanel({ leads, loading, error }: { leads: AgentLead[]; loading: bo
       <div className="agent-lead-filters">
         <label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone, interesse ou reserva" /></label>
         <select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="all">Todos os resultados</option>{outcomes.map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select>
+        <select value={origin} onChange={(event) => setOrigin(event.target.value)}><option value="all">Reais e testes</option><option value="real">Somente reais</option><option value="test">Somente testes</option></select>
       </div>
       {loading ? <p className="agent-empty">Carregando leads estruturados…</p> : error ? <div className="agent-lead-error"><FaBan />{error}</div> : filtered.length === 0 ? <p className="agent-empty">Nenhum lead encontrado com esses filtros.</p> : <div className="agent-lead-list">{filtered.map((lead) => <article key={lead.id}>
-        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></header>
+        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><div className="agent-lead-badges">{lead.isTest ? <em className="is-test">TESTE</em> : null}<em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
         <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span></div>
         {lead.summary ? <p>{lead.summary}</p> : null}
-        <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}</footer>
+        <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}<button className="agent-link" onClick={() => setEditing({ ...lead })}><FaEdit /> Gerenciar</button><button className="agent-link is-danger" onClick={() => void deleteLead(lead)}><FaTrash /> Excluir</button></footer>
       </article>)}</div>}
     </article>
+    {editing ? <div className="agent-modal-backdrop" onClick={() => !saving && setEditing(null)}><article className="agent-modal agent-lead-editor" onClick={(event) => event.stopPropagation()}><header><div><small>GERENCIAR LEAD</small><h2>{editing.name || formatPhone(editing.phone)}</h2>{editing.isTest ? <span className="agent-test-badge">Lead de teste</span> : null}</div><button onClick={() => setEditing(null)} disabled={saving} aria-label="Fechar"><FaTimes /></button></header><div className="agent-lead-editor__grid"><label>Nome<input value={editing.name || ""} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>Etapa<select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{["contato_iniciado", "interesse_identificado", "cotacao", "dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "concluida", "atendimento_humano", "encerrado_sem_reserva"].map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select></label><label>Resultado<select value={editing.outcome} onChange={(event) => setEditing({ ...editing, outcome: event.target.value })}>{["em_andamento", "aguardando_cliente", "pagamento_pendente", "reserva_confirmada", "nao_convertido", "atendimento_humano"].map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select></label><label>Motivo<input value={editing.reason || ""} onChange={(event) => setEditing({ ...editing, reason: event.target.value })} /></label><label className="is-wide">Próxima ação<input value={editing.nextAction || ""} onChange={(event) => setEditing({ ...editing, nextAction: event.target.value })} /></label><label className="agent-check is-wide"><input type="checkbox" checked={editing.marketingOptIn} onChange={(event) => setEditing({ ...editing, marketingOptIn: event.target.checked })} /> Opt-in de marketing confirmado</label></div><footer><button className="agent-link" onClick={() => setEditing(null)} disabled={saving}>Cancelar</button><button className="agent-primary" onClick={() => void saveLead()} disabled={saving}><FaSave />{saving ? "Salvando…" : "Salvar alterações"}</button></footer></article></div> : null}
   </section>;
 }
 
@@ -650,7 +695,7 @@ function PromptPanel({ onMessage, onError }: { onMessage: (text: string) => void
   const [testing, setTesting] = useState(false);
   useEffect(() => { api("/crm/agente/prompt").then((data) => setPrompt(String((data as { prompt?: string }).prompt || ""))).catch(onError).finally(() => setLoading(false)); }, [onError]);
   const test = async () => { const pergunta = input.trim(); if (!pergunta) return; setHistory((items) => [...items, { role: "user", text: pergunta }]); setInput(""); setTesting(true); try { const data = await api("/crm/agente/testar", { method: "POST", body: JSON.stringify({ pergunta, session_id: sessionId }) }) as { resposta?: string; session_id?: string }; if (data.session_id) setSessionId(data.session_id); setHistory((items) => [...items, { role: "assistant", text: String(data.resposta || "Resposta vazia") }]); } catch (caught) { onError(caught); } finally { setTesting(false); } };
-  return <div className="agent-prompt-grid"><article className="agent-card agent-prompt-editor"><div className="agent-card__title"><span><FaEdit /></span><div><h2>Prompt principal</h2><p>Não inclua regras de preço ou disponibilidade que pertencem ao sistema.</p></div></div>{loading ? <p>Carregando…</p> : <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />}<button className="agent-primary" disabled={saving || !prompt.trim()} onClick={async () => { setSaving(true); try { await api("/crm/agente/prompt", { method: "POST", body: JSON.stringify({ prompt }) }); onMessage("Prompt salvo. As novas regras entram na próxima resposta sem apagar as sessões ativas."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar prompt"}</button></article><article className="agent-card agent-chat-test"><div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado</h2><p>Esta conversa não é enviada ao WhatsApp.</p></div></div><div className="agent-test-history">{history.length === 0 ? <p>Envie uma pergunta para validar o comportamento.</p> : history.map((item, index) => <div key={`${item.role}-${index}`} className={item.role}>{item.text}</div>)}</div><div className="agent-test-input"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void test(); }} placeholder="Pergunte como se fosse um cliente…" /><button onClick={() => void test()} disabled={testing || !input.trim()}><FaPaperPlane /></button></div><button className="agent-link" onClick={() => { setHistory([]); setSessionId(""); }}>Iniciar novo teste</button></article></div>;
+  return <div className="agent-prompt-grid"><article className="agent-card agent-prompt-editor"><div className="agent-card__title"><span><FaEdit /></span><div><h2>Prompt principal</h2><p>Não inclua regras de preço ou disponibilidade que pertencem ao sistema.</p></div></div>{loading ? <p>Carregando…</p> : <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />}<button className="agent-primary" disabled={saving || !prompt.trim()} onClick={async () => { setSaving(true); try { await api("/crm/agente/prompt", { method: "POST", body: JSON.stringify({ prompt }) }); onMessage("Prompt salvo. As novas regras entram na próxima resposta sem apagar as sessões ativas."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar prompt"}</button></article><article className="agent-card agent-chat-test"><div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado</h2><p>Não envia WhatsApp nem cria cobrança. Leads usam o número padrão +55 (00) 00000-0000 e recebem o sinalizador TESTE.</p></div></div><div className="agent-test-history">{history.length === 0 ? <p>Envie uma pergunta para validar o comportamento.</p> : history.map((item, index) => <div key={`${item.role}-${index}`} className={item.role}>{item.text}</div>)}</div><div className="agent-test-input"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void test(); }} placeholder="Pergunte como se fosse um cliente…" /><button onClick={() => void test()} disabled={testing || !input.trim()}><FaPaperPlane /></button></div><button className="agent-link" onClick={() => { setHistory([]); setSessionId(""); }}>Iniciar novo teste</button></article></div>;
 }
 
 function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }) {

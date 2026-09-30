@@ -54,7 +54,10 @@ import { registrarEventoJornada } from "../services/crmJourneys";
 import { agentServiceConfigured, requestAgentService, type AgentResponse } from "../services/agentGateway";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
+  atualizarLeadAgente,
   criarLinkCartaoAgente,
+  excluirLeadAgente,
+  excluirTodosLeadsAgente,
   listarCatalogoAgente,
   registrarLeadAgente,
   simularReservaAgente,
@@ -241,9 +244,40 @@ app.post('/crm/agente/testar', exigirAdminCrm, async (req, res) => {
   }
   responderProxyAgente(res, await requestAgentService("ai", "/ask", {
     method: "POST",
-    body: { pergunta, session_id: sessionId, mode: "test" },
+    body: {
+      pergunta,
+      session_id: sessionId,
+      mode: "test",
+      telefone: "5500000000000",
+      nome_contato: "Contato de teste",
+    },
     timeoutMs: 100_000,
   }));
+});
+
+app.patch('/crm/agente/leads/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await atualizarLeadAgente(req.params.id, req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === "AGENT_LEAD_NOT_FOUND" ? 404 : 400).json({ error: message });
+  }
+});
+
+app.delete('/crm/agente/leads/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await excluirLeadAgente(req.params.id));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.delete('/crm/agente/leads', exigirAdminCrm, async (_req, res) => {
+  try {
+    res.json(await excluirTodosLeadsAgente());
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 // Webhook test - resposta instantânea
