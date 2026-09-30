@@ -105,6 +105,28 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
   });
   const hasBariatric = Number(reserva.bariatrica) > 0 || Object.entries(participantMap).some(([id, quantity]) => Number(quantity) > 0 && String(typeNames[id] ?? id).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("bariat"));
   if (hasBariatric) instructions.push("• Bariátrica: apresente a carteirinha na recepção no dia da visita; não é necessário enviar foto pelo WhatsApp.");
+  const normalizeQuestion = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const customAnswers = Array.isArray(reserva.perguntasPersonalizadas)
+    ? reserva.perguntasPersonalizadas.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>
+    : [];
+  const joinTableAnswer = customAnswers.find((item) => {
+    const question = normalizeQuestion(item.pergunta);
+    const answer = normalizeQuestion(item.resposta).trim();
+    return question.includes("juntar") && question.includes("mesa") && (answer === "sim" || answer === "s");
+  });
+  if (joinTableAnswer) {
+    const separateOwnerAnswer = customAnswers.find((item) => {
+      const question = normalizeQuestion(item.pergunta);
+      return question.includes("outra reserva") && /nome|titular|responsavel|quem/.test(question);
+    });
+    const conditional = joinTableAnswer.perguntaCondicional && typeof joinTableAnswer.perguntaCondicional === "object"
+      ? joinTableAnswer.perguntaCondicional as Record<string, unknown>
+      : {};
+    const otherReservationOwner = String(separateOwnerAnswer?.resposta ?? conditional.resposta ?? "").trim().slice(0, 120);
+    instructions.push(otherReservationOwner
+      ? `• Mesa: solicitada acomodação com a reserva de ${otherReservationOwner}; a junção depende da organização e disponibilidade das mesas.`
+      : "• Mesa: foi solicitada acomodação com outra reserva; a junção depende da organização e disponibilidade das mesas.");
+  }
 
   return [
     `Pagamento confirmado, ${name}! ✅`,
