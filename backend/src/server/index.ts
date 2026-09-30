@@ -58,6 +58,7 @@ import {
   criarLinkCartaoAgente,
   excluirLeadAgente,
   excluirTodosLeadsAgente,
+  finalizarLeadAgentePorEncerramento,
   iniciarFinalizadorLeadsAgente,
   listarCatalogoAgente,
   registrarLeadAgente,
@@ -208,11 +209,25 @@ app.post('/crm/agente/contatos/:jid/enviar', exigirAdminCrm, async (req, res) =>
 });
 
 app.delete('/crm/agente/contatos/:jid/sessao', exigirAdminCrm, async (req, res) => {
-  responderProxyAgente(res, await requestAgentService(
+  const response = await requestAgentService(
     "gateway",
     `/api/contacts/${encodeURIComponent(req.params.jid)}/session`,
     { method: "DELETE" },
-  ));
+  );
+  if (response.status >= 200 && response.status < 300) {
+    const phone = String(req.body?.phone ?? "").replace(/\D/g, "").slice(0, 15);
+    await finalizarLeadAgentePorEncerramento(phone).catch((error) => {
+      console.error("[agent-leads] Falha ao finalizar lead apos encerramento manual:", error);
+    });
+    if (phone) {
+      await requestAgentService("ai", `/api/sessions/${encodeURIComponent(`whatsapp_${phone}`)}`, {
+        method: "DELETE",
+      }).catch((error) => {
+        console.error("[agent] Falha ao descartar contexto efemero apos encerramento manual:", error);
+      });
+    }
+  }
+  responderProxyAgente(res, response);
 });
 
 app.get('/crm/agente/prompt', exigirAdminCrm, async (_req, res) => {

@@ -671,6 +671,7 @@ const consolidateAgentLead = async (
   draft: FirebaseFirestore.DocumentData,
   overrides: FirebaseFirestore.DocumentData = {},
   deleteDraft = false,
+  finalized = true,
 ) => {
   const isTest = draft.teste === true;
   const sessionId = clean(draft.sessionId, 100);
@@ -679,11 +680,17 @@ const consolidateAgentLead = async (
   const id = agentLeadId(isTest, sessionId, phone);
   const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(id);
   const existing = await leadRef.get();
+  const merged = { ...draft, ...overrides };
+  const paymentPending = merged.etapa === "pagamento_pendente" || merged.resultado === "pagamento_pendente";
   const data = {
     ...finalLeadDataFromDraft(draft),
     ...overrides,
+    estadoRegistro: finalized ? "finalizado" : paymentPending ? "aguardando_pagamento" : "em_atendimento",
+    finalizado: finalized,
+    finalizarApos: finalized ? null : draft.finalizarApos ?? null,
+    ultimaInteracaoEm: draft.ultimaInteracaoEm ?? FieldValue.serverTimestamp(),
     atualizadoEm: FieldValue.serverTimestamp(),
-    finalizadoEm: FieldValue.serverTimestamp(),
+    finalizadoEm: finalized ? FieldValue.serverTimestamp() : null,
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   };
   if (deleteDraft) {
@@ -693,7 +700,6 @@ const consolidateAgentLead = async (
     await batch.commit();
   } else {
     await leadRef.set(data, { merge: true });
-    await draftRef.set({ consolidadoEm: FieldValue.serverTimestamp() }, { merge: true });
   }
   return id;
 };
@@ -716,25 +722,38 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
     patch.etapa = "pagamento_pendente";
     patch.resultado = "pagamento_pendente";
   }
-  const draft = { ...existingData, ...patch };
+  const lastInteractionAt = new Date();
+  const finalizeAt = new Date(lastInteractionAt.getTime() + AGENT_LEAD_INACTIVITY_MS);
+  const draft = {
+    ...existingData,
+    ...patch,
+    ultimaInteracaoEm: lastInteractionAt,
+    finalizarApos: finalizeAt,
+  };
   await draftRef.set({
     ...patch,
-    ultimaInteracaoEm: FieldValue.serverTimestamp(),
-    finalizarApos: new Date(Date.now() + AGENT_LEAD_INACTIVITY_MS),
+    ultimaInteracaoEm: lastInteractionAt,
+    finalizarApos: finalizeAt,
     atualizadoEm: FieldValue.serverTimestamp(),
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: true });
 
-  // A IA pode interpretar a conversa, mas nunca confirma uma reserva por conta
-  // propria. A confirmacao final e escrita exclusivamente pelo webhook.
-  const immediate = patch.etapa === "pagamento_pendente" || patch.resultado === "pagamento_pendente";
-  const id = immediate ? await consolidateAgentLead(db, draftRef, draft) : null;
+  // O mesmo documento fica visivel desde o primeiro sinal comercial e e
+  // alimentado durante todo o atendimento. Pagamento pendente continua aberto;
+  // a confirmacao da reserva e escrita exclusivamente pelo webhook.
+  const terminal = patch.etapa === "encerrado_sem_reserva" || patch.resultado === "nao_convertido";
+  const id = await consolidateAgentLead(db, draftRef, draft, {}, terminal, terminal);
   return {
     id,
     rascunhoId: draftId,
-    registrado: immediate,
-    rascunho: !immediate,
-    finalizaAposMinutos: immediate ? null : AGENT_LEAD_INACTIVITY_MS / 60_000,
+    registrado: true,
+    rascunho: !terminal,
+    estadoRegistro: terminal
+      ? "finalizado"
+      : patch.etapa === "pagamento_pendente" || patch.resultado === "pagamento_pendente"
+        ? "aguardando_pagamento"
+        : "em_atendimento",
+    finalizaAposMinutos: terminal ? null : AGENT_LEAD_INACTIVITY_MS / 60_000,
   };
 };
 
@@ -760,7 +779,30 @@ export const atualizarLeadAgente = async (idValue: unknown, input: AgentLeadUpda
   if (Object.prototype.hasOwnProperty.call(input, "motivo")) patch.motivo = clean(input.motivo, 240) || null;
   if (Object.prototype.hasOwnProperty.call(input, "proximaAcao")) patch.proximaAcao = clean(input.proximaAcao, 240) || null;
   if (Object.prototype.hasOwnProperty.call(input, "marketingOptIn")) patch.marketingOptIn = input.marketingOptIn === true;
-  await ref.set(patch, { merge: true });
+  const existingData = existing.data()!;
+  const merged = { ...existingData, ...patch };
+  const terminal = merged.etapa === "encerrado_sem_reserva"
+    || merged.resultado === "nao_convertido"
+    || merged.resultado === "reserva_confirmada";
+  if (terminal && existingData.finalizado !== true) {
+    patch.estadoRegistro = "finalizado";
+    patch.finalizado = true;
+    patch.finalizarApos = null;
+    patch.finalizadoEm = FieldValue.serverTimestamp();
+  }
+  const phone = normalizePhone(existingData.telefone);
+  const sessionId = clean(existingData.sessionId, 100);
+  const draftRef = phone && sessionId
+    ? db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(existingData.teste === true, sessionId, phone))
+    : null;
+  const draft = draftRef ? await draftRef.get() : null;
+  const batch = db.batch();
+  batch.set(ref, patch, { merge: true });
+  if (draftRef && draft?.exists) {
+    if (terminal) batch.delete(draftRef);
+    else batch.set(draftRef, patch, { merge: true });
+  }
+  await batch.commit();
   return { id, atualizado: true };
 };
 
@@ -771,7 +813,15 @@ export const excluirLeadAgente = async (idValue: unknown) => {
   const ref = db.collection(AGENT_LEADS_COLLECTION).doc(id);
   const existing = await ref.get();
   if (!existing.exists) return { id, excluido: false };
-  await ref.delete();
+  const data = existing.data()!;
+  const phone = normalizePhone(data.telefone);
+  const sessionId = clean(data.sessionId, 100);
+  const batch = db.batch();
+  batch.delete(ref);
+  if (phone && sessionId) {
+    batch.delete(db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(data.teste === true, sessionId, phone)));
+  }
+  await batch.commit();
   return { id, excluido: true };
 };
 
@@ -829,6 +879,25 @@ export const processarRascunhosLeadsAgente = async () => {
   return { processados: processed, erros: errors };
 };
 
+export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
+  const phone = normalizePhone(telefone);
+  if (!phone) return false;
+  const db = obterFirestoreAdmin();
+  if (!db) return false;
+  const sessionId = `whatsapp_${phone}`;
+  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
+  const [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+  if (!draftSnapshot.exists && !leadSnapshot.exists) return false;
+  const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
+  await consolidateAgentLead(db, draftRef, base, {
+    resultado: base.resultado === "em_andamento" ? "aguardando_cliente" : base.resultado,
+    motivo: clean(base.motivo, 240) || "atendimento_encerrado_manualmente",
+    proximaAcao: base.resultado === "pagamento_pendente" ? "Avaliar recuperacao do pagamento" : null,
+  }, draftSnapshot.exists, true);
+  return true;
+};
+
 let agentLeadFinalizerStarted = false;
 export const iniciarFinalizadorLeadsAgente = () => {
   if (agentLeadFinalizerStarted) return;
@@ -868,6 +937,9 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
     reservaId: reservationId,
     pagamentoId: clean(pagamentoId, 100) || null,
     proximaAcao: null,
+    estadoRegistro: "finalizado",
+    finalizado: true,
+    finalizarApos: null,
     atualizadoEm: FieldValue.serverTimestamp(),
     finalizadoEm: FieldValue.serverTimestamp(),
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),

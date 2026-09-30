@@ -217,7 +217,7 @@
 .agent-lead-metrics strong { margin-top: 5px; color: #173d55; font-family: "Playfair Display", Georgia, serif; font-size: 1.55rem; }
 .agent-lead-metrics span { margin-top: 3px; color: #8697a3; font-size: .56rem; }
 .agent-leads-card { min-width: 0; }
-.agent-lead-filters { display: grid; grid-template-columns: minmax(240px,1fr) 200px 170px; gap: 10px; margin-bottom: 15px; }
+.agent-lead-filters { display: grid; grid-template-columns: minmax(240px,1fr) 190px 180px 155px; gap: 10px; margin-bottom: 15px; }
 .agent-lead-filters label { display: flex; align-items: center; gap: 8px; border: 1px solid #d6e3e8; border-radius: 11px; padding: 0 11px; color: #6c8392; }
 .agent-lead-filters input, .agent-lead-filters select { width: 100%; min-height: 40px; border: 0; outline: 0; background: white; color: #314b5d; font-size: .66rem; }
 .agent-lead-filters select { border: 1px solid #d6e3e8; border-radius: 11px; padding: 0 10px; }
@@ -232,7 +232,10 @@
 .agent-lead-list header em.is-converted { background: #def5e8; color: #137b4e; }
 .agent-lead-list header .agent-lead-badges { min-width: auto; flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
 .agent-lead-list header em.is-test, .agent-test-badge { background: #fff0d8; color: #a66200; }
-.agent-lead-data { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 7px; margin-top: 12px; }
+.agent-lead-list header em.is-record-em_atendimento { background: #e7f5fb; color: #087da9; }
+.agent-lead-list header em.is-record-aguardando_pagamento { background: #fff0d8; color: #a66200; }
+.agent-lead-list header em.is-record-finalizado { background: #e9eef1; color: #516874; }
+.agent-lead-data { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 7px; margin-top: 12px; }
 .agent-lead-data > span { min-width: 0; border-radius: 9px; padding: 8px; background: white; }
 .agent-lead-data small, .agent-lead-data strong { display: block; }
 .agent-lead-data small { color: #8999a4; font-size: .5rem; }
