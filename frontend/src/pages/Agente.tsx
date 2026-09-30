@@ -6,7 +6,6 @@ import {
   FaArrowLeft,
   FaBan,
   FaBars,
-  FaCalendarAlt,
   FaChartLine,
   FaCheckCircle,
   FaCog,
@@ -33,7 +32,7 @@ import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import "./Agente.css";
 
-type TabKey = "overview" | "sessions" | "leads" | "whatsapp" | "prompt" | "tests" | "settings";
+type TabKey = "overview" | "sessions" | "leads" | "whatsapp" | "prompt" | "diagnostics" | "settings";
 type ContactMode = "bot" | "human" | "blocked";
 
 type AgentStatus = {
@@ -79,25 +78,6 @@ type AgentConfig = {
   typingMaxMs: number;
 };
 
-type AgentPackage = {
-  id: string;
-  nome: string;
-  tipoOferta?: "pacote" | "combo";
-  pacoteIds?: string[];
-  inclui?: Array<{ id: string; nome: string; modoHorario?: string; horarios?: string[]; horarioInicio?: string; horarioFim?: string }>;
-  modoHorario?: string;
-  horarios?: string[];
-  horarioInicio?: string;
-  horarioFim?: string;
-};
-
-type AgentCustomerType = {
-  id: string;
-  nome: string;
-  descricao?: string;
-  perguntarIdade?: boolean;
-};
-
 type AgentLead = {
   id: string;
   sessionId?: string;
@@ -127,7 +107,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
   { key: "leads", label: "Leads gerados", icon: FaChartLine },
   { key: "whatsapp", label: "WhatsApp", icon: FaWhatsapp },
   { key: "prompt", label: "Assistente", icon: FaEdit },
-  { key: "tests", label: "Testar reserva", icon: FaCalendarAlt },
+  { key: "diagnostics", label: "Diagnóstico", icon: FaPlug },
   { key: "settings", label: "Comportamento", icon: FaCog },
 ];
 
@@ -137,7 +117,7 @@ const titles: Record<TabKey, { title: string; subtitle: string }> = {
   leads: { title: "Leads gerados", subtitle: "Confira os dados estruturados enviados pelo agente, sem armazenar a conversa." },
   whatsapp: { title: "Conexão do WhatsApp", subtitle: "Conecte o número do agente e valide o envio antes de operar." },
   prompt: { title: "Assistente e prompt", subtitle: "Ajuste o comportamento da IA e teste sem enviar mensagens reais." },
-  tests: { title: "Homologação da reserva", subtitle: "Valide integrações, disponibilidade e preço sem criar reserva ou cobrança." },
+  diagnostics: { title: "Diagnóstico dos serviços", subtitle: "Verificação sob demanda da integração entre os serviços." },
   settings: { title: "Comportamento de envio", subtitle: "Configure espera e simulação de digitação para respostas naturais." },
 };
 
@@ -443,8 +423,8 @@ export function Agente() {
             <WhatsappPanel status={status} onReload={() => loadStatus()} onMessage={showMessage} onError={showError} />
           ) : tab === "prompt" ? (
             <PromptPanel onMessage={showMessage} onError={showError} />
-          ) : tab === "tests" ? (
-            <ReservationTestPanel onError={showError} />
+          ) : tab === "diagnostics" ? (
+            <DiagnosticsPanel onError={showError} />
           ) : (
             <SettingsPanel onMessage={showMessage} onError={showError} />
           )}
@@ -478,7 +458,7 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
       <article className="agent-card agent-next-card">
         <div className="agent-card__title"><span><FaQrcode /></span><div><h2>Fluxo de reserva</h2><p>Integração preparada para homologação.</p></div></div>
         <ol><li className="is-current"><b>1</b><span><strong>Consulta real</strong>Experiências, horários e vagas</span></li><li className="is-current"><b>2</b><span><strong>Pagamento seguro</strong>PIX no WhatsApp ou cartão no site</span></li><li className="is-current"><b>3</b><span><strong>Confirmação</strong>Status atualizado pelo sistema Vagafogo</span></li><li className="is-current"><b>4</b><span><strong>Lead final</strong>Registro estruturado sem conversa</span></li></ol>
-        <button onClick={() => onOpen("tests")}>Abrir homologação<FaArrowLeft /></button>
+        <button onClick={() => onOpen("diagnostics")}>Ver diagnóstico<FaArrowLeft /></button>
       </article>
     </section>
   </>;
@@ -698,41 +678,15 @@ function PromptPanel({ onMessage, onError }: { onMessage: (text: string) => void
   return <div className="agent-prompt-grid"><article className="agent-card agent-prompt-editor"><div className="agent-card__title"><span><FaEdit /></span><div><h2>Prompt principal</h2><p>Não inclua regras de preço ou disponibilidade que pertencem ao sistema.</p></div></div>{loading ? <p>Carregando…</p> : <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />}<button className="agent-primary" disabled={saving || !prompt.trim()} onClick={async () => { setSaving(true); try { await api("/crm/agente/prompt", { method: "POST", body: JSON.stringify({ prompt }) }); onMessage("Prompt salvo. As novas regras entram na próxima resposta sem apagar as sessões ativas."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar prompt"}</button></article><article className="agent-card agent-chat-test"><div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado</h2><p>Não envia WhatsApp nem cria cobrança. Leads usam o número padrão +55 (00) 00000-0000 e recebem o sinalizador TESTE.</p></div></div><div className="agent-test-history">{history.length === 0 ? <p>Envie uma pergunta para validar o comportamento.</p> : history.map((item, index) => <div key={`${item.role}-${index}`} className={item.role}>{item.text}</div>)}</div><div className="agent-test-input"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void test(); }} placeholder="Pergunte como se fosse um cliente…" /><button onClick={() => void test()} disabled={testing || !input.trim()}><FaPaperPlane /></button></div><button className="agent-link" onClick={() => { setHistory([]); setSessionId(""); }}>Iniciar novo teste</button></article></div>;
 }
 
-function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }) {
+function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {
   const [diagnostic, setDiagnostic] = useState<Record<string, unknown> | null>(null);
-  const [offers, setOffers] = useState<AgentPackage[]>([]);
-  const [customerTypes, setCustomerTypes] = useState<AgentCustomerType[]>([]);
-  const [offerKey, setOfferKey] = useState("");
-  const [date, setDate] = useState(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
-  const [time, setTime] = useState("");
-  const [adults, setAdults] = useState(1);
-  const [bariatric, setBariatric] = useState(0);
-  const [children, setChildren] = useState(0);
-  const [nonPaying, setNonPaying] = useState(0);
-  const [childAges, setChildAges] = useState("");
-  const [nonPayingAges, setNonPayingAges] = useState("");
-  const [bariatricConfirmed, setBariatricConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const parseAges = (value: string) => value.split(/[,;\s]+/).map(Number).filter((item) => Number.isFinite(item) && item >= 0 && item <= 120);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [diagnosticData, catalog] = await Promise.all([
-        api("/crm/agente/diagnostico") as Promise<Record<string, unknown>>,
-        api("/crm/agente/testes/pacotes") as Promise<{ pacotes?: AgentPackage[]; combos?: AgentPackage[]; tiposClientes?: AgentCustomerType[] }>,
-      ]);
-      const packages = Array.isArray(catalog.pacotes) ? catalog.pacotes.map((item) => ({ ...item, tipoOferta: "pacote" as const })) : [];
-      const combos = Array.isArray(catalog.combos) ? catalog.combos.map((item) => ({ ...item, tipoOferta: "combo" as const })) : [];
-      const nextOffers = [...combos, ...packages];
+      const diagnosticData = await api("/crm/agente/diagnostico") as Record<string, unknown>;
       setDiagnostic(diagnosticData);
-      setOffers(nextOffers);
-      setCustomerTypes(Array.isArray(catalog.tiposClientes) ? catalog.tiposClientes : []);
-      setOfferKey((current) => current || (nextOffers[0] ? `${nextOffers[0].tipoOferta}:${nextOffers[0].id}` : ""));
-      setTime((current) => current || nextOffers[0]?.horarios?.[0] || nextOffers[0]?.horarioInicio || "");
     } catch (caught) {
       onError(caught);
     } finally {
@@ -741,50 +695,6 @@ function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }
   }, [onError]);
 
   useEffect(() => { void load(); }, [load]);
-
-  const selectedOffer = offers.find((item) => `${item.tipoOferta}:${item.id}` === offerKey);
-  const simulate = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedOffer) return;
-    const participantsByType = Object.fromEntries(customerTypes.map((type) => {
-      const name = normalize(type.nome);
-      const quantity = name.includes("adult") ? adults : name.includes("bariat") ? bariatric : name.includes("crian") ? children : name.includes("nao pag") ? nonPaying : 0;
-      return [type.id, quantity];
-    }));
-    const agesByType = Object.fromEntries(customerTypes.flatMap((type) => {
-      const name = normalize(type.nome);
-      if (name.includes("crian")) return [[type.id, parseAges(childAges)]];
-      if (name.includes("nao pag")) return [[type.id, parseAges(nonPayingAges)]];
-      return [];
-    }));
-    const included = selectedOffer.tipoOferta === "combo" ? selectedOffer.inclui ?? [] : [selectedOffer];
-    const times = Object.fromEntries(included
-      .filter((item) => item.modoHorario !== "intervalo" && time)
-      .map((item) => [item.id, time]));
-    setTesting(true);
-    setResult(null);
-    try {
-      const data = await api("/crm/agente/testes/reserva", {
-        method: "POST",
-        body: JSON.stringify({
-          tipoOferta: selectedOffer.tipoOferta,
-          ofertaId: selectedOffer.id,
-          data: date,
-          horario: time,
-          horariosPorPacote: times,
-          participantesPorTipo: participantsByType,
-          idadesPorTipo: agesByType,
-          confirmouCarteirinhaBariatrica: bariatric === 0 || bariatricConfirmed,
-          perguntasPersonalizadas: [],
-        }),
-      }) as { resultado?: Record<string, unknown> };
-      setResult(data.resultado ?? null);
-    } catch (caught) {
-      onError(caught);
-    } finally {
-      setTesting(false);
-    }
-  };
 
   const config = diagnostic?.configuracao && typeof diagnostic.configuracao === "object" ? diagnostic.configuracao as Record<string, unknown> : {};
   const gateway = diagnostic?.gateway && typeof diagnostic.gateway === "object" ? diagnostic.gateway as Record<string, unknown> : {};
@@ -797,31 +707,8 @@ function ReservationTestPanel({ onError }: { onError: (error: unknown) => void }
     { label: "Token entre serviços", ok: config.tokenInterno === true },
     { label: "Asaas no Vagafogo", ok: config.asaas === true },
   ];
-  const pending = Array.isArray(result?.requisitosPendentes) ? result.requisitosPendentes.map(String) : [];
-  const offerResult = result?.oferta && typeof result.oferta === "object" ? result.oferta as { nome?: string } : {};
-  const needsTime = selectedOffer?.tipoOferta === "combo"
-    ? (selectedOffer.inclui ?? []).some((item) => item.modoHorario !== "intervalo")
-    : selectedOffer?.modoHorario !== "intervalo";
-
   return <div className="agent-reservation-tests">
     <article className="agent-card agent-diagnostic-card"><div className="agent-card__title"><span><FaPlug /></span><div><h2>Diagnóstico dos serviços</h2><p>Confirma a ponte entre os dois Railways sem expor credenciais.</p></div></div>{loading ? <p className="agent-empty">Verificando integrações…</p> : <div className="agent-diagnostic-list">{checks.map((check) => <div className={check.ok ? "is-ok" : "is-failed"} key={check.label}><span>{check.ok ? <FaCheckCircle /> : <FaTimes />}</span><strong>{check.label}</strong><em>{check.ok ? "Pronto" : "Pendente"}</em></div>)}</div>}<button className="agent-primary" type="button" onClick={() => void load()} disabled={loading}><FaSyncAlt /> Atualizar diagnóstico</button></article>
-    <form className="agent-card agent-simulation-card" onSubmit={simulate}>
-      <div className="agent-card__title"><span><FaCalendarAlt /></span><div><h2>Simular disponibilidade</h2><p>Testa experiências e combos reais sem gravar reserva ou cobrança.</p></div></div>
-      <label>Oferta<select value={offerKey} onChange={(event) => { const nextKey = event.target.value; const next = offers.find((item) => `${item.tipoOferta}:${item.id}` === nextKey); setOfferKey(nextKey); setTime(next?.horarios?.[0] || next?.horarioInicio || ""); }}>{offers.map((item) => <option value={`${item.tipoOferta}:${item.id}`} key={`${item.tipoOferta}:${item.id}`}>{item.tipoOferta === "combo" ? "Combo · " : ""}{item.nome}</option>)}</select></label>
-      <div className="agent-simulation-grid">
-        <label>Data<input type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
-        <label>Horário principal<input type="time" value={time} min={selectedOffer?.horarioInicio} max={selectedOffer?.horarioFim} onChange={(event) => setTime(event.target.value)} required={needsTime} /></label>
-        <label>Adultos<input type="number" min="0" max="100" value={adults} onChange={(event) => setAdults(Number(event.target.value))} /></label>
-        <label>Bariátrica<input type="number" min="0" max="100" value={bariatric} onChange={(event) => setBariatric(Number(event.target.value))} /></label>
-        <label>Crianças<input type="number" min="0" max="100" value={children} onChange={(event) => setChildren(Number(event.target.value))} /></label>
-        <label>Não pagantes<input type="number" min="0" max="100" value={nonPaying} onChange={(event) => setNonPaying(Number(event.target.value))} /></label>
-        {children > 0 ? <label>Idades das crianças<input value={childAges} onChange={(event) => setChildAges(event.target.value)} placeholder="Ex.: 6, 10" /></label> : null}
-        {nonPaying > 0 ? <label>Idades dos não pagantes<input value={nonPayingAges} onChange={(event) => setNonPayingAges(event.target.value)} placeholder="Ex.: 2, 3" /></label> : null}
-      </div>
-      {bariatric > 0 ? <label className="agent-toggle"><input type="checkbox" checked={bariatricConfirmed} onChange={(event) => setBariatricConfirmed(event.target.checked)} /><span /><div><strong>Carteirinha bariátrica explicada</strong><small>Confirma que a exigência de validação foi informada.</small></div></label> : null}
-      <button className="agent-primary" disabled={testing || loading || !selectedOffer || !date || (needsTime && !time)}><FaSearch />{testing ? "Consultando…" : "Consultar vaga e preço"}</button>
-      {result ? <div className={`agent-simulation-result ${result.disponivel === true ? "is-ok" : "is-failed"}`}><strong>{result.disponivel === true ? result.prontoParaPagamento === true ? "Disponível e completo" : "Disponível, com dados pendentes" : "Indisponível"}</strong><span>{String(offerResult.nome || selectedOffer?.nome || "Oferta")} · {String(result.data || date)}{time ? ` às ${String(result.horario || time)}` : ""}</span><dl><div><dt>Participantes</dt><dd>{String(result.participantes ?? 0)}</dd></div><div><dt>Vagas restantes</dt><dd>{result.vagasRestantes == null ? "Sem limite" : String(result.vagasRestantes)}</dd></div><div><dt>Valor</dt><dd>{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(result.valor ?? 0))}</dd></div></dl>{pending.length ? <small>Pendente: {pending.join(" · ")}</small> : null}{Array.isArray(result.motivos) && result.motivos.length ? <small>Motivos: {result.motivos.map(String).join(", ")}</small> : null}</div> : null}
-    </form>
   </div>;
 }
 
