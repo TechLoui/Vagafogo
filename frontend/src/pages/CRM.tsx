@@ -180,6 +180,7 @@ type JourneyRecord = {
 
 type AgentLeadRecord = {
   id: string;
+  sessionId?: string;
   phone: string;
   name?: string;
   email?: string;
@@ -418,11 +419,14 @@ export function CRM() {
   }, () => setJourneysError("Não foi possível ler as jornadas do checkout. Publique as regras atualizadas do Firestore.")), []);
 
   useEffect(() => onSnapshot(collection(db, "crm_leads_agente"), (snapshot) => {
-    setAgentLeads(snapshot.docs.map((document) => {
+    const leads = snapshot.docs.map((document) => {
       const raw = document.data() as Record<string, unknown>;
+      const sessionId = raw.sessionId ? String(raw.sessionId) : undefined;
+      const sessionPhone = sessionId?.match(/whatsapp_(\d{10,15})/)?.[1];
       return {
         id: document.id,
-        phone: String(raw.telefone ?? ""),
+        sessionId,
+        phone: sessionPhone || String(raw.telefone ?? ""),
         name: raw.nome ? String(raw.nome) : undefined,
         email: raw.email ? String(raw.email) : undefined,
         stage: String(raw.etapa ?? "contato_iniciado"),
@@ -439,7 +443,14 @@ export function CRM() {
         summary: raw.resumo ? String(raw.resumo) : undefined,
         updatedAt: normalizeTimestamp(raw.atualizadoEm ?? raw.criadoEm),
       } satisfies AgentLeadRecord;
-    }));
+    }).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    const unique = new Map<string, AgentLeadRecord>();
+    leads.forEach((lead) => {
+      const phoneDigits = lead.phone.replace(/\D/g, "");
+      const key = lead.sessionId || (phoneDigits ? `telefone:${phoneDigits}` : lead.id);
+      if (!unique.has(key)) unique.set(key, lead);
+    });
+    setAgentLeads(Array.from(unique.values()));
     setAgentLeadsError("");
   }, () => setAgentLeadsError("Não foi possível ler os leads estruturados do Agente.")), []);
 
