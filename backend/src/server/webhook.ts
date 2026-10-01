@@ -31,10 +31,26 @@ const parseNumber = (value: string | undefined, fallback: number) => {
 const MAX_RETRIES = parseNumber(process.env.WEBHOOK_MAX_RETRIES, 3);
 const RETRY_DELAY_MS = parseNumber(process.env.WEBHOOK_RETRY_DELAY_MS, 4000);
 
+const telefoneIdentidadeAgente = (reserva: Record<string, any>) => {
+  const attribution = reserva.atribuicao && typeof reserva.atribuicao === "object" ? reserva.atribuicao : {};
+  const sessionCandidates = [attribution.agentSessionId, reserva.agentSessionId];
+  for (const candidate of sessionCandidates) {
+    const match = /^whatsapp_(\d{10,15})$/i.exec(String(candidate ?? "").trim());
+    if (match) return match[1];
+  }
+  return "";
+};
+
+const telefoneSessaoAgente = (reserva: Record<string, any>) => {
+  const identityPhone = telefoneIdentidadeAgente(reserva);
+  if (identityPhone) return identityPhone;
+  return String(reserva.telefone ?? reserva.Telefone ?? "").replace(/\D/g, "").slice(0, 15);
+};
+
 const reservaVeioDoAgente = (reserva: Record<string, any>) => {
   const attribution = reserva.atribuicao && typeof reserva.atribuicao === "object" ? reserva.atribuicao : {};
   return String(attribution.sourceChannel ?? reserva.canalOrigem ?? "").toLowerCase() === "whatsapp"
-    && (String(attribution.utmMedium ?? "").toLowerCase() === "agente" || String(attribution.sessionId ?? "").startsWith("whatsapp_"));
+    && (String(attribution.utmMedium ?? "").toLowerCase() === "agente" || Boolean(telefoneIdentidadeAgente(reserva)));
 };
 
 const formatarDataReserva = (value: unknown) => {
@@ -147,7 +163,7 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
 };
 
 const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<string, any>) => {
-  const phone = String(reserva.telefone ?? reserva.Telefone ?? "").replace(/\D/g, "").slice(0, 15);
+  const phone = telefoneSessaoAgente(reserva);
   if (!phone) return { enviado: false, motivo: "telefone_ausente" };
   const response = await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
     method: "POST",
@@ -304,7 +320,7 @@ async function handleWebhook(payload: WebhookPayload) {
 
   if (reservaVeioDoAgente(reservaExistente)) {
     await concluirLeadAgenteComReserva(
-      reservaExistente.telefone ?? reservaExistente.Telefone,
+      telefoneSessaoAgente(reservaExistente),
       externalReference,
       payment?.id,
     ).catch((error) => console.error(`[webhook] Falha ao concluir lead do Agente ${externalReference}:`, error));
