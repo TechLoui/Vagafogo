@@ -55,6 +55,7 @@ import { agentServiceConfigured, requestAgentService, type AgentResponse } from 
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
+  definirFotoPadraoGaleriaAgente,
   excluirFotoGaleriaAgente,
   listarGaleriaAgente,
   obterFotosGaleriaParaAgente,
@@ -183,6 +184,18 @@ app.delete('/crm/agente/galeria/:id', exigirAdminCrm, async (req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.patch('/crm/agente/galeria/padroes/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await definirFotoPadraoGaleriaAgente(req.params.id, req.body?.ativo));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503
+      : message === 'AGENT_GALLERY_DEFAULT_NOT_FOUND' ? 404
+        : 400;
+    res.status(status).json({ error: message });
   }
 });
 

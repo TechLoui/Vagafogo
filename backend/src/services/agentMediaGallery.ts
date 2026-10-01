@@ -6,30 +6,32 @@ export const AGENT_GALLERY_CATEGORIES = ["brunch", "trilha", "espacos", "combo",
 export type AgentGalleryCategory = typeof AGENT_GALLERY_CATEGORIES[number];
 
 const COLLECTION = "crm_agente_galeria";
+const SETTINGS_COLLECTION = "crm_agente_galeria_config";
+const DEFAULTS_SETTINGS_DOCUMENT = "fotos_padrao";
 const MAX_BYTES = 5 * 1024 * 1024;
 const MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PUBLIC_SITE_BASE_URL = (process.env.PUBLIC_SITE_BASE_URL ?? "https://vagafogo.com.br").trim().replace(/\/+$/, "");
-const DEFAULT_GALLERY: Record<AgentGalleryCategory, Array<{ path: string; titulo: string; legenda: string }>> = {
+type DefaultGalleryPhoto = { id: string; path: string; titulo: string; legenda: string };
+const DEFAULT_GALLERY: Record<AgentGalleryCategory, DefaultGalleryPhoto[]> = {
   brunch: [
-    { path: "/assets/brunch-1-CUij3LE7.webp", titulo: "Mesa do Brunch Vagafogo", legenda: "Brunch artesanal inspirado nos sabores do Cerrado." },
-    { path: "/assets/brunch-2-BdafbEXK.webp", titulo: "Sabores do brunch", legenda: "Preparações sazonais feitas pela Família Vagafogo." },
-    { path: "/assets/brunch-3-qneVD58f.webp", titulo: "Experiência gastronômica", legenda: "Uma manhã de sabores e natureza em Pirenópolis." },
+    { id: "padrao-brunch-mesa", path: "/assets/brunch-1-CUij3LE7.webp", titulo: "Mesa do Brunch Vagafogo", legenda: "Brunch artesanal inspirado nos sabores do Cerrado." },
+    { id: "padrao-brunch-sabores", path: "/assets/brunch-2-BdafbEXK.webp", titulo: "Sabores do brunch", legenda: "Preparações sazonais feitas pela Família Vagafogo." },
+    { id: "padrao-brunch-experiencia", path: "/assets/brunch-3-qneVD58f.webp", titulo: "Experiência gastronômica", legenda: "Uma manhã de sabores e natureza em Pirenópolis." },
   ],
   trilha: [
-    { path: "/assets/trilhaecologica-1-DtfHaYKM.jpg", titulo: "Trilha Vagafogo", legenda: "Caminho autoguiado em área preservada." },
-    { path: "/assets/trilhaecologica-2-CgfJLY_U.jpg", titulo: "Natureza preservada", legenda: "Mata, água e pontos de contemplação ao longo da trilha." },
+    { id: "padrao-trilha-caminho", path: "/assets/trilhaecologica-1-DtfHaYKM.jpg", titulo: "Trilha Vagafogo", legenda: "Caminho autoguiado em área preservada." },
+    { id: "padrao-trilha-natureza", path: "/assets/trilhaecologica-2-CgfJLY_U.jpg", titulo: "Natureza preservada", legenda: "Mata, água e pontos de contemplação ao longo da trilha." },
   ],
   espacos: [
-    { path: "/assets/hero-1-Bq3bL07N.webp", titulo: "Santuário Vagafogo", legenda: "Natureza e hospitalidade a poucos quilômetros do centro de Pirenópolis." },
-    { path: "/assets/hero-2-D24J1MMy.webp", titulo: "Áreas de convivência", legenda: "Espaços integrados à paisagem do Cerrado." },
-    { path: "/assets/Carrossel-1-BuAsKidk.webp", titulo: "Experiência Vagafogo", legenda: "Um encontro entre gastronomia, conservação e bem-estar." },
+    { id: "padrao-espacos-santuario", path: "/assets/hero-1-Bq3bL07N.webp", titulo: "Santuário Vagafogo", legenda: "Natureza e hospitalidade a poucos quilômetros do centro de Pirenópolis." },
+    { id: "padrao-espacos-convivencia", path: "/assets/hero-2-D24J1MMy.webp", titulo: "Áreas de convivência", legenda: "Espaços integrados à paisagem do Cerrado." },
   ],
   combo: [
-    { path: "/assets/brunch-3-qneVD58f.webp", titulo: "Brunch do combo", legenda: "O combo reúne o Brunch Gastronômico e a Trilha Vagafogo." },
-    { path: "/assets/trilhaecologica-2-CgfJLY_U.jpg", titulo: "Trilha do combo", legenda: "Depois do brunch, a experiência continua em meio à natureza." },
+    { id: "padrao-combo-brunch", path: "/assets/brunch-3-qneVD58f.webp", titulo: "Brunch do combo", legenda: "O combo reúne o Brunch Gastronômico e a Trilha Vagafogo." },
+    { id: "padrao-combo-trilha", path: "/assets/trilhaecologica-2-CgfJLY_U.jpg", titulo: "Trilha do combo", legenda: "Depois do brunch, a experiência continua em meio à natureza." },
   ],
   educacao_ambiental: [
-    { path: "/assets/educacaoambiental-1-B2Y6RirR.jpg", titulo: "Educação ambiental", legenda: "Vivências educativas conectadas à conservação da natureza." },
+    { id: "padrao-educacao-ambiental", path: "/assets/educacaoambiental-1-B2Y6RirR.jpg", titulo: "Educação ambiental", legenda: "Vivências educativas conectadas à conservação da natureza." },
   ],
 };
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
@@ -45,6 +47,16 @@ const categoryOf = (value: unknown): AgentGalleryCategory => {
   const category = clean(value, 40).toLowerCase() as AgentGalleryCategory;
   if (!AGENT_GALLERY_CATEGORIES.includes(category)) throw new Error("AGENT_GALLERY_CATEGORY_INVALID");
   return category;
+};
+
+const defaultPhotoEntries = () => AGENT_GALLERY_CATEGORIES.flatMap((category) =>
+  DEFAULT_GALLERY[category].map((photo) => ({ category, photo })),
+);
+
+const hiddenDefaultPhotoIds = async (db: FirebaseFirestore.Firestore) => {
+  const snapshot = await db.collection(SETTINGS_COLLECTION).doc(DEFAULTS_SETTINGS_DOCUMENT).get();
+  const hidden = snapshot.data()?.ocultas;
+  return new Set(Array.isArray(hidden) ? hidden.map((value) => clean(value, 120)).filter(Boolean) : []);
 };
 
 export const armazenarFotoGaleriaAgente = async (
@@ -102,7 +114,10 @@ export const listarGaleriaAgente = async () => {
   const db = obterFirestoreAdmin();
   const bucket = obterStorageBucketAdmin();
   if (!db || !bucket) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const snapshot = await db.collection(COLLECTION).get();
+  const [snapshot, hiddenDefaults] = await Promise.all([
+    db.collection(COLLECTION).get(),
+    hiddenDefaultPhotoIds(db),
+  ]);
   const items = await Promise.all(snapshot.docs.map(async (document) => {
     const data = document.data();
     let previewUrl = "";
@@ -128,20 +143,34 @@ export const listarGaleriaAgente = async () => {
       criadoEm: data.criadoEm?.toDate?.().toISOString?.() ?? null,
     };
   }));
-  const defaults = AGENT_GALLERY_CATEGORIES.flatMap((category) => DEFAULT_GALLERY[category].map((item, index) => ({
-    id: `padrao-${category}-${index + 1}`,
+  const defaults = defaultPhotoEntries().map(({ category, photo: item }) => ({
+    id: item.id,
     categoria: category,
     titulo: item.titulo,
     legenda: item.legenda,
     mimeType: item.path.endsWith(".jpg") ? "image/jpeg" : item.path.endsWith(".png") ? "image/png" : "image/webp",
     filename: item.path.split("/").pop() || "vagafogo.webp",
     sizeBytes: 0,
-    ativo: true,
+    ativo: !hiddenDefaults.has(item.id),
     previewUrl: `${PUBLIC_SITE_BASE_URL}${item.path}`,
     criadoEm: null,
     padrao: true,
-  })));
+  }));
   return [...items.sort((a, b) => String(b.criadoEm ?? "").localeCompare(String(a.criadoEm ?? ""))), ...defaults];
+};
+
+export const definirFotoPadraoGaleriaAgente = async (idInput: unknown, activeInput: unknown) => {
+  const id = clean(idInput, 120);
+  const exists = defaultPhotoEntries().some(({ photo }) => photo.id === id);
+  if (!exists) throw new Error("AGENT_GALLERY_DEFAULT_NOT_FOUND");
+  if (typeof activeInput !== "boolean") throw new Error("AGENT_GALLERY_ACTIVE_INVALID");
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  await db.collection(SETTINGS_COLLECTION).doc(DEFAULTS_SETTINGS_DOCUMENT).set({
+    ocultas: activeInput ? FieldValue.arrayRemove(id) : FieldValue.arrayUnion(id),
+    atualizadoEm: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { id, ativo: activeInput };
 };
 
 export const excluirFotoGaleriaAgente = async (idInput: unknown) => {
@@ -167,7 +196,10 @@ export const obterFotosGaleriaParaAgente = async (categoryInput: unknown, limitI
   const db = obterFirestoreAdmin();
   const bucket = obterStorageBucketAdmin();
   if (!db || !bucket) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const snapshot = await db.collection(COLLECTION).where("ativo", "==", true).get();
+  const [snapshot, hiddenDefaults] = await Promise.all([
+    db.collection(COLLECTION).where("ativo", "==", true).get(),
+    hiddenDefaultPhotoIds(db),
+  ]);
   const documents = snapshot.docs
     .filter((document) => document.data().categoria === category)
     .sort((a, b) => Number(b.data().atualizadoEm?.toMillis?.() ?? 0) - Number(a.data().atualizadoEm?.toMillis?.() ?? 0))
@@ -189,6 +221,7 @@ export const obterFotosGaleriaParaAgente = async (categoryInput: unknown, limitI
   }
   for (const fallback of DEFAULT_GALLERY[category]) {
     if (fotos.length >= limit) break;
+    if (hiddenDefaults.has(fallback.id)) continue;
     try {
       const response = await fetch(`${PUBLIC_SITE_BASE_URL}${fallback.path}`);
       if (!response.ok) continue;
@@ -196,7 +229,7 @@ export const obterFotosGaleriaParaAgente = async (categoryInput: unknown, limitI
       const buffer = Buffer.from(await response.arrayBuffer());
       if (!buffer.length || buffer.length > MAX_BYTES || !MIME_TYPES.has(mimeType) || !validSignature(buffer, mimeType)) continue;
       fotos.push({
-        id: `padrao-${category}-${fotos.length + 1}`,
+        id: fallback.id,
         titulo: fallback.titulo,
         legenda: fallback.legenda,
         type: "image",

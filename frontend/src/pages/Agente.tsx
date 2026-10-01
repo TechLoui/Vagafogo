@@ -11,6 +11,8 @@ import {
   FaCog,
   FaComments,
   FaEdit,
+  FaEye,
+  FaEyeSlash,
   FaHeadset,
   FaImage,
   FaPaperPlane,
@@ -754,6 +756,20 @@ function GalleryPanel({ onMessage, onError }: { onMessage: (text: string) => voi
     }
   };
 
+  const toggleDefault = async (photo: GalleryPhoto) => {
+    const active = !photo.ativo;
+    try {
+      await api(`/crm/agente/galeria/padroes/${encodeURIComponent(photo.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ativo: active }),
+      });
+      await load();
+      onMessage(active ? "Foto padrão restaurada para o agente." : "Foto padrão ocultada do agente.");
+    } catch (caught) {
+      onError(caught);
+    }
+  };
+
   return <section className="agent-gallery-layout">
     <article className="agent-card agent-gallery-form">
       <div className="agent-card__title"><span><FaImage /></span><div><h2>Adicionar foto</h2><p>Estas imagens são permanentes e separadas do histórico temporário das conversas.</p></div></div>
@@ -767,10 +783,12 @@ function GalleryPanel({ onMessage, onError }: { onMessage: (text: string) => voi
     </article>
     <article className="agent-card agent-gallery-list-card">
       <div className="agent-card__title"><span><FaImage /></span><div><h2>Fotos disponíveis</h2><p>A Jatobá escolhe até três imagens da categoria solicitada.</p></div></div>
-      {loading ? <p className="agent-empty">Carregando galeria…</p> : photos.length === 0 ? <p className="agent-empty">Nenhuma foto cadastrada. Adicione as primeiras imagens para habilitar o envio pelo bot.</p> : <div className="agent-gallery-grid">{photos.map((photo) => <article key={photo.id}>
+      {loading ? <p className="agent-empty">Carregando galeria…</p> : photos.length === 0 ? <p className="agent-empty">Nenhuma foto cadastrada. Adicione as primeiras imagens para habilitar o envio pelo bot.</p> : <div className="agent-gallery-grid">{photos.map((photo) => <article key={photo.id} className={!photo.ativo ? "is-inactive" : ""}>
         {photo.previewUrl ? <img src={photo.previewUrl} alt={photo.titulo} /> : <div className="agent-gallery-placeholder"><FaImage /></div>}
-        <div><small>{galleryCategoryLabels[photo.categoria] || photo.categoria}</small><strong>{photo.titulo}</strong>{photo.legenda ? <p>{photo.legenda}</p> : null}<span>{photo.padrao ? "Foto padrão do site" : `${(photo.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</span></div>
-        {!photo.padrao ? <button type="button" onClick={() => void remove(photo)} title="Excluir foto"><FaTrash /></button> : null}
+        <div><small>{galleryCategoryLabels[photo.categoria] || photo.categoria}</small><strong>{photo.titulo}</strong>{photo.legenda ? <p>{photo.legenda}</p> : null}<span>{photo.padrao ? photo.ativo ? "Foto padrão do site · ativa" : "Foto padrão do site · oculta" : `${(photo.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</span></div>
+        {photo.padrao
+          ? <button type="button" className="agent-gallery-visibility" onClick={() => void toggleDefault(photo)} title={photo.ativo ? "Ocultar foto do agente" : "Restaurar foto para o agente"}>{photo.ativo ? <FaEyeSlash /> : <FaEye />}</button>
+          : <button type="button" onClick={() => void remove(photo)} title="Excluir foto"><FaTrash /></button>}
       </article>)}</div>}
     </article>
   </section>;
