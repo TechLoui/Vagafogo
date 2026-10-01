@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import logo from "../assets/logo.jpg";
 import { BookingSection } from "../components/BookingSection";
+import { carregarCheckoutAgente, type AgentCheckoutHandoff } from "../features/agentCheckout";
 
 export function Reserva() {
   const [searchParams] = useSearchParams();
@@ -17,6 +19,33 @@ export function Reserva() {
   const initialTime = /^\d{1,2}:\d{2}$/.test(searchParams.get("horario") ?? "")
     ? searchParams.get("horario")!
     : undefined;
+  const agentCheckoutToken = searchParams.get("agent_checkout")?.trim() || undefined;
+  const [agentCheckout, setAgentCheckout] = useState<AgentCheckoutHandoff>();
+  const [loadingAgentCheckout, setLoadingAgentCheckout] = useState(Boolean(agentCheckoutToken));
+  const [agentCheckoutError, setAgentCheckoutError] = useState("");
+
+  useEffect(() => {
+    if (!agentCheckoutToken) {
+      setAgentCheckout(undefined);
+      setAgentCheckoutError("");
+      setLoadingAgentCheckout(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingAgentCheckout(true);
+    setAgentCheckoutError("");
+    carregarCheckoutAgente(agentCheckoutToken, controller.signal)
+      .then(setAgentCheckout)
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setAgentCheckout(undefined);
+        setAgentCheckoutError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingAgentCheckout(false);
+      });
+    return () => controller.abort();
+  }, [agentCheckoutToken]);
 
   return (
     <div
@@ -60,13 +89,30 @@ export function Reserva() {
       </header>
 
       <main id="conteudo-principal" tabIndex={-1} className="relative min-h-0 flex-1">
-        <BookingSection
-          initialExperience={initialExperience}
-          initialPackageId={initialPackageId}
-          initialComboId={initialComboId}
-          initialDate={initialDate}
-          initialTime={initialTime}
-        />
+        {loadingAgentCheckout ? (
+          <div className="flex h-full items-center justify-center px-4 text-center">
+            <div className="rounded-2xl border border-[#8B4F23]/15 bg-white px-6 py-5 shadow-sm">
+              <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-[#8B4F23]/20 border-t-[#8B4F23]" />
+              <p className="font-semibold text-[#2D1E0F]">Preparando a etapa final da reserva...</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {agentCheckoutError ? (
+              <div className="absolute left-1/2 top-3 z-30 w-[min(92%,680px)] -translate-x-1/2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900 shadow-lg">
+                Este link não conseguiu recuperar os dados completos do atendimento. Confira os dados antes de continuar.
+              </div>
+            ) : null}
+            <BookingSection
+              initialExperience={initialExperience}
+              initialPackageId={initialPackageId}
+              initialComboId={initialComboId}
+              initialDate={initialDate}
+              initialTime={initialTime}
+              initialAgentCheckout={agentCheckout}
+            />
+          </>
+        )}
       </main>
 
       <footer className="reserva-footer relative z-10 hidden shrink-0 border-t border-[#8B4F23]/10 bg-white/50 px-4 py-1.5 text-center xl:block">

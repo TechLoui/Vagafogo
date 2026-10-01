@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { reservaContaParaOcupacao } from "./reservaStatus";
@@ -23,8 +23,13 @@ type AgentAvailabilityInput = {
   confirmouCarteirinhaBariatrica?: unknown;
   perguntasPersonalizadas?: unknown;
   telefone?: unknown;
+  nome?: unknown;
+  email?: unknown;
+  cpf?: unknown;
+  whatsappMarketingOptIn?: unknown;
   campaignId?: unknown;
   recipientId?: unknown;
+  sessionId?: unknown;
 };
 
 type AgentReservationDraftInput = AgentAvailabilityInput & {
@@ -85,9 +90,11 @@ type ComboRecord = { id: string; raw: FirebaseFirestore.DocumentData };
 const AGENT_LEADS_COLLECTION = "crm_leads_agente";
 const AGENT_LEAD_DRAFTS_COLLECTION = "crm_leads_agente_rascunhos";
 const AGENT_RESERVATION_DRAFTS_COLLECTION = "crm_agente_reserva_rascunhos";
+const AGENT_CHECKOUT_HANDOFFS_COLLECTION = "crm_agente_checkout_handoffs";
 const AGENT_LEAD_INACTIVITY_MS = 2 * 60 * 60 * 1000;
 const AGENT_LEAD_FINALIZER_INTERVAL_MS = 5 * 60 * 1000;
 const AGENT_RESERVATION_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AGENT_CHECKOUT_HANDOFF_TTL_MS = 2 * 60 * 60 * 1000;
 
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
 const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
@@ -371,17 +378,27 @@ const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerTy
   types.forEach((type) => { if (!(typeKey(type) in participants)) participants[typeKey(type)] = 0; });
 
   const ages = ageMap(input.idadesPorTipo);
+  const normalizedAges: Record<string, number[]> = {};
+  types.forEach((type) => {
+    const exact = ages[typeKey(type)] ?? ages[type.nome];
+    if (exact) {
+      normalizedAges[typeKey(type)] = exact;
+      return;
+    }
+    const matchingKey = Object.keys(ages).find((key) => normalizeText(key) === normalizeText(type.nome));
+    if (matchingKey) normalizedAges[typeKey(type)] = ages[matchingKey];
+  });
   const childType = findType(types, "crian");
   const nonPayingType = findType(types, "nao pag");
-  if (childType && Array.isArray(input.idadesCriancas)) ages[typeKey(childType)] = input.idadesCriancas.map(Number).filter(Number.isFinite).map(Math.trunc);
-  if (nonPayingType && Array.isArray(input.idadesNaoPagantes)) ages[typeKey(nonPayingType)] = input.idadesNaoPagantes.map(Number).filter(Number.isFinite).map(Math.trunc);
+  if (childType && Array.isArray(input.idadesCriancas)) normalizedAges[typeKey(childType)] = input.idadesCriancas.map(Number).filter(Number.isFinite).map(Math.trunc);
+  if (nonPayingType && Array.isArray(input.idadesNaoPagantes)) normalizedAges[typeKey(nonPayingType)] = input.idadesNaoPagantes.map(Number).filter(Number.isFinite).map(Math.trunc);
 
   const pending: string[] = [];
   types.forEach((type) => {
     const key = typeKey(type);
     const quantity = nonNegativeInteger(participants[key]);
     if (!type.perguntarIdade || quantity <= 0) return;
-    const values = ages[key] ?? [];
+    const values = normalizedAges[key] ?? [];
     if (values.length !== quantity) {
       pending.push(`Informe a idade de cada participante da categoria ${type.nome}.`);
       return;
@@ -394,7 +411,7 @@ const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerTy
   if (bariatricType && nonNegativeInteger(participants[typeKey(bariatricType)]) > 0 && input.confirmouCarteirinhaBariatrica !== true) {
     pending.push("Confirme que o cliente foi informado de que deve enviar/apresentar a carteirinha bariatrica para validacao.");
   }
-  return { participants, ages, pending };
+  return { participants, ages: normalizedAges, pending };
 };
 
 const validateRequiredQuestions = (packages: PackageRecord[], input: AgentAvailabilityInput) => {
@@ -588,7 +605,28 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
   };
 };
 
-export const criarLinkCartaoAgente = (input: AgentAvailabilityInput & { sessionId?: unknown }) => {
+const checkoutTokenHash = (token: string) => createHash("sha256")
+  .update(`agente-checkout:v1\0${token}`)
+  .digest("hex");
+
+export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
+  const availability = await simularReservaAgente(input);
+  if (!availability.disponivel) {
+    throw new Error(`AGENT_CHECKOUT_UNAVAILABLE:${availability.motivos.join(",")}`);
+  }
+  if (!availability.prontoParaPagamento) {
+    throw new Error(`AGENT_CHECKOUT_INCOMPLETE:${availability.requisitosPendentes.join(" | ")}`);
+  }
+
+  const nome = clean(input.nome, 160);
+  const email = clean(input.email, 240).toLowerCase();
+  const cpf = String(input.cpf ?? "").replace(/\D/g, "").slice(0, 11);
+  const telefone = normalizePhone(input.telefone);
+  if (!nome || !/^\S+@\S+\.\S+$/.test(email) || cpf.length !== 11 || telefone.length < 10) {
+    throw new Error("AGENT_CHECKOUT_PERSONAL_DATA_REQUIRED");
+  }
+  if (typeof input.temPet !== "boolean") throw new Error("AGENT_CHECKOUT_PET_ANSWER_REQUIRED");
+
   // O checkout do Agente sempre permanece no dominio oficial. Mesmo uma
   // variavel de ambiente incorreta nunca pode transformar este retorno em um
   // link direto do provedor de pagamento.
@@ -608,20 +646,95 @@ export const criarLinkCartaoAgente = (input: AgentAvailabilityInput & { sessionI
     utm_medium: "agente",
     utm_campaign: "reserva_assistida",
   });
-  const offerType = clean(input.tipoOferta, 20) === "combo" || clean(input.comboId, 100) ? "combo" : "pacote";
-  const offerId = clean(input.ofertaId ?? (offerType === "combo" ? input.comboId : input.pacoteId), 100);
-  const date = clean(input.data, 20);
-  const time = clean(input.horario, 20) || Object.values(timeMap(input.horariosPorPacote))[0] || "";
+  const offerType = availability.oferta.tipo;
+  const offerId = availability.oferta.id;
+  const date = availability.data;
+  const time = availability.horario === "Sem horario especifico" ? "" : availability.horario;
   const sessionId = clean(input.sessionId, 100);
   const campaignId = clean(input.campaignId, 100);
   const recipientId = clean(input.recipientId, 100);
+
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const token = randomBytes(32).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + AGENT_CHECKOUT_HANDOFF_TTL_MS);
+  const payload = {
+    version: 1,
+    tipoOferta: offerType,
+    ofertaId: offerId,
+    ofertaNome: availability.oferta.nome,
+    pacoteIds: availability.oferta.pacoteIds,
+    data: date,
+    horario: time,
+    horariosPorPacote: availability.horariosPorPacote,
+    participantesPorTipo: availability.participantesPorTipo,
+    idadesPorTipo: availability.idadesPorTipo,
+    perguntasPersonalizadas: customQuestionAnswers(input.perguntasPersonalizadas),
+    confirmouCarteirinhaBariatrica: input.confirmouCarteirinhaBariatrica === true,
+    nome,
+    email,
+    cpf,
+    telefone,
+    temPet: input.temPet,
+    whatsappMarketingOptIn: input.whatsappMarketingOptIn === true,
+    formaPagamento: "CREDIT_CARD" as const,
+    valorValidado: availability.valor,
+    sessionId: sessionId || null,
+    campaignId: campaignId || null,
+    recipientId: recipientId || null,
+    geradoEm: now.toISOString(),
+    expiraEm: expiresAt.toISOString(),
+  };
+  await db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION).doc(checkoutTokenHash(token)).set({
+    payload,
+    telefone,
+    sessionId: sessionId || null,
+    criadoEm: now,
+    expiraEm: expiresAt,
+    acessos: 0,
+  });
+
+  query.set("agent_checkout", token);
   if (offerId) query.set(offerType === "combo" ? "combo" : "pacote", offerId);
   if (date) query.set("data", date);
   if (time) query.set("horario", time);
   if (sessionId) query.set("agent_session", sessionId);
   if (campaignId) query.set("cid", campaignId);
   if (recipientId) query.set("rid", recipientId);
-  return { url: `${baseUrl}/reservar?${query.toString()}`, expiraEmMinutos: 120 };
+  return { url: `${baseUrl}/reservar?${query.toString()}`, expiraEmMinutos: 120, expiraEm: expiresAt.toISOString() };
+};
+
+export const obterCheckoutAgente = async (tokenValue: unknown) => {
+  const token = clean(tokenValue, 80);
+  if (!/^[A-Za-z0-9_-]{40,80}$/.test(token)) throw new Error("AGENT_CHECKOUT_TOKEN_INVALID");
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION).doc(checkoutTokenHash(token));
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new Error("AGENT_CHECKOUT_NOT_FOUND");
+  const stored = snapshot.data()!;
+  const expiresAt = stored.expiraEm?.toDate?.();
+  if (!(expiresAt instanceof Date) || expiresAt.getTime() <= Date.now()) {
+    await ref.delete();
+    throw new Error("AGENT_CHECKOUT_EXPIRED");
+  }
+  await ref.set({ acessos: FieldValue.increment(1), ultimoAcessoEm: FieldValue.serverTimestamp() }, { merge: true });
+  return stored.payload as Record<string, unknown>;
+};
+
+export const processarCheckoutsAgenteExpirados = async () => {
+  const db = obterFirestoreAdmin();
+  if (!db) return { excluidos: 0 };
+  const snapshot = await db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION)
+    .where("expiraEm", "<=", new Date())
+    .limit(100)
+    .get();
+  if (snapshot.empty) return { excluidos: 0 };
+  const batch = db.batch();
+  snapshot.docs.forEach((document) => batch.delete(document.ref));
+  await batch.commit();
+  return { excluidos: snapshot.size };
 };
 
 const agentLeadIdentity = (isTest: boolean, sessionId: string, phone: string) =>
@@ -1071,6 +1184,7 @@ export const iniciarFinalizadorLeadsAgente = () => {
   const run = () => void Promise.all([
     processarRascunhosLeadsAgente(),
     processarRascunhosReservaAgenteExpirados(),
+    processarCheckoutsAgenteExpirados(),
   ]).catch((error) => {
     console.error("[agent-leads] Falha no finalizador:", error);
   });
@@ -1118,5 +1232,14 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
   if (draftSnapshot.exists) batch.delete(draftRef);
   batch.delete(reservationDraftRef);
   await batch.commit();
+  const checkoutSnapshot = await db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION)
+    .where("telefone", "==", phone)
+    .limit(50)
+    .get();
+  if (!checkoutSnapshot.empty) {
+    const checkoutBatch = db.batch();
+    checkoutSnapshot.docs.forEach((document) => checkoutBatch.delete(document.ref));
+    await checkoutBatch.commit();
+  }
   return true;
 };

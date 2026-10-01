@@ -19,6 +19,7 @@ import {
   normalizarVagasExtrasDisponibilidade,
   obterVagasExtrasDisponibilidade,
 } from "../utils/disponibilidade";
+import type { AgentCheckoutHandoff } from "../features/agentCheckout";
 
 type PerguntaCondicional = {
   condicao: "sim" | "nao";
@@ -513,9 +514,10 @@ type BookingSectionProps = {
   initialComboId?: string;
   initialDate?: string;
   initialTime?: string;
+  initialAgentCheckout?: AgentCheckoutHandoff;
 };
 
-export function BookingSection({ initialExperience, initialPackageId, initialComboId, initialDate, initialTime }: BookingSectionProps = {}) {
+export function BookingSection({ initialExperience, initialPackageId, initialComboId, initialDate, initialTime, initialAgentCheckout }: BookingSectionProps = {}) {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -1043,6 +1045,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
   useEffect(() => {
     if (loadingPacotes || pacotes.length === 0) return;
+    if (initialAgentCheckout) return;
 
     const selectionKey = `${initialPackageId ?? ""}:${initialComboId ?? ""}:${initialExperience ?? ""}:${initialDate ?? ""}:${initialTime ?? ""}`;
     if (selectionKey === "::::" || initialSelectionAppliedRef.current === selectionKey) return;
@@ -1092,7 +1095,60 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       setTemPet(null);
       setFormErrors({});
     }
-  }, [combos, initialComboId, initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
+  }, [combos, initialAgentCheckout, initialComboId, initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
+
+  useEffect(() => {
+    if (!initialAgentCheckout || loadingPacotes || pacotes.length === 0 || tiposClientes.length === 0) return;
+    const selectionKey = `agent-checkout:${initialAgentCheckout.sessionId ?? ""}:${initialAgentCheckout.geradoEm}`;
+    if (initialSelectionAppliedRef.current === selectionKey) return;
+    const packageIds = initialAgentCheckout.pacoteIds.filter((id) => pacotes.some((pacote) => pacote.id === id));
+    if (packageIds.length !== initialAgentCheckout.pacoteIds.length || packageIds.length === 0) return;
+
+    initialSelectionAppliedRef.current = selectionKey;
+    setSelectedPackages(packageIds);
+    setSelectedDay(new Date(`${initialAgentCheckout.data}T12:00:00`));
+    setHorario(initialAgentCheckout.horario);
+    setHorariosPorPacote(initialAgentCheckout.horariosPorPacote);
+    setNome(initialAgentCheckout.nome);
+    setEmail(initialAgentCheckout.email);
+    const phoneDigits = onlyNumbers(initialAgentCheckout.telefone);
+    setTelefone(formatPhone(phoneDigits.startsWith("55") && phoneDigits.length > 11 ? phoneDigits.slice(2) : phoneDigits));
+    setCpf(formatCpf(initialAgentCheckout.cpf));
+    setWhatsappMarketingOptIn(initialAgentCheckout.whatsappMarketingOptIn);
+    setTemPet(initialAgentCheckout.temPet);
+
+    const groupKey = initialAgentCheckout.tipoOferta === "combo"
+      ? `combo:${initialAgentCheckout.ofertaId}`
+      : "geral";
+    const quantities: TipoClienteQuantidade = {};
+    const ages: Record<string, string[]> = {};
+    tiposClientes.forEach((tipo) => {
+      const key = obterChaveTipo(tipo);
+      const quantity = obterValorMapa(initialAgentCheckout.participantesPorTipo, tipo) ?? 0;
+      quantities[key] = quantity;
+      const sourceAges = tipo.id
+        ? initialAgentCheckout.idadesPorTipo[tipo.id]
+        : initialAgentCheckout.idadesPorTipo[tipo.nome];
+      if (Array.isArray(sourceAges)) ages[key] = sourceAges.map(String);
+    });
+    setParticipantesPorGrupo({ [groupKey]: quantities });
+    setIdadesPorGrupoETipo(Object.keys(ages).length > 0 ? { [groupKey]: ages } : {});
+
+    setRespostasPersonalizadas(Object.fromEntries(
+      initialAgentCheckout.perguntasPersonalizadas.map((answer) => [
+        `${answer.pacoteId}-${answer.perguntaId}`,
+        {
+          resposta: answer.resposta,
+          condicional: answer.perguntaCondicional?.resposta,
+        },
+      ])
+    ));
+    setFormaPagamento("CREDIT_CARD");
+    setSubEtapaPagamento("metodo");
+    setEtapa(4);
+    setFormErrors({});
+    setModalReembolsoAberto(true);
+  }, [initialAgentCheckout, loadingPacotes, pacotes, tiposClientes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
 

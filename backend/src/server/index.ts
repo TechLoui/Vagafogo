@@ -69,6 +69,7 @@ import {
   finalizarLeadAgentePorEncerramento,
   iniciarFinalizadorLeadsAgente,
   listarCatalogoAgente,
+  obterCheckoutAgente,
   obterRascunhoReservaAgente,
   registrarLeadAgente,
   salvarRascunhoReservaAgente,
@@ -156,6 +157,21 @@ app.get('/r/:campanhaId/:destinatarioId', async (req, res) => {
   });
   res.set("Cache-Control", "no-store");
   res.redirect(302, `${base}/reservar?${query.toString()}`);
+});
+
+app.get('/checkout-agente/:token', async (req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0");
+  res.set("Pragma", "no-cache");
+  try {
+    res.json(await obterCheckoutAgente(req.params.token));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message === "AGENT_CHECKOUT_NOT_FOUND" ? 404
+      : message === "AGENT_CHECKOUT_EXPIRED" ? 410
+        : message === "FIREBASE_ADMIN_UNAVAILABLE" ? 503
+          : 400;
+    res.status(status).json({ error: message });
+  }
 });
 
 const responderProxyAgente = (res: Response, response: AgentResponse) => {
@@ -418,8 +434,13 @@ app.post('/internal/agente/ferramentas/disponibilidade', exigirServicoAgente, as
 });
 
 app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async (req, res) => {
-  const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
-  res.json(criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution }));
+  try {
+    const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
+    res.json(await criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
 });
 
 app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, res) => {
