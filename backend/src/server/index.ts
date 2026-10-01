@@ -75,6 +75,7 @@ import {
   listarCatalogoAgente,
   obterCheckoutAgente,
   obterRascunhoReservaAgente,
+  registrarInatividadeLeadAgente,
   registrarLeadAgente,
   salvarRascunhoReservaAgente,
   simularReservaAgente,
@@ -154,7 +155,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-01.1-lead-phone-alias-reconciliation',
+    build: '2026-10-01.2-lead-lifecycle-strategy',
     timestamp: new Date().toISOString(),
   });
 });
@@ -597,6 +598,14 @@ app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, r
 app.post('/internal/agente/eventos/atendimento-resolvido', exigirServicoAgente, async (req, res) => {
   try {
     res.json(await finalizarLeadAgentePorDuvidaResolvida(req.body?.telefone));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/eventos/inatividade', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await registrarInatividadeLeadAgente(req.body?.telefone, req.body?.tentativa));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }

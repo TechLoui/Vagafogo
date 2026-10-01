@@ -106,6 +106,9 @@ type AgentLead = {
   isFinalized: boolean;
   finalizeAt?: string;
   finalizedAt?: string;
+  cycle: number;
+  followupAttempts: number;
+  suspendedByInactivity: boolean;
   isTest: boolean;
 };
 
@@ -250,6 +253,13 @@ const canonicalLeadOutcome = (value: unknown) => {
   return "em_andamento";
 };
 const phoneDigits = (value: string) => value.replace(/\D/g, "").slice(0, 13);
+const canonicalLeadPhoneKey = (value: string) => {
+  const digits = phoneDigits(value);
+  if (digits.length === 12 && digits.startsWith("55") && /^[6-9]$/.test(digits[4] ?? "")) {
+    return `${digits.slice(0, 4)}9${digits.slice(4)}`;
+  }
+  return digits;
+};
 const formatPhone = (value?: string | null) => {
   let digits = phoneDigits(value ?? "");
   if (!digits) return "";
@@ -364,12 +374,15 @@ export function Agente() {
         isFinalized,
         finalizeAt: normalizeTimestamp(raw.finalizarApos),
         finalizedAt: normalizeTimestamp(raw.finalizadoEm),
+        cycle: Math.max(1, numericValue(raw.cicloAtendimento) ?? 1),
+        followupAttempts: Math.min(2, Math.max(0, numericValue(raw.tentativasRetomada) ?? 0)),
+        suspendedByInactivity: raw.suspensoPorInatividade === true,
         isTest: raw.teste === true,
       } satisfies AgentLead;
     }).sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
     const unique = new Map<string, AgentLead>();
     next.forEach((lead) => {
-      const normalizedPhone = lead.phone.replace(/\D/g, "");
+      const normalizedPhone = canonicalLeadPhoneKey(lead.phone);
       const nameAndIntent = `${normalizedLeadToken(lead.name)}:${lead.desiredDate || ""}:${lead.activities.map(normalizedLeadToken).sort().join(",")}`;
       const key = normalizedPhone ? `telefone:${normalizedPhone}` : nameAndIntent !== "::" ? `contexto:${nameAndIntent}` : lead.sessionId || lead.id;
       if (!unique.has(key)) unique.set(key, lead);
@@ -854,7 +867,7 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
     <div className="agent-lead-metrics">
       <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>{testCount} de teste</span></article>
       <article><small>Em acompanhamento</small><strong>{inProgress}</strong><span>Atualizados durante a conversa</span></article>
-      <article><small>Finalizados</small><strong>{finalized}</strong><span>Encerrados ou inativos há 2 horas</span></article>
+      <article><small>Finalizados</small><strong>{finalized}</strong><span>Resolvidos, convertidos ou suspensos após 2 retomadas</span></article>
       <article><small>Reservas vinculadas</small><strong>{confirmed}</strong><span>Conversão identificada</span></article>
     </div>
     <article className="agent-card agent-leads-card">
@@ -866,8 +879,8 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
         <select value={origin} onChange={(event) => setOrigin(event.target.value)}><option value="all">Reais e testes</option><option value="real">Somente reais</option><option value="test">Somente testes</option></select>
       </div>
       {loading ? <p className="agent-empty">Carregando leads estruturados…</p> : error ? <div className="agent-lead-error"><FaBan />{error}</div> : filtered.length === 0 ? <p className="agent-empty">Nenhum lead encontrado com esses filtros.</p> : <div className="agent-lead-list">{filtered.map((lead) => <article key={lead.id}>
-        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><div className="agent-lead-badges">{lead.isTest ? <em className="is-test">TESTE</em> : null}<em className={`is-record-${lead.recordState}`}>{lead.recordState === "finalizado" ? "Finalizado" : lead.recordState === "aguardando_pagamento" ? "Aguardando pagamento" : "Em atendimento"}</em><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
-        <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span><span><small>{lead.isFinalized ? "Finalização" : "Fechamento por inatividade"}</small><strong>{dateTimeLabel(lead.isFinalized ? lead.finalizedAt : lead.finalizeAt)}</strong></span></div>
+        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><div className="agent-lead-badges">{lead.isTest ? <em className="is-test">TESTE</em> : null}{lead.cycle > 1 ? <em>Ciclo {lead.cycle}</em> : null}{lead.followupAttempts > 0 && !lead.isFinalized ? <em>Retomada {lead.followupAttempts}/2</em> : null}<em className={`is-record-${lead.recordState}`}>{lead.recordState === "finalizado" ? "Finalizado" : lead.recordState === "aguardando_pagamento" ? "Aguardando pagamento" : "Em atendimento"}</em><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
+        <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span><span><small>{lead.isFinalized ? "Finalização" : "Retomadas automáticas"}</small><strong>{lead.isFinalized ? dateTimeLabel(lead.finalizedAt) : `${lead.followupAttempts} de 2 realizadas`}</strong></span></div>
         {lead.summary ? <p>{lead.summary}</p> : null}
         <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}{lead.reservationId ? <button className="agent-link" disabled={resendingConfirmation === lead.id} onClick={() => void resendConfirmation(lead)}><FaPaperPlane /> {resendingConfirmation === lead.id ? "Reenviando…" : "Reenviar confirmação"}</button> : null}<button className="agent-link" onClick={() => setEditing({ ...lead })}><FaEdit /> Gerenciar</button><button className="agent-link is-danger" onClick={() => void deleteLead(lead)}><FaTrash /> Excluir</button></footer>
       </article>)}</div>}

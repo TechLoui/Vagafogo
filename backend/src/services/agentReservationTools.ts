@@ -174,6 +174,132 @@ export const leadPhoneVariants = (value: unknown) => {
   }
   return Array.from(new Set(variants.filter(Boolean)));
 };
+export const canonicalLeadPhone = (value: unknown) => {
+  const variants = leadPhoneVariants(value);
+  return variants.find((phone) => phone.length === 13 && phone.startsWith("55") && phone[4] === "9")
+    ?? variants[0]
+    ?? "";
+};
+
+const agentLeadStageRank: Record<string, number> = {
+  contato_iniciado: 0,
+  interesse_identificado: 1,
+  cotacao: 2,
+  dados_em_coleta: 3,
+  aguardando_confirmacao: 4,
+  pagamento_pendente: 5,
+  atendimento_humano: 6,
+  atendimento_concluido: 7,
+  encerrado_sem_reserva: 7,
+  concluida: 8,
+};
+
+const agentLeadCycleReset: FirebaseFirestore.DocumentData = {
+  motivo: null,
+  dataDesejada: null,
+  horarioDesejado: null,
+  participantes: null,
+  valorEstimado: null,
+  formaPagamento: null,
+  reservaId: null,
+  pagamentoId: null,
+  pacoteIds: [],
+  atividades: [],
+  proximaAcao: null,
+  resumo: null,
+  tentativasRetomada: 0,
+  ultimaRetomadaEm: null,
+  suspensoPorInatividade: false,
+};
+
+export const resolverTransicaoLeadAgente = (
+  currentValue: FirebaseFirestore.DocumentData = {},
+  incomingValue: FirebaseFirestore.DocumentData = {},
+) => {
+  const current = { ...currentValue };
+  const incoming = { ...incomingValue };
+  const currentStage = canonicalLeadStage(current.etapa);
+  const currentOutcome = canonicalLeadOutcome(current.resultado);
+  const incomingStage = canonicalLeadStage(incoming.etapa);
+  const incomingOutcome = canonicalLeadOutcome(incoming.resultado);
+  const incomingTerminal = leadAgenteEstaFinalizado(incomingStage, incomingOutcome);
+  const currentlyFinalized = current.finalizado === true
+    || String(current.estadoRegistro ?? "") === "finalizado"
+    || Boolean(current.finalizadoEm)
+    || leadAgenteEstaFinalizado(currentStage, currentOutcome);
+
+  // Um retorno tardio da IA nunca pode rebaixar uma reserva cujo webhook ja
+  // confirmou. Uma conversa realmente nova chega sem os identificadores da
+  // cobranca/reserva anterior e pode reabrir normalmente o mesmo contato.
+  if (currentOutcome === "reserva_confirmada" && !incomingTerminal) {
+    const currentReservationId = clean(current.reservaId, 100);
+    const currentPaymentId = clean(current.pagamentoId, 100);
+    const incomingReservationId = clean(incoming.reservaId, 100);
+    const incomingPaymentId = clean(incoming.pagamentoId, 100);
+    const sameConversion = incomingStage === "pagamento_pendente"
+      || Boolean(incomingReservationId && currentReservationId && incomingReservationId === currentReservationId)
+      || Boolean(incomingPaymentId && currentPaymentId && incomingPaymentId === currentPaymentId);
+    if (sameConversion) {
+      return {
+        patch: {
+          ...incoming,
+          etapa: "concluida",
+          resultado: "reserva_confirmada",
+          reservaId: currentReservationId || incomingReservationId || null,
+          pagamentoId: currentPaymentId || incomingPaymentId || null,
+          proximaAcao: null,
+        },
+        reaberto: false,
+        retomado: false,
+        regressaoIgnorada: true,
+      };
+    }
+  }
+
+  if (currentlyFinalized && !incomingTerminal) {
+    const suspendedCycle = currentOutcome === "aguardando_cliente" || currentOutcome === "pagamento_pendente";
+    return {
+      patch: {
+        ...(suspendedCycle ? {
+          motivo: null,
+          proximaAcao: null,
+          tentativasRetomada: 0,
+          ultimaRetomadaEm: null,
+          suspensoPorInatividade: false,
+        } : agentLeadCycleReset),
+        ...incoming,
+        cicloAtendimento: suspendedCycle
+          ? Math.max(1, nonNegativeInteger(current.cicloAtendimento, 10_000) || 1)
+          : Math.max(1, nonNegativeInteger(current.cicloAtendimento, 10_000) || 1) + 1,
+        reabertoEm: suspendedCycle ? current.reabertoEm ?? null : new Date(),
+        retomadoEm: suspendedCycle ? new Date() : null,
+        finalizado: false,
+        finalizadoEm: null,
+      },
+      reaberto: !suspendedCycle,
+      retomado: suspendedCycle,
+      regressaoIgnorada: false,
+    };
+  }
+
+  const patch = { ...incoming };
+  if (!incomingTerminal && (agentLeadStageRank[incomingStage] ?? 0) < (agentLeadStageRank[currentStage] ?? 0)) {
+    patch.etapa = currentStage;
+  }
+  if (currentOutcome === "pagamento_pendente" && incomingOutcome !== "reserva_confirmada") {
+    patch.etapa = "pagamento_pendente";
+    patch.resultado = "pagamento_pendente";
+  } else if (currentOutcome === "atendimento_humano" && !incomingTerminal) {
+    patch.etapa = "atendimento_humano";
+    patch.resultado = "atendimento_humano";
+  }
+  return {
+    patch,
+    reaberto: false,
+    retomado: false,
+    regressaoIgnorada: patch.etapa !== incoming.etapa || patch.resultado !== incoming.resultado,
+  };
+};
 const dateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 const parseMinutes = (value: string) => {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value);
@@ -769,10 +895,32 @@ const agentReservationDraftId = (isTest: boolean, sessionId: string, phone: stri
 
 const reservationDraftIdentity = (input: AgentReservationDraftInput) => {
   const sessionId = clean(input.sessionId, 100);
-  const phone = normalizePhone(input.telefone);
   const isTest = input.teste === true;
+  const rawPhone = normalizePhone(input.telefone);
+  const phone = isTest ? rawPhone : canonicalLeadPhone(rawPhone);
   if (!sessionId || !phone) throw new Error("AGENT_RESERVATION_DRAFT_IDENTITY_REQUIRED");
-  return { sessionId, phone, isTest, id: agentReservationDraftId(isTest, sessionId, phone) };
+  const canonicalSessionId = isTest ? sessionId : `whatsapp_${phone}`;
+  return {
+    sessionId: canonicalSessionId,
+    phone,
+    isTest,
+    id: agentReservationDraftId(isTest, canonicalSessionId, phone),
+  };
+};
+
+const reservationDraftAliasRefs = (
+  db: FirebaseFirestore.Firestore,
+  input: AgentReservationDraftInput,
+  identity: ReturnType<typeof reservationDraftIdentity>,
+) => {
+  if (identity.isTest) return [] as FirebaseFirestore.DocumentReference[];
+  return leadPhoneVariants(input.telefone)
+    .filter((phone) => phone !== identity.phone)
+    .map((phone) => {
+      const sessionId = `whatsapp_${phone}`;
+      return db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
+        .doc(agentReservationDraftId(false, sessionId, phone));
+    });
 };
 
 const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
@@ -832,10 +980,15 @@ export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftIn
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
-  const existing = await ref.get();
-  const previous = existing.exists && existing.data()?.dados && typeof existing.data()!.dados === "object"
-    ? existing.data()!.dados as Record<string, unknown>
-    : {};
+  const aliasRefs = reservationDraftAliasRefs(db, input, identity);
+  const [existing, ...aliasSnapshots] = await Promise.all([ref.get(), ...aliasRefs.map((aliasRef) => aliasRef.get())]);
+  const previous = aliasSnapshots.reduce<Record<string, unknown>>((merged, snapshot) => {
+    const data = snapshot.exists ? snapshot.data()?.dados : null;
+    return data && typeof data === "object" ? mergeReservationDraft(merged, data as Record<string, unknown>) : merged;
+  }, {});
+  if (existing.exists && existing.data()?.dados && typeof existing.data()!.dados === "object") {
+    Object.assign(previous, mergeReservationDraft(previous, existing.data()!.dados as Record<string, unknown>));
+  }
   const dados = mergeReservationDraft(previous, buildReservationDraftPatch(input));
   const now = new Date();
   const expiresAt = new Date(now.getTime() + AGENT_RESERVATION_DRAFT_TTL_MS);
@@ -849,6 +1002,12 @@ export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftIn
     atualizadoEm: FieldValue.serverTimestamp(),
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: false });
+  const existingAliasRefs = aliasRefs.filter((_, index) => aliasSnapshots[index]?.exists);
+  if (existingAliasRefs.length) {
+    const batch = db.batch();
+    existingAliasRefs.forEach((aliasRef) => batch.delete(aliasRef));
+    await batch.commit();
+  }
   return { encontrado: true, dados, expiraEm: expiresAt.toISOString() };
 };
 
@@ -857,17 +1016,42 @@ export const obterRascunhoReservaAgente = async (input: AgentReservationDraftInp
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
-  const snapshot = await ref.get();
+  const aliasRefs = reservationDraftAliasRefs(db, input, identity);
+  let snapshot = await ref.get();
+  let sourceRef = ref;
+  if (!snapshot.exists) {
+    for (const aliasRef of aliasRefs) {
+      const aliasSnapshot = await aliasRef.get();
+      if (!aliasSnapshot.exists) continue;
+      snapshot = aliasSnapshot;
+      sourceRef = aliasRef;
+      break;
+    }
+  }
   if (!snapshot.exists) return { encontrado: false, dados: {} };
   const stored = snapshot.data()!;
   const storedExpiry = stored.expiraEm?.toDate?.();
   if (!(storedExpiry instanceof Date) || storedExpiry.getTime() <= Date.now()) {
-    await ref.delete();
+    await sourceRef.delete();
     return { encontrado: false, dados: {} };
   }
   const now = new Date();
   const expiresAt = new Date(now.getTime() + AGENT_RESERVATION_DRAFT_TTL_MS);
-  await ref.set({ ultimaInteracaoEm: now, expiraEm: expiresAt, atualizadoEm: FieldValue.serverTimestamp() }, { merge: true });
+  if (sourceRef.path !== ref.path) {
+    const batch = db.batch();
+    batch.set(ref, {
+      ...stored,
+      sessionId: identity.sessionId,
+      telefone: identity.phone,
+      ultimaInteracaoEm: now,
+      expiraEm: expiresAt,
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: false });
+    batch.delete(sourceRef);
+    await batch.commit();
+  } else {
+    await ref.set({ ultimaInteracaoEm: now, expiraEm: expiresAt, atualizadoEm: FieldValue.serverTimestamp() }, { merge: true });
+  }
   const dados = stored.dados && typeof stored.dados === "object" ? stored.dados as Record<string, unknown> : {};
   return { encontrado: true, dados, expiraEm: expiresAt.toISOString() };
 };
@@ -877,9 +1061,15 @@ export const excluirRascunhoReservaAgente = async (input: AgentReservationDraftI
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
-  const snapshot = await ref.get();
-  if (snapshot.exists) await ref.delete();
-  return { excluido: snapshot.exists };
+  const refs = [ref, ...reservationDraftAliasRefs(db, input, identity)];
+  const snapshots = await Promise.all(refs.map((item) => item.get()));
+  const existingRefs = refs.filter((_, index) => snapshots[index]?.exists);
+  if (existingRefs.length) {
+    const batch = db.batch();
+    existingRefs.forEach((item) => batch.delete(item));
+    await batch.commit();
+  }
+  return { excluido: existingRefs.length > 0 };
 };
 
 export const processarRascunhosReservaAgenteExpirados = async () => {
@@ -917,8 +1107,8 @@ const buildAgentLeadPatch = (input: AgentLeadInput, sessionId: string, phone: st
     sessionId,
     etapa: canonicalLeadStage(input.etapa),
     resultado: canonicalLeadOutcome(input.resultado),
-    marketingOptIn: input.marketingOptIn === true,
   };
+  if (owns(input, "marketingOptIn")) patch.marketingOptIn = input.marketingOptIn === true;
   const copyText = (key: keyof AgentLeadInput, maximum: number) => {
     if (!owns(input, key)) return;
     const value = clean(input[key], maximum);
@@ -963,6 +1153,21 @@ const finalLeadDataFromDraft = (draft: FirebaseFirestore.DocumentData) => {
   return data;
 };
 
+const mergeMeaningfulLeadData = (
+  target: FirebaseFirestore.DocumentData,
+  source?: FirebaseFirestore.DocumentData,
+) => {
+  if (!source) return target;
+  Object.entries(source).forEach(([key, value]) => {
+    if (value === undefined) return;
+    if (value === null && target[key] !== undefined) return;
+    if (Array.isArray(value) && value.length === 0 && Array.isArray(target[key]) && target[key].length > 0) return;
+    if (value === "" && target[key] !== undefined) return;
+    target[key] = value;
+  });
+  return target;
+};
+
 const consolidateAgentLead = async (
   db: FirebaseFirestore.Firestore,
   draftRef: FirebaseFirestore.DocumentReference,
@@ -1003,37 +1208,76 @@ const consolidateAgentLead = async (
 };
 
 export const registrarLeadAgente = async (input: AgentLeadInput) => {
-  const sessionId = clean(input.sessionId, 100);
-  const phone = normalizePhone(input.telefone);
-  if (!sessionId || !phone) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
+  const requestedSessionId = clean(input.sessionId, 100);
+  const rawPhone = normalizePhone(input.telefone);
+  if (!requestedSessionId || !rawPhone) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const isTest = input.teste === true;
+  const phone = isTest ? rawPhone : canonicalLeadPhone(rawPhone);
+  const sessionId = isTest ? requestedSessionId : `whatsapp_${phone}`;
   const draftId = agentLeadDraftId(isTest, sessionId, phone);
   const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(draftId);
-  const existing = await draftRef.get();
-  const patch = buildAgentLeadPatch(input, sessionId, phone, isTest);
-  const existingData = existing.exists ? existing.data()! : {};
-  // Depois que uma cobranca foi gerada, uma nova interpretacao da IA nao pode
-  // rebaixar o atendimento para uma etapa anterior enquanto o webhook decide.
-  if (existingData.resultado === "pagamento_pendente") {
-    patch.etapa = "pagamento_pendente";
-    patch.resultado = "pagamento_pendente";
-  }
+  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(isTest, sessionId, phone));
+  const [existing, existingLead] = await Promise.all([draftRef.get(), leadRef.get()]);
+
+  const aliases = isTest ? [] : leadPhoneVariants(rawPhone).filter((candidate) => candidate !== phone);
+  const aliasEntries = await Promise.all(aliases.map(async (aliasPhone) => {
+    const aliasSessionId = `whatsapp_${aliasPhone}`;
+    const aliasDraftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION)
+      .doc(agentLeadDraftId(false, aliasSessionId, aliasPhone));
+    const aliasLeadRef = db.collection(AGENT_LEADS_COLLECTION)
+      .doc(agentLeadId(false, aliasSessionId, aliasPhone));
+    const [aliasDraft, aliasLead] = await Promise.all([aliasDraftRef.get(), aliasLeadRef.get()]);
+    return { aliasDraftRef, aliasLeadRef, aliasDraft, aliasLead };
+  }));
+
+  const currentData: FirebaseFirestore.DocumentData = {};
+  const sources = [
+    ...aliasEntries.flatMap((entry) => [
+      ...(entry.aliasLead.exists ? [entry.aliasLead.data()!] : []),
+      ...(entry.aliasDraft.exists ? [entry.aliasDraft.data()!] : []),
+    ]),
+    ...(existingLead.exists ? [existingLead.data()!] : []),
+    ...(existing.exists ? [existing.data()!] : []),
+  ].sort((a, b) => Number(canonicalLeadOutcome(a.resultado) === "reserva_confirmada")
+    - Number(canonicalLeadOutcome(b.resultado) === "reserva_confirmada"));
+  sources.forEach((source) => mergeMeaningfulLeadData(currentData, source));
+
+  const incomingPatch = buildAgentLeadPatch(input, sessionId, phone, isTest);
+  const transition = resolverTransicaoLeadAgente(currentData, incomingPatch);
+  const patch: FirebaseFirestore.DocumentData = {
+    ...transition.patch,
+    telefone: phone,
+    sessionId,
+    cicloAtendimento: transition.patch.cicloAtendimento
+      ?? Math.max(1, nonNegativeInteger(currentData.cicloAtendimento, 10_000) || 1),
+    inatividadeGerenciada: !isTest,
+    // Toda chamada de registro decorre de uma nova mensagem do cliente; ao
+    // retomar, a contagem anterior deixa de valer para este novo intervalo.
+    tentativasRetomada: nonNegativeInteger(transition.patch.tentativasRetomada, 3),
+  };
   const lastInteractionAt = new Date();
-  const finalizeAt = new Date(lastInteractionAt.getTime() + AGENT_LEAD_INACTIVITY_MS);
+  // No WhatsApp, o gateway e a fonte da verdade para a inatividade: ele envia
+  // duas retomadas respeitando a janela de horario e so entao suspende. O timer
+  // local de 2h permanece apenas no simulador, onde nao existe gateway.
+  const finalizeAt = isTest ? new Date(lastInteractionAt.getTime() + AGENT_LEAD_INACTIVITY_MS) : null;
   const draft = {
-    ...existingData,
+    ...currentData,
     ...patch,
     ultimaInteracaoEm: lastInteractionAt,
     finalizarApos: finalizeAt,
+    finalizado: false,
+    finalizadoEm: null,
   };
   await draftRef.set({
     ...patch,
     ultimaInteracaoEm: lastInteractionAt,
     finalizarApos: finalizeAt,
+    finalizado: false,
+    finalizadoEm: null,
     atualizadoEm: FieldValue.serverTimestamp(),
-    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+    ...((existing.exists || aliasEntries.some((entry) => entry.aliasDraft.exists)) ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: true });
 
   // O mesmo documento fica visivel desde o primeiro sinal comercial e e
@@ -1041,6 +1285,15 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   // a confirmacao da reserva e escrita exclusivamente pelo webhook.
   const terminal = leadAgenteEstaFinalizado(patch.etapa, patch.resultado);
   const id = await consolidateAgentLead(db, draftRef, draft, {}, terminal, terminal);
+  const duplicateRefs = aliasEntries.flatMap((entry) => [
+    ...(entry.aliasDraft.exists ? [entry.aliasDraftRef] : []),
+    ...(entry.aliasLead.exists ? [entry.aliasLeadRef] : []),
+  ]);
+  if (duplicateRefs.length) {
+    const batch = db.batch();
+    duplicateRefs.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
   return {
     id,
     rascunhoId: draftId,
@@ -1051,7 +1304,11 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
       : patch.etapa === "pagamento_pendente" || patch.resultado === "pagamento_pendente"
         ? "aguardando_pagamento"
         : "em_atendimento",
-    finalizaAposMinutos: terminal ? null : AGENT_LEAD_INACTIVITY_MS / 60_000,
+    finalizaAposMinutos: terminal || !isTest ? null : AGENT_LEAD_INACTIVITY_MS / 60_000,
+    cicloAtendimento: patch.cicloAtendimento,
+    reaberto: transition.reaberto,
+    retomado: transition.retomado,
+    regressaoIgnorada: transition.regressaoIgnorada,
   };
 };
 
@@ -1156,6 +1413,11 @@ export const processarRascunhosLeadsAgente = async () => {
   for (const document of snapshot.docs) {
     try {
       const draft = document.data();
+      if (draft.inatividadeGerenciada === true && draft.teste !== true) {
+        // O gateway ainda nao concluiu as duas tentativas. Nao feche antes
+        // dele, principalmente quando a janela 18:00-07:45 adiou os envios.
+        continue;
+      }
       const paymentPending = draft.etapa === "pagamento_pendente" || draft.resultado === "pagamento_pendente";
       await consolidateAgentLead(db, document.ref, draft, paymentPending ? {
         etapa: "pagamento_pendente",
@@ -1176,16 +1438,81 @@ export const processarRascunhosLeadsAgente = async () => {
   return { processados: processed, erros: errors };
 };
 
+const localizarLeadAgentePorTelefone = async (db: FirebaseFirestore.Firestore, telefone: unknown) => {
+  const phoneVariants = leadPhoneVariants(telefone);
+  const canonical = canonicalLeadPhone(telefone);
+  const orderedPhones = Array.from(new Set([canonical, ...phoneVariants].filter(Boolean)));
+  for (const phone of orderedPhones) {
+    const sessionId = `whatsapp_${phone}`;
+    const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+    const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
+    const [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+    if (draftSnapshot.exists || leadSnapshot.exists) {
+      return { phone, sessionId, draftRef, leadRef, draftSnapshot, leadSnapshot };
+    }
+  }
+  return null;
+};
+
+export const registrarInatividadeLeadAgente = async (telefone: unknown, tentativaValue: unknown) => {
+  const tentativa = Math.min(3, Math.max(1, nonNegativeInteger(tentativaValue, 3)));
+  const db = obterFirestoreAdmin();
+  if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
+  const located = await localizarLeadAgentePorTelefone(db, telefone);
+  if (!located) return { atualizado: false, motivo: "lead_nao_encontrado" };
+  const { draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
+  const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
+  const stage = canonicalLeadStage(base.etapa);
+  const outcome = canonicalLeadOutcome(base.resultado);
+  if (outcome === "reserva_confirmada" || outcome === "duvida_resolvida" || stage === "concluida") {
+    return { atualizado: false, motivo: "lead_ja_finalizado" };
+  }
+  if (stage === "atendimento_humano" || outcome === "atendimento_humano") {
+    return { atualizado: false, motivo: "atendimento_humano" };
+  }
+
+  const paymentPending = stage === "pagamento_pendente" || outcome === "pagamento_pendente";
+  if (tentativa < 3) {
+    const patch: FirebaseFirestore.DocumentData = {
+      tentativasRetomada: Math.max(tentativa, nonNegativeInteger(base.tentativasRetomada, 3)),
+      ultimaRetomadaEm: FieldValue.serverTimestamp(),
+      resultado: paymentPending ? "pagamento_pendente" : "aguardando_cliente",
+      motivo: `retomada_automatica_${tentativa}_enviada`,
+      proximaAcao: tentativa === 1
+        ? "Aguardar resposta; segunda retomada automatica programada"
+        : "Aguardar resposta; suspender se nao houver retorno",
+      atualizadoEm: FieldValue.serverTimestamp(),
+    };
+    const batch = db.batch();
+    batch.set(leadRef, patch, { merge: true });
+    if (draftSnapshot.exists) batch.set(draftRef, patch, { merge: true });
+    await batch.commit();
+    return { atualizado: true, tentativa, finalizado: false, id: leadRef.id };
+  }
+
+  await consolidateAgentLead(db, draftRef, base, paymentPending ? {
+    etapa: "pagamento_pendente",
+    resultado: "pagamento_pendente",
+    motivo: "pagamento_nao_identificado_apos_2_retomadas",
+    proximaAcao: "Elegivel para recuperacao de pagamento",
+    tentativasRetomada: 2,
+    suspensoPorInatividade: true,
+  } : {
+    resultado: "aguardando_cliente",
+    motivo: "sem_resposta_apos_2_retomadas",
+    proximaAcao: "Elegivel para recuperacao do atendimento",
+    tentativasRetomada: 2,
+    suspensoPorInatividade: true,
+  }, draftSnapshot.exists, true);
+  return { atualizado: true, tentativa, finalizado: true, id: leadRef.id };
+};
+
 export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
-  const phone = normalizePhone(telefone);
-  if (!phone) return false;
   const db = obterFirestoreAdmin();
   if (!db) return false;
-  const sessionId = `whatsapp_${phone}`;
-  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
-  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
-  const [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
-  if (!draftSnapshot.exists && !leadSnapshot.exists) return false;
+  const located = await localizarLeadAgentePorTelefone(db, telefone);
+  if (!located) return false;
+  const { phone, sessionId, draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
   const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
   await consolidateAgentLead(db, draftRef, base, {
     resultado: base.resultado === "em_andamento" ? "aguardando_cliente" : base.resultado,
@@ -1199,26 +1526,12 @@ export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
 };
 
 export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown) => {
-  const phoneVariants = leadPhoneVariants(telefone);
-  if (!phoneVariants.length) return { atualizado: false, motivo: "telefone_invalido" };
+  if (!leadPhoneVariants(telefone).length) return { atualizado: false, motivo: "telefone_invalido" };
   const db = obterFirestoreAdmin();
   if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
-  let phone = phoneVariants[0];
-  let sessionId = `whatsapp_${phone}`;
-  let draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
-  let leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
-  let [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
-  for (const candidate of phoneVariants.slice(1)) {
-    if (draftSnapshot.exists || leadSnapshot.exists) break;
-    phone = candidate;
-    sessionId = `whatsapp_${phone}`;
-    draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
-    leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
-    [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
-  }
-  if (!draftSnapshot.exists && !leadSnapshot.exists) {
-    return { atualizado: false, motivo: "lead_nao_encontrado" };
-  }
+  const located = await localizarLeadAgentePorTelefone(db, telefone);
+  if (!located) return { atualizado: false, motivo: "lead_nao_encontrado" };
+  const { draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
   const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
   const stage = canonicalLeadStage(base.etapa);
   const outcome = canonicalLeadOutcome(base.resultado);

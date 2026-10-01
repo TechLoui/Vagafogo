@@ -8,8 +8,31 @@ Os servicos continuam separados e cada Railway acompanha seu proprio repositorio
 
 O Firebase original do Agente nao deve ser trocado. Ele preserva a sessao do
 WhatsApp, o prompt e o modo `human`/`blocked` por contato. Conversas ficam
-somente em memoria; audios nao sao armazenados nem transcritos. Dados comerciais sao gravados apenas no
-`banco-vagafogo`, por APIs internas autenticadas.
+temporariamente no Firebase original do Agente por ate sete dias para permitir
+retomada apos reinicio; audios nao sao baixados, armazenados nem transcritos.
+Dados comerciais sao gravados apenas no `banco-vagafogo`, por APIs internas
+autenticadas.
+
+## Ciclo de vida dos leads
+
+1. O primeiro sinal comercial cria um unico acompanhamento por telefone. Para
+   celulares brasileiros, numeros com e sem o nono digito usam a mesma
+   identidade canonica.
+2. Novos dados atualizam esse documento; uma interpretacao tardia nunca regride
+   `dados_em_coleta`, `pagamento_pendente` ou `reserva_confirmada`.
+3. Duvida resolvida seguida de agradecimento ou despedida fecha imediatamente
+   como `atendimento_concluido/duvida_resolvida`.
+4. Se o bot estiver aguardando resposta, o gateway tenta retomar duas vezes e
+   respeita a janela configurada (padrao 07:45-18:00). Na terceira etapa ele
+   apenas avisa que o atendimento foi suspenso e fecha o lead no CRM.
+5. O retorno depois da suspensao retoma o mesmo ciclo e preserva os dados ja
+   coletados. Um novo interesse depois de um resultado terminal abre um novo
+   ciclo no mesmo contato, limpando somente os dados comerciais da oportunidade
+   anterior.
+6. O webhook de pagamento e soberano: confirma a reserva, consolida aliases e
+   impede qualquer atualizacao tardia de voltar o lead para pendente.
+7. Saudacoes isoladas, recados, fornecedores e operadores autorizados nao criam
+   lead. Atendimento humano e contatos bloqueados nao recebem retomadas.
 
 ## Fluxo oficial de reserva pelo Agente
 
@@ -81,8 +104,7 @@ Manter a chave DeepSeek e o Firebase original do Agente.
 3. Configurar as variaveis acima nos tres servicos.
 4. Publicar o repositorio `Vagafogo`.
 5. Entrar em `/agente` com o mesmo login do CRM.
-6. Na aba **Testar reserva**, validar os cinco itens do diagnostico e executar
-   uma simulacao. Ela nao cria reserva e nao gera cobranca.
+6. Na aba **Diagnostico**, validar manualmente os servicos.
 7. Na aba **Assistente**, simular uma conversa completa. O modo de teste nao
    cria PIX nem grava lead.
 8. Na aba **WhatsApp**, confirmar o numero conectado e enviar uma mensagem de
@@ -108,6 +130,7 @@ Manter a chave DeepSeek e o Firebase original do Agente.
 - Nenhuma resposta do Agente contem `invoiceUrl` ou qualquer URL do Asaas.
 - O QR PIX e enviado sem legenda; o copia e cola vai na mensagem seguinte.
 - O Agente nao possui credenciais do banco principal ou do Asaas.
-- O banco do Agente nao recebe mensagens, audios, transcricoes, leads,
-  pagamentos ou reservas.
+- O banco do Agente recebe apenas o historico temporario de ate sete dias,
+  sessao, prompt e controles operacionais; nunca recebe audio, transcricao,
+  lead, pagamento ou reserva.
 
