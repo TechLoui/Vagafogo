@@ -155,7 +155,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-01.2-lead-lifecycle-strategy',
+    build: '2026-10-01.3-channel-quote-context',
     timestamp: new Date().toISOString(),
   });
 });

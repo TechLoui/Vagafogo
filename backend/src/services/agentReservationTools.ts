@@ -687,24 +687,33 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
     };
   });
 
-  const totalByPackage = (record: PackageRecord) => types.reduce((total, type) =>
-    total + nonNegativeInteger(participation.participants[typeKey(type)]) * priceForType(record.raw, type), 0);
-  let value = 0;
-  if (offerType === "combo" && combo) {
-    const hasCustomPrice = types.some((type) => priceForType(combo.raw, type) > 0);
-    if (hasCustomPrice) {
-      value = types.reduce((total, type) => total + nonNegativeInteger(participation.participants[typeKey(type)]) * priceForType(combo.raw, type), 0);
-    } else if (Number(combo.raw.preco) > 0) {
-      value = Number(combo.raw.preco) * participants;
-    } else {
-      value = packages.reduce((total, record) => total + totalByPackage(record), 0);
-      const discount = Math.min(100, Math.max(0, Number(combo.raw.desconto) || 0));
-      if (discount > 0) value *= 1 - discount / 100;
+  const comboHasCustomPrice = Boolean(combo && types.some((type) => priceForType(combo.raw, type) > 0));
+  const comboFixedPrice = combo ? Math.max(0, Number(combo.raw.preco) || 0) : 0;
+  const comboDiscount = combo ? Math.min(100, Math.max(0, Number(combo.raw.desconto) || 0)) : 0;
+  const unitPriceForOffer = (type: CustomerType) => {
+    if (offerType === "combo" && combo) {
+      if (comboHasCustomPrice) return priceForType(combo.raw, type);
+      if (comboFixedPrice > 0) return comboFixedPrice;
+      const packageSum = packages.reduce((total, record) => total + priceForType(record.raw, type), 0);
+      return packageSum * (1 - comboDiscount / 100);
     }
-  } else {
-    value = packages.reduce((total, record) => total + totalByPackage(record), 0);
-  }
-  value = Math.round(value * 100) / 100;
+    return packages.reduce((total, record) => total + priceForType(record.raw, type), 0);
+  };
+  const quote = types
+    .map((type) => {
+      const quantity = nonNegativeInteger(participation.participants[typeKey(type)]);
+      const unitPrice = Math.round(unitPriceForOffer(type) * 100) / 100;
+      return {
+        tipoId: typeKey(type),
+        nome: type.nome,
+        quantidade: quantity,
+        idades: participation.ages[typeKey(type)] ?? [],
+        precoUnitario: unitPrice,
+        subtotal: Math.round(quantity * unitPrice * 100) / 100,
+      };
+    })
+    .filter((item) => item.quantidade > 0);
+  const value = Math.round(quote.reduce((total, item) => total + item.subtotal, 0) * 100) / 100;
   const offerName = offerType === "combo" ? clean(combo!.raw.nome, 160) : clean(packages[0].raw.nome, 160);
   const pending = Array.from(new Set([
     ...participation.pending,
@@ -747,6 +756,7 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
       if (item.vagasRestantes === null) return remaining;
       return remaining === null ? item.vagasRestantes : Math.min(remaining, item.vagasRestantes);
     }, null),
+    cotacao: quote,
     valor: value,
     moeda: "BRL",
     perguntas: questionValidation.questions,
