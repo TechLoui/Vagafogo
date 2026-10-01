@@ -152,7 +152,11 @@ app.use(express.json({ limit: "1mb" }));
 
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'ok',
+    build: '2026-10-01.1-lead-phone-alias-reconciliation',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get('/r/:campanhaId/:destinatarioId', async (req, res) => {
