@@ -1188,6 +1188,37 @@ export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
   return true;
 };
 
+export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown) => {
+  const phone = normalizePhone(telefone);
+  if (!phone) return { atualizado: false, motivo: "telefone_invalido" };
+  const db = obterFirestoreAdmin();
+  if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
+  const sessionId = `whatsapp_${phone}`;
+  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
+  const [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+  if (!draftSnapshot.exists && !leadSnapshot.exists) {
+    return { atualizado: false, motivo: "lead_nao_encontrado" };
+  }
+  const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
+  const stage = canonicalLeadStage(base.etapa);
+  const outcome = canonicalLeadOutcome(base.resultado);
+  const protectedFlow = ["dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "atendimento_humano", "concluida"].includes(stage)
+    || ["pagamento_pendente", "reserva_confirmada", "atendimento_humano"].includes(outcome);
+  if (protectedFlow) return { atualizado: false, motivo: "fluxo_pendente_ou_convertido" };
+  if (stage === "atendimento_concluido" || outcome === "duvida_resolvida") {
+    return { atualizado: false, motivo: "ja_finalizado" };
+  }
+  await consolidateAgentLead(db, draftRef, base, {
+    etapa: "atendimento_concluido",
+    resultado: "duvida_resolvida",
+    motivo: "duvida_resolvida_pelo_bot",
+    proximaAcao: "Nenhuma acao pendente",
+    resumo: "Duvida atendida e atendimento encerrado apos confirmacao do cliente.",
+  }, draftSnapshot.exists, true);
+  return { atualizado: true, id: leadRef.id };
+};
+
 let agentLeadFinalizerStarted = false;
 export const iniciarFinalizadorLeadsAgente = () => {
   if (agentLeadFinalizerStarted) return;
