@@ -35,7 +35,7 @@ import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import "./Agente.css";
 
-type TabKey = "overview" | "sessions" | "leads" | "gallery" | "whatsapp" | "prompt" | "diagnostics" | "settings";
+type TabKey = "overview" | "sessions" | "internal" | "leads" | "gallery" | "whatsapp" | "prompt" | "diagnostics" | "settings";
 type ContactMode = "bot" | "human" | "blocked";
 
 type AgentStatus = {
@@ -109,6 +109,26 @@ type AgentLead = {
   isTest: boolean;
 };
 
+type InternalPermissionKey = "consultarReservas" | "consultarDisponibilidade" | "alterarDisponibilidade" | "verDadosPessoais" | "verFinanceiro";
+type InternalPermissions = Record<InternalPermissionKey, boolean>;
+type InternalOperator = {
+  id: string;
+  nome: string;
+  telefone: string;
+  ativo: boolean;
+  permissoes: InternalPermissions;
+  atualizadoEm?: string;
+  atualizadoPor?: string;
+};
+type InternalAuditEntry = {
+  id: string;
+  operadorNome: string;
+  operadorTelefone: string;
+  acao: string;
+  resumo: string;
+  criadoEm?: string;
+};
+
 type GalleryCategory = "brunch" | "trilha" | "espacos" | "combo" | "educacao_ambiental";
 type GalleryPhoto = {
   id: string;
@@ -128,6 +148,7 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "https://vagafogo-production.u
 const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
   { key: "overview", label: "Visão geral", icon: FaRobot },
   { key: "sessions", label: "Atendimentos", icon: FaHeadset },
+  { key: "internal", label: "Acessos internos", icon: FaShieldAlt },
   { key: "leads", label: "Leads gerados", icon: FaChartLine },
   { key: "gallery", label: "Galeria", icon: FaImage },
   { key: "whatsapp", label: "WhatsApp", icon: FaWhatsapp },
@@ -139,6 +160,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
 const titles: Record<TabKey, { title: string; subtitle: string }> = {
   overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp em um só lugar." },
   sessions: { title: "Atendimentos ativos", subtitle: "Assuma, devolva ao bot ou bloqueie contatos específicos." },
+  internal: { title: "Acessos internos", subtitle: "Autorize números da equipe a consultar e operar o sistema pelo WhatsApp." },
   leads: { title: "Leads em acompanhamento", subtitle: "Acompanhe a coleta desde o primeiro interesse até o encerramento, sem armazenar a conversa." },
   gallery: { title: "Galeria do agente", subtitle: "Cadastre as fotos que a Jatobá pode enviar durante o atendimento." },
   whatsapp: { title: "Conexão do WhatsApp", subtitle: "Conecte o número do agente e valide o envio antes de operar." },
@@ -483,6 +505,8 @@ export function Agente() {
                 } catch (caught) { showError(caught); }
               }}
             />
+          ) : tab === "internal" ? (
+            <InternalAccessPanel onMessage={showMessage} onError={showError} />
           ) : tab === "leads" ? (
             <LeadsPanel leads={leads} loading={leadsLoading} error={leadsError} onMessage={showMessage} onError={showError} />
           ) : tab === "gallery" ? (
@@ -530,6 +554,199 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
       </article>
     </section>
   </>;
+}
+
+const internalPermissionOptions: Array<{ key: InternalPermissionKey; title: string; description: string }> = [
+  { key: "consultarReservas", title: "Consultar reservas", description: "Totais, status, participantes, horários e experiências por data." },
+  { key: "consultarDisponibilidade", title: "Consultar disponibilidade", description: "Capacidade, ocupação e vagas restantes por experiência e horário." },
+  { key: "alterarDisponibilidade", title: "Alterar disponibilidade", description: "Fechar ou abrir dia, experiência ou horário e definir vagas extras." },
+  { key: "verDadosPessoais", title: "Ver dados pessoais", description: "Inclui nome e telefone dos clientes nas listas solicitadas." },
+  { key: "verFinanceiro", title: "Ver dados financeiros", description: "Inclui valores confirmados e valores individuais das reservas." },
+];
+
+const defaultInternalPermissions = (): InternalPermissions => ({
+  consultarReservas: true,
+  consultarDisponibilidade: true,
+  alterarDisponibilidade: true,
+  verDadosPessoais: false,
+  verFinanceiro: false,
+});
+
+function InternalAccessPanel({ onMessage, onError }: { onMessage: (text: string) => void; onError: (error: unknown) => void }) {
+  const [operators, setOperators] = useState<InternalOperator[]>([]);
+  const [auditEntries, setAuditEntries] = useState<InternalAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [newPermissions, setNewPermissions] = useState<InternalPermissions>(defaultInternalPermissions);
+  const [selectedOperatorId, setSelectedOperatorId] = useState("");
+  const [testInput, setTestInput] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testSessionId, setTestSessionId] = useState(() => `interno-${Date.now()}`);
+  const [testHistory, setTestHistory] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+
+  const loadOperators = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [data, audit] = await Promise.all([
+        api("/crm/agente/operadores") as Promise<{ operadores?: InternalOperator[] }>,
+        api("/crm/agente/operadores-auditoria?limite=30") as Promise<{ operacoes?: InternalAuditEntry[] }>,
+      ]);
+      const next = Array.isArray(data.operadores) ? data.operadores : [];
+      setOperators(next);
+      setAuditEntries(Array.isArray(audit.operacoes) ? audit.operacoes : []);
+      setSelectedOperatorId((current) => next.some((item) => item.id === current)
+        ? current
+        : next.find((item) => item.ativo)?.id || next[0]?.id || "");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void loadOperators(); }, [loadOperators]);
+
+  const createOperator = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    setSaving("new");
+    try {
+      const data = await api("/crm/agente/operadores", {
+        method: "POST",
+        body: JSON.stringify({ nome: name.trim(), telefone: phone, ativo: true, permissoes: newPermissions }),
+      }) as { operador: InternalOperator };
+      setName("");
+      setPhone("");
+      setNewPermissions(defaultInternalPermissions());
+      await loadOperators();
+      setSelectedOperatorId(data.operador.id);
+      onMessage("Acesso interno autorizado. Esse número não será tratado como cliente nem gerará lead.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setSaving("");
+    }
+  };
+
+  const patchOperator = (id: string, patch: Partial<InternalOperator>) => {
+    setOperators((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const patchPermission = (id: string, key: InternalPermissionKey, checked: boolean) => {
+    setOperators((current) => current.map((item) => item.id === id
+      ? { ...item, permissoes: { ...item.permissoes, [key]: checked } }
+      : item));
+  };
+
+  const saveOperator = async (operator: InternalOperator) => {
+    if (saving) return;
+    setSaving(operator.id);
+    try {
+      await api(`/crm/agente/operadores/${encodeURIComponent(operator.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ nome: operator.nome, ativo: operator.ativo, permissoes: operator.permissoes }),
+      });
+      await loadOperators();
+      onMessage("Permissões do acesso interno atualizadas.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setSaving("");
+    }
+  };
+
+  const deleteOperator = async (operator: InternalOperator) => {
+    if (!window.confirm(`Remover o acesso interno de ${operator.nome}? O número voltará a ser atendido como cliente.`)) return;
+    setSaving(operator.id);
+    try {
+      await api(`/crm/agente/operadores/${encodeURIComponent(operator.id)}`, { method: "DELETE" });
+      await loadOperators();
+      onMessage("Acesso interno removido.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setSaving("");
+    }
+  };
+
+  const resetTest = () => {
+    setTestHistory([]);
+    setTestInput("");
+    setTestSessionId(`interno-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  };
+
+  const runTest = async (event: FormEvent) => {
+    event.preventDefault();
+    const operator = operators.find((item) => item.id === selectedOperatorId);
+    const question = testInput.trim();
+    if (!operator || !question || testing) return;
+    setTesting(true);
+    setTestInput("");
+    setTestHistory((current) => [...current, { role: "user", text: question }]);
+    try {
+      const data = await api("/crm/agente/testar-interno", {
+        method: "POST",
+        body: JSON.stringify({ telefone: operator.telefone, pergunta: question, session_id: testSessionId }),
+      }) as { resposta?: string; session_id?: string };
+      if (data.session_id) setTestSessionId(data.session_id);
+      setTestHistory((current) => [...current, { role: "assistant", text: data.resposta || "Sem resposta." }]);
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const selectedOperator = operators.find((item) => item.id === selectedOperatorId);
+
+  return <section className="agent-internal-access">
+    <div className="agent-internal-intro">
+      <article className="agent-card">
+        <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>O que a equipe pode fazer pelo bot</h2><p>O número é validado em cada mensagem pela sessão real do WhatsApp.</p></div></div>
+        <ul className="agent-capability-list">
+          <li><FaCheckCircle /><span><strong>Consultar movimento</strong>Reservas de hoje ou qualquer data, separadas em confirmadas, pendentes e canceladas.</span></li>
+          <li><FaCheckCircle /><span><strong>Obter listas operacionais</strong>Horários, experiências e participantes; nomes e telefones somente com permissão.</span></li>
+          <li><FaCheckCircle /><span><strong>Conferir ocupação</strong>Capacidade, pessoas já confirmadas e vagas restantes por experiência e horário.</span></li>
+          <li><FaCheckCircle /><span><strong>Controlar disponibilidade</strong>Fechar ou reabrir dia, experiência ou horário e ajustar vagas extras.</span></li>
+          <li><FaCheckCircle /><span><strong>Proteger alterações</strong>O bot mostra o impacto e exige uma confirmação posterior; toda mudança fica auditada.</span></li>
+        </ul>
+        <p className="agent-internal-warning"><FaBan /> Operadores internos nunca entram no fluxo de reserva do cliente, não geram lead e não recebem cobrança.</p>
+      </article>
+
+      <article className="agent-card agent-internal-create">
+        <div className="agent-card__title"><span><FaUser /></span><div><h2>Autorizar número</h2><p>Use apenas números pessoais da equipe que já estejam protegidos no aparelho.</p></div></div>
+        <form onSubmit={createOperator}>
+          <label>Nome do operador<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="Ex.: Gerência" /></label>
+          <label>WhatsApp<input value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} inputMode="tel" required placeholder="+55 (62) 99999-9999" /></label>
+          <fieldset><legend>Permissões iniciais</legend>{internalPermissionOptions.map((permission) => <label key={permission.key} className="agent-internal-permission"><input type="checkbox" checked={newPermissions[permission.key]} onChange={(event) => setNewPermissions((current) => ({ ...current, [permission.key]: event.target.checked }))} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</fieldset>
+          <button className="agent-primary" disabled={saving === "new"}>{saving === "new" ? "Autorizando..." : "Autorizar acesso"}</button>
+        </form>
+      </article>
+    </div>
+
+    <article className="agent-card agent-internal-operators">
+      <div className="agent-card__title"><span><FaUser /></span><div><h2>Números autorizados</h2><p>Desative temporariamente ou ajuste exatamente o que cada pessoa pode consultar e alterar.</p></div></div>
+      {loading ? <p className="agent-empty">Carregando acessos...</p> : operators.length === 0 ? <p className="agent-empty">Nenhum número interno autorizado.</p> : <div className="agent-internal-operator-list">{operators.map((operator) => <article key={operator.id} className={!operator.ativo ? "is-inactive" : ""}>
+        <header><div><input value={operator.nome} onChange={(event) => patchOperator(operator.id, { nome: event.target.value })} maxLength={120} /><span>{formatPhone(operator.telefone)}</span></div><label className="agent-toggle"><input type="checkbox" checked={operator.ativo} onChange={(event) => patchOperator(operator.id, { ativo: event.target.checked })} /><span /><strong>{operator.ativo ? "Ativo" : "Desativado"}</strong></label></header>
+        <div className="agent-internal-permissions">{internalPermissionOptions.map((permission) => <label key={permission.key}><input type="checkbox" checked={operator.permissoes[permission.key]} onChange={(event) => patchPermission(operator.id, permission.key, event.target.checked)} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</div>
+        <footer><small>{operator.atualizadoEm ? `Atualizado em ${dateTimeLabel(operator.atualizadoEm)}` : "Novo acesso"}{operator.atualizadoPor ? ` por ${operator.atualizadoPor}` : ""}</small><button className="agent-link is-danger" onClick={() => void deleteOperator(operator)} disabled={saving === operator.id}><FaTrash /> Remover</button><button className="agent-primary" onClick={() => void saveOperator(operator)} disabled={saving === operator.id}><FaSave /> Salvar</button></footer>
+      </article>)}</div>}
+    </article>
+
+    <article className="agent-card agent-internal-audit">
+      <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Auditoria de alterações</h2><p>Registro de quem alterou a disponibilidade, o que foi feito e quando.</p></div></div>
+      {auditEntries.length === 0 ? <p className="agent-empty">Nenhuma alteração interna realizada.</p> : <div className="agent-internal-audit-list">{auditEntries.map((entry) => <div key={entry.id}><span><FaCheckCircle /></span><div><strong>{entry.resumo || entry.acao}</strong><small>{entry.operadorNome} · {formatPhone(entry.operadorTelefone)} · {dateTimeLabel(entry.criadoEm)}</small></div></div>)}</div>}
+    </article>
+
+    <article className="agent-card agent-internal-test">
+      <div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado do modo interno</h2><p>As consultas usam dados reais. Alterações são apenas simuladas e nunca modificam disponibilidade nesta tela.</p></div></div>
+      <div className="agent-internal-test-toolbar"><label>Testar como<select value={selectedOperatorId} onChange={(event) => { setSelectedOperatorId(event.target.value); resetTest(); }}><option value="">Selecione um operador</option>{operators.filter((item) => item.ativo).map((operator) => <option key={operator.id} value={operator.id}>{operator.nome} — {formatPhone(operator.telefone)}</option>)}</select></label><button className="agent-link" onClick={resetTest}>Nova simulação</button></div>
+      <div className="agent-test-history">{testHistory.length === 0 ? <p>{selectedOperator ? "Experimente: “Quantas reservas confirmadas temos hoje?” ou “Feche o brunch das 11h do dia 21”." : "Autorize e selecione um operador para testar."}</p> : testHistory.map((message, index) => <div key={`${message.role}-${index}`} className={message.role === "user" ? "user" : ""}>{message.text}</div>)}</div>
+      <form className="agent-test-input" onSubmit={runTest}><input value={testInput} onChange={(event) => setTestInput(event.target.value)} disabled={!selectedOperator || testing} placeholder="Faça uma consulta ou simule uma alteração..." /><button type="submit" disabled={!selectedOperator || testing || !testInput.trim()} aria-label="Enviar teste"><FaPaperPlane /></button></form>
+    </article>
+  </section>;
 }
 
 const readableLeadValue = (value: string) => value

@@ -78,6 +78,17 @@ import {
   salvarRascunhoReservaAgente,
   simularReservaAgente,
 } from "../services/agentReservationTools";
+import {
+  alterarDisponibilidadeOperadorAgente,
+  atualizarOperadorInternoAgente,
+  consultarDisponibilidadeOperadorAgente,
+  consultarReservasOperadorAgente,
+  excluirOperadorInternoAgente,
+  listarAuditoriaOperadoresAgente,
+  listarOperadoresInternosAgente,
+  obterContextoOperadorInternoAgente,
+  salvarOperadorInternoAgente,
+} from "../services/agentInternalOperators";
 
 const app = express();
 
@@ -189,6 +200,58 @@ const responderProxyAgente = (res: Response, response: AgentResponse) => {
 // servicos nunca e exposto no navegador.
 app.get('/crm/agente/status', exigirAdminCrm, async (_req, res) => {
   responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/status"));
+});
+
+app.get('/crm/agente/operadores', exigirAdminCrm, async (_req, res) => {
+  try {
+    res.json({ operadores: await listarOperadoresInternosAgente() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/crm/agente/operadores-auditoria', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json({ operacoes: await listarAuditoriaOperadoresAgente(req.query.limite) });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/crm/agente/operadores', exigirAdminCrm, async (req, res) => {
+  try {
+    const identity = obterIdentidadeAdminCrm(res);
+    res.status(201).json({
+      operador: await salvarOperadorInternoAgente(req.body ?? {}, identity.email ?? identity.uid),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.patch('/crm/agente/operadores/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    const identity = obterIdentidadeAdminCrm(res);
+    res.json({
+      operador: await atualizarOperadorInternoAgente(
+        req.params.id,
+        req.body ?? {},
+        identity.email ?? identity.uid,
+      ),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'AGENT_INTERNAL_OPERATOR_NOT_FOUND' ? 404 : 400).json({ error: message });
+  }
+});
+
+app.delete('/crm/agente/operadores/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await excluirOperadorInternoAgente(req.params.id));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'AGENT_INTERNAL_OPERATOR_NOT_FOUND' ? 404 : 400).json({ error: message });
+  }
 });
 
 app.get('/crm/agente/galeria', exigirAdminCrm, async (_req, res) => {
@@ -366,6 +429,28 @@ app.post('/crm/agente/testar', exigirAdminCrm, async (req, res) => {
   }));
 });
 
+app.post('/crm/agente/testar-interno', exigirAdminCrm, async (req, res) => {
+  const pergunta = String(req.body?.pergunta ?? "").trim().slice(0, 4096);
+  const phone = String(req.body?.telefone ?? "").replace(/\D/g, "").slice(0, 15);
+  const sessionId = String(req.body?.session_id ?? "").trim().slice(0, 160);
+  if (!pergunta || !phone) {
+    res.status(400).json({ error: "Informe operador e mensagem." });
+    return;
+  }
+  responderProxyAgente(res, await requestAgentService("ai", "/ask", {
+    method: "POST",
+    body: {
+      pergunta,
+      session_id: sessionId || `teste-interno-${phone}`,
+      mode: "test",
+      telefone: phone,
+      nome_contato: "Teste de acesso interno",
+      internal_test: true,
+    },
+    timeoutMs: 100_000,
+  }));
+});
+
 app.patch('/crm/agente/leads/:id', exigirAdminCrm, async (req, res) => {
   try {
     res.json(await atualizarLeadAgente(req.params.id, req.body ?? {}));
@@ -429,6 +514,41 @@ app.get('/internal/agente/ferramentas/pacotes', exigirServicoAgente, async (_req
   }
 });
 
+app.post('/internal/agente/operadores/contexto', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await obterContextoOperadorInternoAgente(req.body?.telefone));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/operadores/reservas', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await consultarReservasOperadorAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message.includes('ACCESS_DENIED') || message.includes('PERMISSION_DENIED') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/operadores/disponibilidade', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await consultarDisponibilidadeOperadorAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message.includes('ACCESS_DENIED') || message.includes('PERMISSION_DENIED') ? 403 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/operadores/disponibilidade/alterar', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await alterarDisponibilidadeOperadorAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message.includes('ACCESS_DENIED') || message.includes('PERMISSION_DENIED') ? 403 : 400).json({ error: message });
+  }
+});
+
 app.get('/internal/agente/ferramentas/galeria', exigirServicoAgente, async (req, res) => {
   try {
     res.json(await obterFotosGaleriaParaAgente(req.query.categoria, req.query.limite));
@@ -458,6 +578,11 @@ app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async 
 
 app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, res) => {
   try {
+    const operator = await obterContextoOperadorInternoAgente(req.body?.telefone);
+    if (operator.autorizado) {
+      res.json({ registrado: false, motivo: 'operador_interno' });
+      return;
+    }
     res.status(201).json(await registrarLeadAgente(req.body ?? {}));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
