@@ -739,7 +739,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   })();
 
   const getInputClasses = (field: string) =>
-    `w-full px-3 py-2.5 rounded-xl border text-sm transition-all duration-200 focus:outline-none focus:ring-2 bg-white ${
+    `min-w-0 w-full rounded-xl border bg-white px-3 py-2.5 text-base leading-5 transition-all duration-200 focus:outline-none focus:ring-2 sm:text-sm ${
       formErrors[field]
         ? 'border-red-300 focus:ring-red-200 focus:border-red-400 bg-red-50/30'
         : 'border-slate-200 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23]'
@@ -3131,14 +3131,14 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       : "Selecione os pacotes para continuar.";
 
   const dadosPessoaisPagamento = (
-    <div className="space-y-3">
+    <div className="space-y-3 sm:space-y-4">
       <div>
         <h3 className="text-sm font-bold text-slate-800 mb-1">Seus dados</h3>
         <p className="text-xs text-slate-500">Usados para identificação e envio da confirmação.</p>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <label className="mb-1.5 block text-[11px] font-semibold text-slate-600 sm:text-xs sm:uppercase sm:tracking-wider">
             Nome Completo <span className="text-red-500">*</span>
           </label>
           <input
@@ -3159,8 +3159,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           )}
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+        <div className="min-w-0">
+          <label className="mb-1.5 block text-[11px] font-semibold text-slate-600 sm:text-xs sm:uppercase sm:tracking-wider">
             E-mail <span className="text-red-500">*</span>
           </label>
           <input
@@ -3181,8 +3181,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           )}
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+        <div className="min-w-0">
+          <label className="mb-1.5 block text-[11px] font-semibold text-slate-600 sm:text-xs sm:uppercase sm:tracking-wider">
             CPF <span className="text-red-500">*</span>
           </label>
           <input
@@ -3206,8 +3206,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           )}
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+        <div className="min-w-0">
+          <label className="mb-1.5 block text-[11px] font-semibold text-slate-600 sm:text-xs sm:uppercase sm:tracking-wider">
             Telefone / WhatsApp <span className="text-red-500">*</span>
           </label>
           <input
@@ -3231,15 +3231,15 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           )}
         </div>
       </div>
-      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-sm leading-relaxed text-slate-600">
+      <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-slate-600 sm:mt-4 sm:px-4 sm:py-3">
         <input
           type="checkbox"
           checked={whatsappMarketingOptIn}
           onChange={(event) => setWhatsappMarketingOptIn(event.target.checked)}
-          className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
+          className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600 sm:mt-1"
         />
-        <span>
-          Aceito receber pelo WhatsApp ajuda para concluir uma reserva iniciada, além de novidades, convites e campanhas da Vagafogo. A autorização é opcional e pode ser cancelada a qualquer momento respondendo <strong>SAIR</strong>.
+        <span className="min-w-0 text-[11px] leading-4 sm:text-xs sm:leading-5">
+          Quero receber ajuda para concluir a reserva e novidades pelo WhatsApp. É opcional; cancelo respondendo <strong>SAIR</strong>.
         </span>
       </label>
     </div>
@@ -3312,7 +3312,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       </label>
 
       <div className="grid grid-cols-2 gap-3">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <label className="min-w-0 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Validade
           <input
             type="text"
@@ -3327,7 +3327,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           {formErrors.cartaoValidade && <p className="mt-1 text-xs text-red-600">{formErrors.cartaoValidade}</p>}
         </label>
 
-        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <label className="min-w-0 text-xs font-semibold uppercase tracking-wider text-slate-500">
           CVV
           <input
             type="password"
@@ -4900,7 +4900,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                                       type="button"
                                       disabled={!liberado}
                                       onClick={() => liberado && setSubEtapaPagamento(step.id)}
-                                      className="relative z-10 flex flex-col items-center group disabled:cursor-not-allowed"
+                                      className="group relative z-10 flex min-w-0 flex-1 flex-col items-center disabled:cursor-not-allowed"
                                       title={step.label}
                                     >
                                       <span
@@ -4920,7 +4920,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                                           index + 1
                                         )}
                                       </span>
-                                      <span className={`mt-1 text-[9px] font-semibold uppercase tracking-wider transition-colors ${
+                                      <span className={`mt-1 max-w-full whitespace-normal text-center text-[8px] font-semibold uppercase leading-tight tracking-normal transition-colors sm:text-[9px] sm:tracking-wider ${
                                         ativa ? "text-[#8B4F23]" : concluida ? "text-slate-600" : "text-slate-400"
                                       }`}>
                                         {step.label}
