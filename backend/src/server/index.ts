@@ -64,11 +64,14 @@ import {
   atualizarLeadAgente,
   criarLinkCartaoAgente,
   excluirLeadAgente,
+  excluirRascunhoReservaAgente,
   excluirTodosLeadsAgente,
   finalizarLeadAgentePorEncerramento,
   iniciarFinalizadorLeadsAgente,
   listarCatalogoAgente,
+  obterRascunhoReservaAgente,
   registrarLeadAgente,
+  salvarRascunhoReservaAgente,
   simularReservaAgente,
 } from "../services/agentReservationTools";
 
@@ -424,6 +427,33 @@ app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, r
     res.status(201).json(await registrarLeadAgente(req.body ?? {}));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/ferramentas/rascunho-reserva/obter', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await obterRascunhoReservaAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/ferramentas/rascunho-reserva/salvar', exigirServicoAgente, async (req, res) => {
+  try {
+    res.status(201).json(await salvarRascunhoReservaAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/ferramentas/rascunho-reserva/excluir', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await excluirRascunhoReservaAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
   }
 });
 

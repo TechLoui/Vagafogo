@@ -27,6 +27,17 @@ type AgentAvailabilityInput = {
   recipientId?: unknown;
 };
 
+type AgentReservationDraftInput = AgentAvailabilityInput & {
+  sessionId?: unknown;
+  teste?: unknown;
+  nome?: unknown;
+  email?: unknown;
+  cpf?: unknown;
+  canalConclusao?: unknown;
+  formaPagamento?: unknown;
+  whatsappMarketingOptIn?: unknown;
+};
+
 type AgentLeadInput = {
   sessionId?: unknown;
   telefone?: unknown;
@@ -73,8 +84,10 @@ type ComboRecord = { id: string; raw: FirebaseFirestore.DocumentData };
 
 const AGENT_LEADS_COLLECTION = "crm_leads_agente";
 const AGENT_LEAD_DRAFTS_COLLECTION = "crm_leads_agente_rascunhos";
+const AGENT_RESERVATION_DRAFTS_COLLECTION = "crm_agente_reserva_rascunhos";
 const AGENT_LEAD_INACTIVITY_MS = 2 * 60 * 60 * 1000;
 const AGENT_LEAD_FINALIZER_INTERVAL_MS = 5 * 60 * 1000;
+const AGENT_RESERVATION_DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
 const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
@@ -164,6 +177,22 @@ const timeMap = (value: unknown) => {
     .map(([key, time]) => [clean(key, 100), clean(time, 20)])
     .filter(([key, time]) => Boolean(key) && Boolean(time))) as Record<string, string>;
 };
+const customQuestionAnswers = (value: unknown) => Array.isArray(value)
+  ? value.slice(0, 40).map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const item = raw as Record<string, unknown>;
+      const conditional = item.perguntaCondicional && typeof item.perguntaCondicional === "object" && !Array.isArray(item.perguntaCondicional)
+        ? item.perguntaCondicional as Record<string, unknown>
+        : null;
+      const answer = {
+        pacoteId: clean(item.pacoteId, 100),
+        perguntaId: clean(item.perguntaId ?? item.id, 100),
+        resposta: clean(item.resposta, 1000),
+        ...(conditional ? { perguntaCondicional: { resposta: clean(conditional.resposta, 1000) } } : {}),
+      };
+      return answer.pacoteId && answer.perguntaId ? answer : null;
+    }).filter((item): item is NonNullable<typeof item> => Boolean(item))
+  : [];
 const valueFromMap = (map: Record<string, unknown> | undefined, type: CustomerType) => {
   if (!map) return undefined;
   if (type.id && type.id in map) return Number(map[type.id]);
@@ -598,6 +627,139 @@ export const criarLinkCartaoAgente = (input: AgentAvailabilityInput & { sessionI
 const agentLeadIdentity = (isTest: boolean, sessionId: string, phone: string) =>
   isTest ? `teste\0${sessionId}` : `whatsapp\0${phone}`;
 
+const agentReservationDraftId = (isTest: boolean, sessionId: string, phone: string) => createHash("sha256")
+  .update(`agente-reserva-rascunho:v1\0${agentLeadIdentity(isTest, sessionId, phone)}`)
+  .digest("hex");
+
+const reservationDraftIdentity = (input: AgentReservationDraftInput) => {
+  const sessionId = clean(input.sessionId, 100);
+  const phone = normalizePhone(input.telefone);
+  const isTest = input.teste === true;
+  if (!sessionId || !phone) throw new Error("AGENT_RESERVATION_DRAFT_IDENTITY_REQUIRED");
+  return { sessionId, phone, isTest, id: agentReservationDraftId(isTest, sessionId, phone) };
+};
+
+const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
+  const patch: Record<string, unknown> = {};
+  const copyText = (key: keyof AgentReservationDraftInput, maximum: number) => {
+    if (!owns(input, String(key))) return;
+    const value = clean(input[key], maximum);
+    if (value) patch[String(key)] = value;
+  };
+  if (owns(input, "tipoOferta")) {
+    const value = clean(input.tipoOferta, 20);
+    if (value === "pacote" || value === "combo") patch.tipoOferta = value;
+  }
+  copyText("ofertaId", 100);
+  copyText("data", 20);
+  copyText("horario", 20);
+  copyText("nome", 160);
+  copyText("email", 240);
+  if (owns(input, "cpf")) {
+    const cpf = String(input.cpf ?? "").replace(/\D/g, "").slice(0, 11);
+    if (cpf) patch.cpf = cpf;
+  }
+  if (owns(input, "horariosPorPacote")) patch.horariosPorPacote = timeMap(input.horariosPorPacote);
+  if (owns(input, "participantesPorTipo")) patch.participantesPorTipo = numericMap(input.participantesPorTipo);
+  if (owns(input, "idadesPorTipo")) patch.idadesPorTipo = ageMap(input.idadesPorTipo);
+  if (owns(input, "perguntasPersonalizadas")) patch.perguntasPersonalizadas = customQuestionAnswers(input.perguntasPersonalizadas);
+  for (const key of ["confirmouCarteirinhaBariatrica", "temPet", "whatsappMarketingOptIn"] as const) {
+    if (owns(input, key) && typeof input[key] === "boolean") patch[key] = input[key];
+  }
+  if (owns(input, "canalConclusao")) {
+    const value = clean(input.canalConclusao, 20);
+    if (value === "whatsapp" || value === "site") patch.canalConclusao = value;
+  }
+  if (owns(input, "formaPagamento")) {
+    const value = clean(input.formaPagamento, 30).toUpperCase();
+    if (value === "PIX" || value === "CREDIT_CARD") patch.formaPagamento = value;
+  }
+  return patch;
+};
+
+const mergeReservationDraft = (current: Record<string, unknown>, patch: Record<string, unknown>) => {
+  const merged = { ...current };
+  Object.entries(patch).forEach(([key, value]) => {
+    const previous = merged[key];
+    if (value && typeof value === "object" && !Array.isArray(value)
+      && previous && typeof previous === "object" && !Array.isArray(previous)) {
+      merged[key] = { ...(previous as Record<string, unknown>), ...(value as Record<string, unknown>) };
+    } else {
+      merged[key] = value;
+    }
+  });
+  return merged;
+};
+
+export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftInput) => {
+  const identity = reservationDraftIdentity(input);
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
+  const existing = await ref.get();
+  const previous = existing.exists && existing.data()?.dados && typeof existing.data()!.dados === "object"
+    ? existing.data()!.dados as Record<string, unknown>
+    : {};
+  const dados = mergeReservationDraft(previous, buildReservationDraftPatch(input));
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + AGENT_RESERVATION_DRAFT_TTL_MS);
+  await ref.set({
+    sessionId: identity.sessionId,
+    telefone: identity.phone,
+    teste: identity.isTest,
+    dados,
+    ultimaInteracaoEm: now,
+    expiraEm: expiresAt,
+    atualizadoEm: FieldValue.serverTimestamp(),
+    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+  }, { merge: false });
+  return { encontrado: true, dados, expiraEm: expiresAt.toISOString() };
+};
+
+export const obterRascunhoReservaAgente = async (input: AgentReservationDraftInput) => {
+  const identity = reservationDraftIdentity(input);
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) return { encontrado: false, dados: {} };
+  const stored = snapshot.data()!;
+  const storedExpiry = stored.expiraEm?.toDate?.();
+  if (!(storedExpiry instanceof Date) || storedExpiry.getTime() <= Date.now()) {
+    await ref.delete();
+    return { encontrado: false, dados: {} };
+  }
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + AGENT_RESERVATION_DRAFT_TTL_MS);
+  await ref.set({ ultimaInteracaoEm: now, expiraEm: expiresAt, atualizadoEm: FieldValue.serverTimestamp() }, { merge: true });
+  const dados = stored.dados && typeof stored.dados === "object" ? stored.dados as Record<string, unknown> : {};
+  return { encontrado: true, dados, expiraEm: expiresAt.toISOString() };
+};
+
+export const excluirRascunhoReservaAgente = async (input: AgentReservationDraftInput) => {
+  const identity = reservationDraftIdentity(input);
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const ref = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION).doc(identity.id);
+  const snapshot = await ref.get();
+  if (snapshot.exists) await ref.delete();
+  return { excluido: snapshot.exists };
+};
+
+export const processarRascunhosReservaAgenteExpirados = async () => {
+  const db = obterFirestoreAdmin();
+  if (!db) return { excluidos: 0 };
+  const snapshot = await db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
+    .where("expiraEm", "<=", new Date())
+    .limit(100)
+    .get();
+  if (snapshot.empty) return { excluidos: 0 };
+  const batch = db.batch();
+  snapshot.docs.forEach((document) => batch.delete(document.ref));
+  await batch.commit();
+  return { excluidos: snapshot.size };
+};
+
 const agentLeadId = (isTest: boolean, sessionId: string, phone: string) => createHash("sha256")
   .update(`agente-lead:v3\0${agentLeadIdentity(isTest, sessionId, phone)}`)
   .digest("hex");
@@ -840,11 +1002,12 @@ export const excluirTodosLeadsAgente = async () => {
     }
     return removed;
   };
-  const [leads, drafts] = await Promise.all([
+  const [leads, drafts, reservationDrafts] = await Promise.all([
     removeCollection(AGENT_LEADS_COLLECTION),
     removeCollection(AGENT_LEAD_DRAFTS_COLLECTION),
+    removeCollection(AGENT_RESERVATION_DRAFTS_COLLECTION),
   ]);
-  return { excluidos: leads, rascunhosExcluidos: drafts };
+  return { excluidos: leads, rascunhosExcluidos: drafts, rascunhosReservaExcluidos: reservationDrafts };
 };
 
 export const processarRascunhosLeadsAgente = async () => {
@@ -895,6 +1058,9 @@ export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
     motivo: clean(base.motivo, 240) || "atendimento_encerrado_manualmente",
     proximaAcao: base.resultado === "pagamento_pendente" ? "Avaliar recuperacao do pagamento" : null,
   }, draftSnapshot.exists, true);
+  await db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
+    .doc(agentReservationDraftId(false, sessionId, phone))
+    .delete();
   return true;
 };
 
@@ -902,7 +1068,10 @@ let agentLeadFinalizerStarted = false;
 export const iniciarFinalizadorLeadsAgente = () => {
   if (agentLeadFinalizerStarted) return;
   agentLeadFinalizerStarted = true;
-  const run = () => void processarRascunhosLeadsAgente().catch((error) => {
+  const run = () => void Promise.all([
+    processarRascunhosLeadsAgente(),
+    processarRascunhosReservaAgenteExpirados(),
+  ]).catch((error) => {
     console.error("[agent-leads] Falha no finalizador:", error);
   });
   setTimeout(run, 15_000).unref();
@@ -920,6 +1089,8 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
   const draftSnapshot = await draftRef.get();
   const leadId = agentLeadId(false, sessionId, phone);
   const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(leadId);
+  const reservationDraftRef = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
+    .doc(agentReservationDraftId(false, sessionId, phone));
   const existing = await leadRef.get();
   const base = draftSnapshot.exists ? finalLeadDataFromDraft(draftSnapshot.data()!) : {
     canal: "whatsapp",
@@ -945,6 +1116,7 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: true });
   if (draftSnapshot.exists) batch.delete(draftRef);
+  batch.delete(reservationDraftRef);
   await batch.commit();
   return true;
 };
