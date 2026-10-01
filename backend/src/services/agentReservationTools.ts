@@ -164,6 +164,16 @@ const normalizePhone = (value: unknown) => {
   if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) return digits;
   return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
 };
+export const leadPhoneVariants = (value: unknown) => {
+  const phone = normalizePhone(value);
+  const variants = [phone];
+  if (phone.length === 13 && phone[4] === "9") {
+    variants.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
+  } else if (phone.length === 12 && /^[6-9]$/.test(phone[4] ?? "")) {
+    variants.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
+  }
+  return Array.from(new Set(variants.filter(Boolean)));
+};
 const dateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 const parseMinutes = (value: string) => {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value);
@@ -1189,14 +1199,23 @@ export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
 };
 
 export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown) => {
-  const phone = normalizePhone(telefone);
-  if (!phone) return { atualizado: false, motivo: "telefone_invalido" };
+  const phoneVariants = leadPhoneVariants(telefone);
+  if (!phoneVariants.length) return { atualizado: false, motivo: "telefone_invalido" };
   const db = obterFirestoreAdmin();
   if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
-  const sessionId = `whatsapp_${phone}`;
-  const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
-  const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
-  const [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+  let phone = phoneVariants[0];
+  let sessionId = `whatsapp_${phone}`;
+  let draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+  let leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
+  let [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+  for (const candidate of phoneVariants.slice(1)) {
+    if (draftSnapshot.exists || leadSnapshot.exists) break;
+    phone = candidate;
+    sessionId = `whatsapp_${phone}`;
+    draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, sessionId, phone));
+    leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, sessionId, phone));
+    [draftSnapshot, leadSnapshot] = await Promise.all([draftRef.get(), leadRef.get()]);
+  }
   if (!draftSnapshot.exists && !leadSnapshot.exists) {
     return { atualizado: false, motivo: "lead_nao_encontrado" };
   }
