@@ -501,7 +501,7 @@ const agentLeadIsConfirmed = (lead: AgentLeadRecord) =>
     agentLeadSignal(lead),
   );
 const agentLeadIsClosedWithoutOpportunity = (lead: AgentLeadRecord) =>
-  /sem oportunidade|descart|irrelevante|assunto nao comercial|bloqueado/.test(
+  /duvida resolvida|atendimento concluido|sem oportunidade|descart|irrelevante|assunto nao comercial|bloqueado/.test(
     agentLeadSignal(lead),
   );
 const agentLeadIsOpen = (lead: AgentLeadRecord) =>

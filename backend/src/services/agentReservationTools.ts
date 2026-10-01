@@ -111,10 +111,12 @@ const canonicalLeadStage = (value: unknown) => {
     "pagamento_pendente",
     "concluida",
     "atendimento_humano",
+    "atendimento_concluido",
     "encerrado_sem_reserva",
   ]);
   if (exact.has(stage)) return stage;
   if (/conclu|confirmad|reserva_realizada|pagamento_aprovado/.test(stage)) return "concluida";
+  if (/atendimento_concluido|duvida_resolvida/.test(stage)) return "atendimento_concluido";
   if (/humano|atendente|handoff/.test(stage)) return "atendimento_humano";
   if (/sem_reserva|nao_convert|desist|cancel|encerrad/.test(stage)) return "encerrado_sem_reserva";
   if (/pagamento|pix|cobranca/.test(stage)) return "pagamento_pendente";
@@ -131,16 +133,27 @@ const canonicalLeadOutcome = (value: unknown) => {
     "aguardando_cliente",
     "pagamento_pendente",
     "reserva_confirmada",
+    "duvida_resolvida",
     "nao_convertido",
     "atendimento_humano",
   ]);
   if (exact.has(outcome)) return outcome;
   if (/reserva_confirm|pagamento_(aprovado|confirmado)|pago|conclu/.test(outcome)) return "reserva_confirmada";
+  if (/duvida.*resolvid|atendimento.*concluid/.test(outcome)) return "duvida_resolvida";
   if (/humano|atendente|handoff/.test(outcome)) return "atendimento_humano";
   if (/nao_convert|sem_reserva|desist|cancel|perdid/.test(outcome)) return "nao_convertido";
   if (/pagamento|pix|cobranca/.test(outcome)) return "pagamento_pendente";
   if (/aguard|sem_resposta|cliente_responder/.test(outcome)) return "aguardando_cliente";
   return "em_andamento";
+};
+export const leadAgenteEstaFinalizado = (etapa: unknown, resultado: unknown) => {
+  const stage = canonicalLeadStage(etapa);
+  const outcome = canonicalLeadOutcome(resultado);
+  return stage === "atendimento_concluido"
+    || stage === "encerrado_sem_reserva"
+    || outcome === "duvida_resolvida"
+    || outcome === "nao_convertido"
+    || outcome === "reserva_confirmada";
 };
 const nonNegativeInteger = (value: unknown, maximum = 500) => {
   const number = Number(value);
@@ -1016,7 +1029,7 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   // O mesmo documento fica visivel desde o primeiro sinal comercial e e
   // alimentado durante todo o atendimento. Pagamento pendente continua aberto;
   // a confirmacao da reserva e escrita exclusivamente pelo webhook.
-  const terminal = patch.etapa === "encerrado_sem_reserva" || patch.resultado === "nao_convertido";
+  const terminal = leadAgenteEstaFinalizado(patch.etapa, patch.resultado);
   const id = await consolidateAgentLead(db, draftRef, draft, {}, terminal, terminal);
   return {
     id,
@@ -1056,9 +1069,7 @@ export const atualizarLeadAgente = async (idValue: unknown, input: AgentLeadUpda
   if (Object.prototype.hasOwnProperty.call(input, "marketingOptIn")) patch.marketingOptIn = input.marketingOptIn === true;
   const existingData = existing.data()!;
   const merged = { ...existingData, ...patch };
-  const terminal = merged.etapa === "encerrado_sem_reserva"
-    || merged.resultado === "nao_convertido"
-    || merged.resultado === "reserva_confirmada";
+  const terminal = leadAgenteEstaFinalizado(merged.etapa, merged.resultado);
   if (terminal && existingData.finalizado !== true) {
     patch.estadoRegistro = "finalizado";
     patch.finalizado = true;
