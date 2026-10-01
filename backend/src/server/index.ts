@@ -66,6 +66,7 @@ import {
 import {
   atualizarLeadAgente,
   criarLinkCartaoAgente,
+  diagnosticarIntegridadeAgente,
   excluirLeadAgente,
   excluirRascunhoReservaAgente,
   excluirTodosLeadsAgente,
@@ -77,6 +78,7 @@ import {
   obterRascunhoReservaAgente,
   registrarInatividadeLeadAgente,
   registrarLeadAgente,
+  reservaAgenteTemConfirmacaoResumo,
   salvarRascunhoReservaAgente,
   simularReservaAgente,
 } from "../services/agentReservationTools";
@@ -155,7 +157,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-01.3-channel-quote-context',
+    build: '2026-10-01.4-agent-flow-integrity',
     timestamp: new Date().toISOString(),
   });
 });
@@ -495,6 +497,12 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
   } catch (error) {
     reservas.erro = error instanceof Error ? error.message : String(error);
   }
+  let integridade: Awaited<ReturnType<typeof diagnosticarIntegridadeAgente>> | { ok: false; erro: string };
+  try {
+    integridade = await diagnosticarIntegridadeAgente(30);
+  } catch (error) {
+    integridade = { ok: false, erro: error instanceof Error ? error.message : String(error) };
+  }
   res.json({
     ok: gateway.status < 400 && ai.status < 400 && reservas.ok,
     configuracao: {
@@ -507,6 +515,7 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
     gateway: { ok: gateway.status < 400, status: gateway.status, dados: gateway.body },
     ai: { ok: ai.status < 400, status: ai.status, dados: ai.body },
     reservas,
+    integridade,
   });
 });
 
@@ -674,6 +683,10 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
   }
   if (req.body?.creditCard || req.body?.creditCardHolderInfo) {
     res.status(400).json({ error: "AGENT_CARD_DATA_NOT_ACCEPTED" });
+    return;
+  }
+  if (!reservaAgenteTemConfirmacaoResumo(req.body ?? {})) {
+    res.status(400).json({ error: "AGENT_PAYMENT_SUMMARY_CONFIRMATION_REQUIRED" });
     return;
   }
   try {

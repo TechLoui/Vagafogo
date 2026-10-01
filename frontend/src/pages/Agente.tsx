@@ -1191,6 +1191,9 @@ function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {
   const gateway = diagnostic?.gateway && typeof diagnostic.gateway === "object" ? diagnostic.gateway as Record<string, unknown> : {};
   const ai = diagnostic?.ai && typeof diagnostic.ai === "object" ? diagnostic.ai as Record<string, unknown> : {};
   const reservations = diagnostic?.reservas && typeof diagnostic.reservas === "object" ? diagnostic.reservas as Record<string, unknown> : {};
+  const integrity = diagnostic?.integridade && typeof diagnostic.integridade === "object" ? diagnostic.integridade as Record<string, unknown> : {};
+  const integritySummary = integrity.resumo && typeof integrity.resumo === "object" ? integrity.resumo as Record<string, unknown> : {};
+  const integrityItems = Array.isArray(integrity.itens) ? integrity.itens.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
   const checks = [
     { label: "Gateway do WhatsApp", ok: gateway.ok === true },
     { label: "Backend da IA", ok: ai.ok === true },
@@ -1200,6 +1203,16 @@ function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {
   ];
   return <div className="agent-reservation-tests">
     <article className="agent-card agent-diagnostic-card"><div className="agent-card__title"><span><FaPlug /></span><div><h2>Diagnóstico dos serviços</h2><p>Confirma a ponte entre os dois Railways sem expor credenciais.</p></div></div>{loading ? <p className="agent-empty">Verificando integrações…</p> : <div className="agent-diagnostic-list">{checks.map((check) => <div className={check.ok ? "is-ok" : "is-failed"} key={check.label}><span>{check.ok ? <FaCheckCircle /> : <FaTimes />}</span><strong>{check.label}</strong><em>{check.ok ? "Pronto" : "Pendente"}</em></div>)}</div>}<button className="agent-primary" type="button" onClick={() => void load()} disabled={loading}><FaSyncAlt /> Atualizar diagnóstico</button></article>
+    <article className="agent-card agent-integrity-card">
+      <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Integridade operacional</h2><p>Compara leads, pagamentos, reservas e confirmações dos últimos 30 dias.</p></div></div>
+      {loading ? <p className="agent-empty">Analisando consistência…</p> : integrity.erro ? <p className="agent-inline-error">Não foi possível analisar: {String(integrity.erro)}</p> : <>
+        <div className={`agent-integrity-state ${integrity.ok === true ? "is-ok" : "has-issues"}`}>
+          <span>{integrity.ok === true ? <FaCheckCircle /> : <FaTimes />}</span>
+          <div><strong>{integrity.ok === true ? "Nenhuma inconsistência encontrada" : `${Number(integritySummary.total ?? integrityItems.length)} item(ns) exigem revisão`}</strong><small>{Number(integritySummary.criticas ?? 0)} crítico(s) · {Number(integritySummary.atencao ?? 0)} atenção</small></div>
+        </div>
+        {integrityItems.length > 0 ? <div className="agent-integrity-list">{integrityItems.map((item, index) => <div className={item.severidade === "critica" ? "is-critical" : "is-warning"} key={String(item.id ?? index)}><span>{item.severidade === "critica" ? "Crítico" : "Atenção"}</span><strong>{String(item.titulo ?? "Inconsistência")}</strong><p>{String(item.descricao ?? "")}</p>{item.detectadoEm ? <small>{dateTimeLabel(String(item.detectadoEm))}</small> : null}</div>)}</div> : null}
+      </>}
+    </article>
   </div>;
 }
 

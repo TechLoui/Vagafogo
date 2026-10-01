@@ -20,6 +20,7 @@ type AgentAvailabilityInput = {
   criancas?: unknown;
   naoPagantes?: unknown;
   temPet?: unknown;
+  confirmouResumo?: unknown;
   confirmouCarteirinhaBariatrica?: unknown;
   perguntasPersonalizadas?: unknown;
   telefone?: unknown;
@@ -155,6 +156,8 @@ export const leadAgenteEstaFinalizado = (etapa: unknown, resultado: unknown) => 
     || outcome === "nao_convertido"
     || outcome === "reserva_confirmada";
 };
+export const reservaAgenteTemConfirmacaoResumo = (input: Pick<AgentAvailabilityInput, "confirmouResumo">) =>
+  input.confirmouResumo === true;
 const nonNegativeInteger = (value: unknown, maximum = 500) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(maximum, Math.max(0, Math.trunc(number))) : 0;
@@ -769,6 +772,7 @@ const checkoutTokenHash = (token: string) => createHash("sha256")
   .digest("hex");
 
 export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
+  if (!reservaAgenteTemConfirmacaoResumo(input)) throw new Error("AGENT_CHECKOUT_SUMMARY_CONFIRMATION_REQUIRED");
   const availability = await simularReservaAgente(input);
   if (!availability.disponivel) {
     throw new Error(`AGENT_CHECKOUT_UNAVAILABLE:${availability.motivos.join(",")}`);
@@ -957,7 +961,7 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   if (owns(input, "participantesPorTipo")) patch.participantesPorTipo = numericMap(input.participantesPorTipo);
   if (owns(input, "idadesPorTipo")) patch.idadesPorTipo = ageMap(input.idadesPorTipo);
   if (owns(input, "perguntasPersonalizadas")) patch.perguntasPersonalizadas = customQuestionAnswers(input.perguntasPersonalizadas);
-  for (const key of ["confirmouCarteirinhaBariatrica", "temPet", "whatsappMarketingOptIn"] as const) {
+  for (const key of ["confirmouCarteirinhaBariatrica", "temPet", "whatsappMarketingOptIn", "confirmouResumo"] as const) {
     if (owns(input, key) && typeof input[key] === "boolean") patch[key] = input[key];
   }
   if (owns(input, "canalConclusao")) {
@@ -1386,6 +1390,243 @@ export const excluirLeadAgente = async (idValue: unknown) => {
   }
   await batch.commit();
   return { id, excluido: true };
+};
+
+type AgentIntegritySeverity = "critica" | "atencao";
+type AgentIntegrityIssue = {
+  id: string;
+  tipo: string;
+  severidade: AgentIntegritySeverity;
+  titulo: string;
+  descricao: string;
+  leadId?: string;
+  reservaId?: string;
+  detectadoEm?: string;
+};
+
+const integrityTimestamp = (value: unknown) => {
+  if (value && typeof value === "object") {
+    const timestamp = value as { toMillis?: () => number; toDate?: () => Date };
+    if (typeof timestamp.toMillis === "function") return timestamp.toMillis();
+    if (typeof timestamp.toDate === "function") return timestamp.toDate().getTime();
+  }
+  const parsed = new Date(value as string | number | Date).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const maskedIntegrityPhone = (value: unknown) => {
+  const phone = canonicalLeadPhone(value);
+  if (!phone) return "telefone não identificado";
+  return `final ${phone.slice(-4)}`;
+};
+
+const reservationAgentSession = (data: FirebaseFirestore.DocumentData) => {
+  const attribution = data.atribuicao && typeof data.atribuicao === "object"
+    ? data.atribuicao as Record<string, unknown>
+    : {};
+  return clean(attribution.agentSessionId ?? data.agentSessionId, 100);
+};
+
+const reservationAgentPhone = (data: FirebaseFirestore.DocumentData) => {
+  const match = /^whatsapp_(\d{10,15})$/i.exec(reservationAgentSession(data));
+  return canonicalLeadPhone(match?.[1] ?? data.telefone ?? data.Telefone);
+};
+
+const reservationCameFromAgent = (data: FirebaseFirestore.DocumentData) => {
+  const attribution = data.atribuicao && typeof data.atribuicao === "object"
+    ? data.atribuicao as Record<string, unknown>
+    : {};
+  const source = normalizeText(attribution.sourceChannel ?? data.canalOrigem);
+  const medium = normalizeText(attribution.utmMedium);
+  return source === "whatsapp" && (medium === "agente" || Boolean(reservationAgentSession(data)));
+};
+
+const reservationIsConfirmed = (data: FirebaseFirestore.DocumentData) => data.confirmada === true
+  || /^(pago|paid|confirmad[ao])$/.test(normalizeText(data.status));
+
+const reservationIntegrityDate = (document: FirebaseFirestore.QueryDocumentSnapshot) => {
+  const data = document.data();
+  return integrityTimestamp(data.dataPagamento)
+    || integrityTimestamp(data.atualizadoEm)
+    || integrityTimestamp(data.criadoEm)
+    || document.createTime.toMillis();
+};
+
+const reservationIntentKey = (data: FirebaseFirestore.DocumentData) => {
+  const offer = clean(data.comboId ?? data.pacoteId ?? data.ofertaId ?? data.atividade ?? data.Atividade, 160);
+  const date = clean(data.data ?? data.Data, 20);
+  const time = clean(data.horario ?? data.Horario, 20);
+  return [reservationAgentPhone(data), normalizeText(offer), date, time].join("|");
+};
+
+export const diagnosticarIntegridadeAgente = async (periodoDiasValue: unknown = 30) => {
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const periodoDias = Math.min(90, Math.max(1, nonNegativeInteger(periodoDiasValue, 90) || 30));
+  const cutoff = Date.now() - periodoDias * 24 * 60 * 60 * 1000;
+  const [leadSnapshot, reservationSnapshot, notificationSnapshot] = await Promise.all([
+    db.collection(AGENT_LEADS_COLLECTION).limit(1000).get(),
+    db.collection("reservas").limit(1000).get(),
+    db.collection("whatsapp_notificacoes_internas").limit(500).get(),
+  ]);
+  const issues: AgentIntegrityIssue[] = [];
+  const addIssue = (issue: AgentIntegrityIssue) => {
+    if (!issues.some((item) => item.id === issue.id)) issues.push(issue);
+  };
+
+  const leads = leadSnapshot.docs
+    .map((document) => ({ id: document.id, data: document.data() }))
+    .filter((item) => item.data.teste !== true);
+  const leadsByPhone = new Map<string, Array<{ id: string; data: FirebaseFirestore.DocumentData }>>();
+  leads.forEach((lead) => {
+    const phone = canonicalLeadPhone(lead.data.telefone);
+    if (!phone) return;
+    const group = leadsByPhone.get(phone) ?? [];
+    group.push(lead);
+    leadsByPhone.set(phone, group);
+  });
+  leadsByPhone.forEach((group, phone) => {
+    if (group.length < 2) return;
+    addIssue({
+      id: `lead-duplicado:${phone}`,
+      tipo: "lead_duplicado",
+      severidade: "critica",
+      titulo: "Mais de um lead para o mesmo contato",
+      descricao: `${group.length} registros encontrados para o ${maskedIntegrityPhone(phone)}. O fluxo deve manter apenas um lead consolidado.`,
+      leadId: group[0].id,
+    });
+  });
+
+  leads.forEach((lead) => {
+    const result = canonicalLeadOutcome(lead.data.resultado);
+    const updatedAt = integrityTimestamp(lead.data.atualizadoEm) || integrityTimestamp(lead.data.finalizadoEm);
+    if (result === "reserva_confirmada" && !clean(lead.data.reservaId, 100)) {
+      addIssue({
+        id: `lead-confirmado-sem-reserva:${lead.id}`,
+        tipo: "lead_confirmado_sem_reserva",
+        severidade: "critica",
+        titulo: "Lead confirmado sem vínculo com a reserva",
+        descricao: `O lead do ${maskedIntegrityPhone(lead.data.telefone)} está convertido, mas não possui reservaId.`,
+        leadId: lead.id,
+        detectadoEm: updatedAt ? new Date(updatedAt).toISOString() : undefined,
+      });
+    }
+    if (result === "pagamento_pendente" && updatedAt > 0 && updatedAt <= Date.now() - AGENT_LEAD_INACTIVITY_MS) {
+      addIssue({
+        id: `pagamento-pendente:${lead.id}`,
+        tipo: "pagamento_pendente",
+        severidade: "atencao",
+        titulo: "Pagamento pendente há mais de 2 horas",
+        descricao: `O ${maskedIntegrityPhone(lead.data.telefone)} está disponível para uma estratégia de recuperação.`,
+        leadId: lead.id,
+        detectadoEm: new Date(updatedAt).toISOString(),
+      });
+    }
+  });
+
+  const agentReservations = reservationSnapshot.docs.filter((document) => {
+    const data = document.data();
+    return reservationCameFromAgent(data) && reservationIntegrityDate(document) >= cutoff;
+  });
+  const reservationsByIntent = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+  agentReservations.forEach((document) => {
+    const key = reservationIntentKey(document.data());
+    if (!key.replace(/\|/g, "")) return;
+    const group = reservationsByIntent.get(key) ?? [];
+    group.push(document);
+    reservationsByIntent.set(key, group);
+  });
+  reservationsByIntent.forEach((group, key) => {
+    const confirmed = group.filter((item) => reservationIsConfirmed(item.data()));
+    const pending = group.filter((item) => !reservationIsConfirmed(item.data()));
+    if (!confirmed.length || !pending.length) return;
+    addIssue({
+      id: `reserva-provisoria-duplicada:${key}`,
+      tipo: "reserva_provisoria_duplicada",
+      severidade: "critica",
+      titulo: "Reserva confirmada com tentativa pendente duplicada",
+      descricao: `${pending.length} tentativa(s) pendente(s) devem ser consolidadas com a reserva confirmada ${confirmed[0].id}.`,
+      reservaId: confirmed[0].id,
+      detectadoEm: new Date(Math.max(...group.map(reservationIntegrityDate))).toISOString(),
+    });
+  });
+
+  for (const reservation of agentReservations) {
+    const data = reservation.data();
+    if (!reservationIsConfirmed(data)) continue;
+    const phone = reservationAgentPhone(data);
+    const matchingLead = leads.find((lead) => clean(lead.data.reservaId, 100) === reservation.id)
+      ?? (phone ? leadsByPhone.get(phone)?.find((lead) => canonicalLeadOutcome(lead.data.resultado) === "reserva_confirmada") : undefined);
+    const reservationAt = reservationIntegrityDate(reservation);
+    if (!matchingLead) {
+      addIssue({
+        id: `reserva-sem-lead:${reservation.id}`,
+        tipo: "reserva_confirmada_sem_lead",
+        severidade: "critica",
+        titulo: "Reserva paga sem lead convertido",
+        descricao: `A reserva ${reservation.id} foi confirmada pelo agente, mas o CRM não possui o lead finalizado correspondente (${maskedIntegrityPhone(phone)}).`,
+        reservaId: reservation.id,
+        detectadoEm: new Date(reservationAt).toISOString(),
+      });
+    }
+    const confirmationSent = data.whatsappAgenteConfirmacaoPagamentoEnviado === true;
+    const confirmationError = clean(data.whatsappAgenteConfirmacaoPagamentoErro, 240);
+    const confirmationLate = reservationAt <= Date.now() - 10 * 60 * 1000;
+    if (!confirmationSent && confirmationError) {
+      addIssue({
+        id: `confirmacao-erro:${reservation.id}`,
+        tipo: "confirmacao_whatsapp_erro",
+        severidade: "critica",
+        titulo: "Falha no agradecimento da reserva paga",
+        descricao: `A confirmação da reserva ${reservation.id} falhou: ${confirmationError}.`,
+        reservaId: reservation.id,
+        detectadoEm: new Date(reservationAt).toISOString(),
+      });
+    } else if (!confirmationSent && confirmationLate) {
+      addIssue({
+        id: `confirmacao-pendente:${reservation.id}`,
+        tipo: "confirmacao_whatsapp_pendente",
+        severidade: "atencao",
+        titulo: "Agradecimento ainda não enviado",
+        descricao: `A reserva ${reservation.id} está paga há mais de 10 minutos sem confirmação no WhatsApp do cliente.`,
+        reservaId: reservation.id,
+        detectadoEm: new Date(reservationAt).toISOString(),
+      });
+    }
+  }
+
+  notificationSnapshot.docs.forEach((document) => {
+    const data = document.data();
+    const eventAt = integrityTimestamp(data.atualizadoEm) || integrityTimestamp(data.erroEm) || document.createTime.toMillis();
+    if (eventAt < cutoff || normalizeText(data.status) !== "erro") return;
+    addIssue({
+      id: `aviso-interno-erro:${document.id}`,
+      tipo: "aviso_nova_reserva_erro",
+      severidade: "atencao",
+      titulo: "Aviso interno de nova reserva falhou",
+      descricao: `O aviso da reserva ${document.id} para a equipe terminou em erro: ${clean(data.ultimoErro, 240) || "motivo não informado"}.`,
+      reservaId: document.id,
+      detectadoEm: new Date(eventAt).toISOString(),
+    });
+  });
+
+  issues.sort((left, right) => {
+    if (left.severidade !== right.severidade) return left.severidade === "critica" ? -1 : 1;
+    return String(right.detectadoEm ?? "").localeCompare(String(left.detectadoEm ?? ""));
+  });
+  const criticas = issues.filter((item) => item.severidade === "critica").length;
+  const atencao = issues.length - criticas;
+  return {
+    ok: issues.length === 0,
+    periodoDias,
+    resumo: { criticas, atencao, total: issues.length },
+    itens: issues.slice(0, 50),
+    analisados: {
+      leads: leads.length,
+      reservas: agentReservations.length,
+      notificacoes: notificationSnapshot.size,
+    },
+  };
 };
 
 export const excluirTodosLeadsAgente = async () => {

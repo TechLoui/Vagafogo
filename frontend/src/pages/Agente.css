@@ -188,6 +188,26 @@
 .agent-diagnostic-list .is-ok em { color: #138153; }
 .agent-diagnostic-list .is-failed > span { background: #ffe5e7; color: #c33846; }
 .agent-diagnostic-list .is-failed em { color: #c33846; }
+.agent-diagnostic-card .agent-primary { margin-top: 14px; }
+.agent-integrity-state { display: flex; align-items: center; gap: 10px; border: 1px solid #f1d5b3; border-radius: 12px; padding: 11px 12px; background: #fff9ef; }
+.agent-integrity-state > span { width: 31px; height: 31px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; background: #ffebc9; color: #bf6c0a; }
+.agent-integrity-state strong, .agent-integrity-state small { display: block; }
+.agent-integrity-state strong { color: #5a4a35; font-size: .69rem; }
+.agent-integrity-state small { margin-top: 3px; color: #8d7a61; font-size: .56rem; }
+.agent-integrity-state.is-ok { border-color: #cde8da; background: #f0faf5; }
+.agent-integrity-state.is-ok > span { background: #d9f3e5; color: #138153; }
+.agent-integrity-state.is-ok strong { color: #25644b; }
+.agent-integrity-list { display: grid; gap: 8px; max-height: 430px; margin-top: 11px; overflow-y: auto; }
+.agent-integrity-list > div { position: relative; border: 1px solid #eadfe0; border-radius: 11px; padding: 10px 11px; background: #fdfbfb; }
+.agent-integrity-list > div > span { display: inline-block; margin-bottom: 5px; border-radius: 999px; padding: 3px 7px; font-size: .48rem; font-weight: 850; text-transform: uppercase; }
+.agent-integrity-list > div > strong, .agent-integrity-list > div > p, .agent-integrity-list > div > small { display: block; }
+.agent-integrity-list > div > strong { color: #3d5565; font-size: .65rem; }
+.agent-integrity-list > div > p { margin: 4px 0 0; color: #70838f; font-size: .57rem; line-height: 1.45; }
+.agent-integrity-list > div > small { margin-top: 5px; color: #98a5ad; font-size: .5rem; }
+.agent-integrity-list .is-critical { border-color: #efcdd2; background: #fff7f8; }
+.agent-integrity-list .is-critical > span { background: #ffe0e4; color: #ba3342; }
+.agent-integrity-list .is-warning { border-color: #efdaba; background: #fffbf3; }
+.agent-integrity-list .is-warning > span { background: #ffebc9; color: #ad650f; }
 .agent-simulation-card label { display: block; color: #587084; font-size: .64rem; font-weight: 750; }
 .agent-simulation-card input, .agent-simulation-card select { width: 100%; margin-top: 6px; border: 1px solid #d6e3e8; border-radius: 10px; padding: 10px 11px; outline: 0; background: white; color: #2e4658; font-size: .69rem; }
 .agent-simulation-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 12px; }
