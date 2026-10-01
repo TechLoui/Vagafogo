@@ -14,6 +14,7 @@ const CLIENT_STATE_COLLECTIONS = [
   "crm_leads_agente_rascunhos",
   "crm_agente_reserva_rascunhos",
 ] as const;
+const CLIENT_STATE_CLEANUP_VERSION = 2;
 
 export type AgentInternalPermission =
   | "consultarReservas"
@@ -42,6 +43,21 @@ const normalizePhone = (value: unknown) => {
   if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) digits = `55${digits}`;
   if (!/^55\d{10,11}$/.test(digits)) throw new Error("AGENT_INTERNAL_PHONE_INVALID");
   return digits;
+};
+
+// O WhatsApp ainda pode entregar celulares brasileiros pelo JID historico sem
+// o nono digito, mesmo que o numero tenha sido cadastrado no painel com ele.
+// As duas formas representam a mesma pessoa apenas para identificacao interna;
+// o numero original da sessao continua sendo usado para responder no WhatsApp.
+export const operatorPhoneVariants = (value: unknown) => {
+  const phone = normalizePhone(value);
+  const variants = [phone];
+  if (phone.length === 13 && phone[4] === "9") {
+    variants.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
+  } else if (phone.length === 12 && /^[6-9]$/.test(phone[4] ?? "")) {
+    variants.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
+  }
+  return Array.from(new Set(variants));
 };
 const normalizeDate = (value: unknown) => {
   const date = clean(value, 10);
@@ -86,10 +102,15 @@ const firestore = () => {
 };
 
 const clearClientStateForOperator = async (db: FirebaseFirestore.Firestore, phone: string) => {
+  const phoneVariants = operatorPhoneVariants(phone);
   const snapshots = await Promise.all(
-    CLIENT_STATE_COLLECTIONS.map((collection) => db.collection(collection).where("telefone", "==", phone).get()),
+    CLIENT_STATE_COLLECTIONS.flatMap((collection) => phoneVariants.map(
+      (phoneVariant) => db.collection(collection).where("telefone", "==", phoneVariant).get(),
+    )),
   );
-  const references = snapshots.flatMap((snapshot) => snapshot.docs.map((document) => document.ref));
+  const references = Array.from(new Map(
+    snapshots.flatMap((snapshot) => snapshot.docs.map((document) => [document.ref.path, document.ref] as const)),
+  ).values());
   for (let offset = 0; offset < references.length; offset += 450) {
     const batch = db.batch();
     references.slice(offset, offset + 450).forEach((reference) => batch.delete(reference));
@@ -149,6 +170,10 @@ export const salvarOperadorInternoAgente = async (
   // cliente desse telefone deixa de existir. Reservas historicas nao sao
   // apagadas; somente o estado comercial criado pelo agente.
   await clearClientStateForOperator(db, phone);
+  await ref.set({
+    limpezaIdentidadeVersao: CLIENT_STATE_CLEANUP_VERSION,
+    limpezaIdentidadeEm: FieldValue.serverTimestamp(),
+  }, { merge: true });
   const saved = await ref.get();
   return serializeOperator(saved.id, saved.data() ?? {});
 };
@@ -186,11 +211,23 @@ export const excluirOperadorInternoAgente = async (id: string) => {
 };
 
 export const obterContextoOperadorInternoAgente = async (phoneValue: unknown) => {
-  let phone = "";
-  try { phone = normalizePhone(phoneValue); } catch { return { autorizado: false }; }
-  const snapshot = await firestore().collection(OPERATORS_COLLECTION).doc(operatorId(phone)).get();
-  if (!snapshot.exists || snapshot.data()?.ativo === false) return { autorizado: false };
-  const operator = serializeOperator(snapshot.id, snapshot.data() ?? {});
+  let phoneVariants: string[] = [];
+  try { phoneVariants = operatorPhoneVariants(phoneValue); } catch { return { autorizado: false }; }
+  const db = firestore();
+  const snapshots = await Promise.all(
+    phoneVariants.map((phone) => db.collection(OPERATORS_COLLECTION).doc(operatorId(phone)).get()),
+  );
+  const snapshot = snapshots.find((candidate) => candidate.exists && candidate.data()?.ativo !== false);
+  if (!snapshot) return { autorizado: false };
+  const snapshotData = snapshot.data() ?? {};
+  const operator = serializeOperator(snapshot.id, snapshotData);
+  if (snapshotData.limpezaIdentidadeVersao !== CLIENT_STATE_CLEANUP_VERSION) {
+    await clearClientStateForOperator(db, operator.telefone);
+    await snapshot.ref.set({
+      limpezaIdentidadeVersao: CLIENT_STATE_CLEANUP_VERSION,
+      limpezaIdentidadeEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
   return {
     autorizado: true,
     operador: {

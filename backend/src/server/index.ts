@@ -635,6 +635,11 @@ app.post('/internal/agente/eventos/inbound', exigirServicoAgente, async (req, re
     res.status(400).json({ error: "AGENT_INBOUND_INVALID" });
     return;
   }
+  const operator = await obterContextoOperadorInternoAgente(telefone);
+  if (operator.autorizado) {
+    res.status(202).json({ ok: true, ignorado: 'operador_interno' });
+    return;
+  }
   await registrarRespostaCampanhaExterna({ telefone, mensagem, messageId, recebidoEm: new Date() });
   res.status(202).json({ ok: true });
 });
