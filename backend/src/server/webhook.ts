@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, query, updateDoc, where } from "firebase/firestore";
 import { db } from "../services/firebase";
 import { obterCamposRetencaoReservaNaAtualizacao } from "../services/reservaRetention";
 import { enviarEmailConfirmacaoReserva } from "../services/emailReservas";
@@ -162,12 +162,16 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
   ].join("\n").slice(0, 4096);
 };
 
-const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<string, any>) => {
+const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<string, any>, requestSuffix = "") => {
   const phone = telefoneSessaoAgente(reserva);
   if (!phone) return { enviado: false, motivo: "telefone_ausente" };
   const response = await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
     method: "POST",
-    body: { phone, text: await mensagemConfirmacaoAgente(reservaId, reserva) },
+    body: {
+      phone,
+      text: await mensagemConfirmacaoAgente(reservaId, reserva),
+      requestId: `reserva-confirmada:${reservaId}:${phone}${requestSuffix}`,
+    },
     timeoutMs: 30_000,
   });
   const body = response.body && typeof response.body === "object" ? response.body as Record<string, unknown> : {};
@@ -176,6 +180,92 @@ const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<st
     motivo: response.status < 300 ? undefined : String(body.error ?? `HTTP_${response.status}`),
     messageId: body.messageId ? String(body.messageId) : undefined,
   };
+};
+
+const confirmationRetryDelays = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+const timestampMillis = (value: any) => {
+  if (typeof value?.toMillis === "function") return Number(value.toMillis());
+  if (typeof value?.toDate === "function") return Number(value.toDate().getTime());
+  const parsed = new Date(value ?? 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+export const processarConfirmacaoReservaAgente = async (reservaId: string, force = false) => {
+  const reservaRef = doc(db, "reservas", reservaId);
+  const snapshot = await getDoc(reservaRef);
+  if (!snapshot.exists()) return { enviado: false, motivo: "reserva_nao_encontrada" };
+  const reserva = snapshot.data() as Record<string, any>;
+  if (!reservaVeioDoAgente(reserva) || reserva.status !== "pago" || reserva.confirmada !== true) {
+    await updateDoc(reservaRef, { whatsappAgenteConfirmacaoPagamentoPendente: false }).catch(() => undefined);
+    return { enviado: false, motivo: "reserva_nao_elegivel" };
+  }
+  const phone = telefoneSessaoAgente(reserva);
+  if (!phone) return { enviado: false, motivo: "telefone_ausente" };
+  if (!force && reserva.whatsappAgenteConfirmacaoPagamentoEnviado === true
+    && String(reserva.whatsappAgenteConfirmacaoPagamentoTelefone ?? "") === phone) {
+    await updateDoc(reservaRef, { whatsappAgenteConfirmacaoPagamentoPendente: false }).catch(() => undefined);
+    return { enviado: false, motivo: "ja_enviado" };
+  }
+  const nextAttemptAt = timestampMillis(reserva.whatsappAgenteConfirmacaoPagamentoProximaTentativaEm);
+  if (!force && nextAttemptAt > Date.now()) return { enviado: false, motivo: "aguardando_nova_tentativa" };
+
+  const attempts = Math.max(0, Number(reserva.whatsappAgenteConfirmacaoPagamentoTentativas ?? 0));
+  const resultado = await enviarConfirmacaoPeloAgente(reservaId, reserva, force ? `:manual:${Date.now()}` : "");
+  if (resultado.enviado) {
+    await updateDoc(reservaRef, {
+      whatsappAgenteConfirmacaoPagamentoEnviado: true,
+      whatsappAgenteConfirmacaoPagamentoEm: new Date(),
+      whatsappAgenteConfirmacaoPagamentoTelefone: phone,
+      whatsappAgenteConfirmacaoPagamentoMessageId: resultado.messageId ?? null,
+      whatsappAgenteConfirmacaoPagamentoPendente: false,
+      whatsappAgenteConfirmacaoPagamentoErro: null,
+      whatsappAgenteConfirmacaoPagamentoErroEm: null,
+      whatsappAgenteConfirmacaoPagamentoProximaTentativaEm: null,
+      whatsappAgenteConfirmacaoPagamentoTentativas: attempts + 1,
+    });
+    return resultado;
+  }
+
+  const blocked = resultado.motivo === "CONTACT_BLOCKED";
+  const retryDelay = confirmationRetryDelays[Math.min(attempts, confirmationRetryDelays.length - 1)];
+  await updateDoc(reservaRef, {
+    whatsappAgenteConfirmacaoPagamentoPendente: !blocked,
+    whatsappAgenteConfirmacaoPagamentoTelefone: phone,
+    whatsappAgenteConfirmacaoPagamentoErro: resultado.motivo ?? "erro",
+    whatsappAgenteConfirmacaoPagamentoErroEm: new Date(),
+    whatsappAgenteConfirmacaoPagamentoProximaTentativaEm: blocked ? null : new Date(Date.now() + retryDelay),
+    whatsappAgenteConfirmacaoPagamentoTentativas: attempts + 1,
+  });
+  return resultado;
+};
+
+let confirmationProcessorStarted = false;
+let confirmationProcessorRunning = false;
+export const iniciarProcessadorConfirmacoesReservaAgente = () => {
+  if (confirmationProcessorStarted) return;
+  confirmationProcessorStarted = true;
+  const run = async () => {
+    if (confirmationProcessorRunning) return;
+    confirmationProcessorRunning = true;
+    try {
+      const snapshot = await getDocs(query(
+        collection(db, "reservas"),
+        where("whatsappAgenteConfirmacaoPagamentoPendente", "==", true),
+        limit(10),
+      ));
+      for (const reservation of snapshot.docs) {
+        await processarConfirmacaoReservaAgente(reservation.id).catch((error) => {
+          console.error(`[webhook] Falha ao reprocessar confirmacao ${reservation.id}:`, error);
+        });
+      }
+    } catch (error) {
+      console.error("[webhook] Falha no processador de confirmacoes do Agente:", error);
+    } finally {
+      confirmationProcessorRunning = false;
+    }
+  };
+  setTimeout(() => void run(), 20_000).unref();
+  setInterval(() => void run(), 60_000).unref();
 };
 
 const router = Router();
@@ -323,19 +413,13 @@ async function handleWebhook(payload: WebhookPayload) {
       telefoneSessaoAgente(reservaExistente),
       externalReference,
       payment?.id,
+      [reservaExistente.telefone, reservaExistente.Telefone],
     ).catch((error) => console.error(`[webhook] Falha ao concluir lead do Agente ${externalReference}:`, error));
-    if (!reservaExistente.whatsappAgenteConfirmacaoPagamentoEnviado) {
-      const resultado = await enviarConfirmacaoPeloAgente(externalReference, reserva);
-      await updateDoc(reservaRef, resultado.enviado ? {
-        whatsappAgenteConfirmacaoPagamentoEnviado: true,
-        whatsappAgenteConfirmacaoPagamentoEm: new Date(),
-        whatsappAgenteConfirmacaoPagamentoMessageId: resultado.messageId ?? null,
-      } : {
-        whatsappAgenteConfirmacaoPagamentoErro: resultado.motivo ?? "erro",
-        whatsappAgenteConfirmacaoPagamentoErroEm: new Date(),
-      }).catch(() => undefined);
-      console.log(`[webhook] Confirmacao pelo Agente ${resultado.enviado ? "enviada" : "nao enviada"} para ${externalReference}: ${resultado.motivo ?? "ok"}.`);
-    }
+    await updateDoc(reservaRef, {
+      whatsappAgenteConfirmacaoPagamentoPendente: true,
+    }).catch(() => undefined);
+    const resultado = await processarConfirmacaoReservaAgente(externalReference);
+    console.log(`[webhook] Confirmacao pelo Agente ${resultado.enviado ? "enviada" : "nao enviada"} para ${externalReference}: ${resultado.motivo ?? "ok"}.`);
   } else {
     // Reservas do site continuam usando o disparador transacional do Vagafogo.
     void enviarConfirmacaoWhatsapp(externalReference, reserva)

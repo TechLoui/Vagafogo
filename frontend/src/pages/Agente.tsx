@@ -79,6 +79,9 @@ type AgentConfig = {
   typingMsPerChar: number;
   typingMinMs: number;
   typingMaxMs: number;
+  followupStartTime: string;
+  followupEndTime: string;
+  followupTimezone: string;
 };
 
 type AgentLead = {
@@ -240,11 +243,16 @@ export function Agente() {
   const [leadsError, setLeadsError] = useState("");
   const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const selectedJidRef = useRef<string | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
   const selected = useMemo(() => contacts.find((item) => item.jid === selectedJid) ?? null, [contacts, selectedJid]);
   const operational = Boolean(status.ready && status.contactControls?.ready !== false);
+
+  useEffect(() => {
+    selectedJidRef.current = selectedJid;
+  }, [selectedJid]);
 
   const loadStatus = useCallback(async (quiet = false) => {
     if (!quiet) setStatusLoading(true);
@@ -440,12 +448,27 @@ export function Agente() {
                 } catch (caught) { showError(caught); }
               }}
               onSend={async (jid, text) => {
+                const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                  ? `manual-${crypto.randomUUID()}`
+                  : `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                const optimisticId = `pending-${requestId}`;
+                if (selectedJidRef.current === jid) {
+                  setMessages((current) => [...current, { id: optimisticId, from: "agent", text, ts: Date.now() }]);
+                }
                 try {
-                  await api(`/crm/agente/contatos/${encodeURIComponent(jid)}/enviar`, { method: "POST", body: JSON.stringify({ text }) });
+                  await api(`/crm/agente/contatos/${encodeURIComponent(jid)}/enviar`, { method: "POST", body: JSON.stringify({ text, requestId }) });
                   const data = await api(`/crm/agente/contatos/${encodeURIComponent(jid)}/mensagens`) as { messages?: Message[] };
-                  setMessages(Array.isArray(data.messages) ? data.messages : []);
+                  if (selectedJidRef.current === jid) {
+                    setMessages(Array.isArray(data.messages) ? data.messages : []);
+                  }
                   await loadContacts(true);
-                } catch (caught) { showError(caught); throw caught; }
+                } catch (caught) {
+                  if (selectedJidRef.current === jid) {
+                    setMessages((current) => current.filter((message) => message.id !== optimisticId));
+                  }
+                  showError(caught);
+                  throw caught;
+                }
               }}
               onCloseSession={async (contact) => {
                 try {
@@ -520,6 +543,7 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
   const [recordState, setRecordState] = useState("all");
   const [editing, setEditing] = useState<AgentLead | null>(null);
   const [saving, setSaving] = useState(false);
+  const [resendingConfirmation, setResendingConfirmation] = useState<string | null>(null);
   const outcomes = useMemo(() => Array.from(new Set(leads.map((lead) => lead.outcome))).sort(), [leads]);
   const filtered = useMemo(() => leads.filter((lead) => {
     if (outcome !== "all" && lead.outcome !== outcome) return false;
@@ -569,6 +593,19 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
     }
   };
 
+  const resendConfirmation = async (lead: AgentLead) => {
+    if (!lead.reservationId || resendingConfirmation) return;
+    setResendingConfirmation(lead.id);
+    try {
+      await api(`/crm/agente/reservas/${encodeURIComponent(lead.reservationId)}/reenviar-confirmacao`, { method: "POST" });
+      onMessage("Confirmação da reserva reenviada pelo WhatsApp do agente.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setResendingConfirmation(null);
+    }
+  };
+
   return <section className="agent-leads">
     <div className="agent-lead-metrics">
       <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>{testCount} de teste</span></article>
@@ -588,7 +625,7 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
         <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><div className="agent-lead-badges">{lead.isTest ? <em className="is-test">TESTE</em> : null}<em className={`is-record-${lead.recordState}`}>{lead.recordState === "finalizado" ? "Finalizado" : lead.recordState === "aguardando_pagamento" ? "Aguardando pagamento" : "Em atendimento"}</em><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
         <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span><span><small>{lead.isFinalized ? "Finalização" : "Fechamento por inatividade"}</small><strong>{dateTimeLabel(lead.isFinalized ? lead.finalizedAt : lead.finalizeAt)}</strong></span></div>
         {lead.summary ? <p>{lead.summary}</p> : null}
-        <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}<button className="agent-link" onClick={() => setEditing({ ...lead })}><FaEdit /> Gerenciar</button><button className="agent-link is-danger" onClick={() => void deleteLead(lead)}><FaTrash /> Excluir</button></footer>
+        <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}{lead.reservationId ? <button className="agent-link" disabled={resendingConfirmation === lead.id} onClick={() => void resendConfirmation(lead)}><FaPaperPlane /> {resendingConfirmation === lead.id ? "Reenviando…" : "Reenviar confirmação"}</button> : null}<button className="agent-link" onClick={() => setEditing({ ...lead })}><FaEdit /> Gerenciar</button><button className="agent-link is-danger" onClick={() => void deleteLead(lead)}><FaTrash /> Excluir</button></footer>
       </article>)}</div>}
     </article>
     {editing ? <div className="agent-modal-backdrop" onClick={() => !saving && setEditing(null)}><article className="agent-modal agent-lead-editor" onClick={(event) => event.stopPropagation()}><header><div><small>GERENCIAR LEAD</small><h2>{editing.name || formatPhone(editing.phone)}</h2>{editing.isTest ? <span className="agent-test-badge">Lead de teste</span> : null}</div><button onClick={() => setEditing(null)} disabled={saving} aria-label="Fechar"><FaTimes /></button></header><div className="agent-lead-editor__grid"><label>Nome<input value={editing.name || ""} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>Etapa<select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{["contato_iniciado", "interesse_identificado", "cotacao", "dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "concluida", "atendimento_humano", "encerrado_sem_reserva"].map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select></label><label>Resultado<select value={editing.outcome} onChange={(event) => setEditing({ ...editing, outcome: event.target.value })}>{["em_andamento", "aguardando_cliente", "pagamento_pendente", "reserva_confirmada", "nao_convertido", "atendimento_humano"].map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select></label><label>Motivo<input value={editing.reason || ""} onChange={(event) => setEditing({ ...editing, reason: event.target.value })} /></label><label className="is-wide">Próxima ação<input value={editing.nextAction || ""} onChange={(event) => setEditing({ ...editing, nextAction: event.target.value })} /></label><label className="agent-check is-wide"><input type="checkbox" checked={editing.marketingOptIn} onChange={(event) => setEditing({ ...editing, marketingOptIn: event.target.checked })} /> Opt-in de marketing confirmado</label></div><footer><button className="agent-link" onClick={() => setEditing(null)} disabled={saving}>Cancelar</button><button className="agent-primary" onClick={() => void saveLead()} disabled={saving}><FaSave />{saving ? "Salvando…" : "Salvar alterações"}</button></footer></article></div> : null}
@@ -618,6 +655,8 @@ function Sessions(props: SessionsProps) {
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const sendLockRef = useRef(false);
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     if (!props.selected) return;
@@ -626,8 +665,21 @@ function Sessions(props: SessionsProps) {
   }, [props.selected, props.onRefreshMessages]);
 
   useEffect(() => {
-    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [props.messages]);
+    stickToBottomRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.selected?.jid]);
+
+  const lastMessageId = props.messages.at(-1)?.id;
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [lastMessageId, props.messages.length]);
 
   const filtered = props.contacts.filter((item) => {
     const haystack = `${contactName(item)} ${contactPhone(item)} ${item.lastMessage || ""}`.toLowerCase();
@@ -644,9 +696,19 @@ function Sessions(props: SessionsProps) {
 
   const send = async () => {
     const text = reply.trim();
-    if (!props.selected || !text) return;
+    if (!props.selected || !text || sendLockRef.current) return;
+    sendLockRef.current = true;
+    stickToBottomRef.current = true;
+    setReply("");
     setSending(true);
-    try { await props.onSend(props.selected.jid, text); setReply(""); } finally { setSending(false); }
+    try {
+      await props.onSend(props.selected.jid, text);
+    } catch {
+      setReply((current) => current || text);
+    } finally {
+      sendLockRef.current = false;
+      setSending(false);
+    }
   };
 
   return <section className="agent-sessions">
@@ -670,8 +732,15 @@ function Sessions(props: SessionsProps) {
           <button className="is-close" title="Encerrar sessão e finalizar lead" onClick={() => props.onCloseSession(props.selected!)}><FaTrash /></button>
         </div></header>
         {contactMode(props.selected) === "blocked" ? <div className="agent-blocked-banner"><FaBan /><span><strong>Contato bloqueado</strong>O bot e os envios manuais não mandarão mensagens para este número.</span></div> : null}
-        <div className="agent-thread-scroll" ref={threadRef}>{props.messages.length === 0 ? <p className="agent-empty">Sem mensagens na memória desta instância.</p> : props.messages.map((message) => <div key={message.id} className={`agent-bubble-row from-${message.from}`}><div><small>{message.from === "client" ? contactName(props.selected) : message.from === "agent" ? "Atendente" : "Bot"}</small><p>{message.text}</p><time>{timeLabel(message.ts)}</time></div></div>)}</div>
-        <footer>{contactMode(props.selected) !== "human" ? <p>{contactMode(props.selected) === "blocked" ? "Desbloqueie o contato antes de enviar." : "Assuma o atendimento para responder manualmente."}</p> : <><input value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(); }} placeholder="Responder como atendente…" /><button onClick={() => void send()} disabled={sending || !reply.trim()}><FaPaperPlane /></button></>}</footer>
+        <div className="agent-thread-scroll" ref={threadRef} onScroll={(event) => {
+          const element = event.currentTarget;
+          stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 72;
+        }}>{props.messages.length === 0 ? <p className="agent-empty">Sem mensagens na memória desta instância.</p> : props.messages.map((message) => <div key={message.id} className={`agent-bubble-row from-${message.from}`}><div><small>{message.from === "client" ? contactName(props.selected) : message.from === "agent" ? "Atendente" : "Bot"}</small><p>{message.text}</p><time>{timeLabel(message.ts)}</time></div></div>)}</div>
+        <footer>{contactMode(props.selected) !== "human" ? <p>{contactMode(props.selected) === "blocked" ? "Desbloqueie o contato antes de enviar." : "Assuma o atendimento para responder manualmente."}</p> : <><input value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          if (!event.repeat) void send();
+        }} placeholder="Responder como atendente…" /><button onClick={() => void send()} disabled={sending || !reply.trim()}><FaPaperPlane /></button></>}</footer>
       </>}
     </div>
   </section>;
@@ -878,10 +947,32 @@ function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {
 }
 
 function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => void; onError: (error: unknown) => void }) {
-  const [config, setConfig] = useState<AgentConfig>({ typingEnabled: true, replyDelayMs: 0, typingMsPerChar: 45, typingMinMs: 1500, typingMaxMs: 9000 });
+  const [config, setConfig] = useState<AgentConfig>({
+    typingEnabled: true,
+    replyDelayMs: 0,
+    typingMsPerChar: 45,
+    typingMinMs: 1500,
+    typingMaxMs: 9000,
+    followupStartTime: "07:45",
+    followupEndTime: "18:00",
+    followupTimezone: "America/Sao_Paulo",
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   useEffect(() => { api("/crm/agente/config").then((data) => setConfig((current) => ({ ...current, ...(data as Partial<AgentConfig>) }))).catch(onError).finally(() => setLoading(false)); }, [onError]);
   const field = (label: string, key: keyof AgentConfig, divisor = 1) => <label>{label}<input type="number" min="0" step={divisor === 1000 ? .5 : 5} value={Number(config[key]) / divisor} onChange={(event) => setConfig((current) => ({ ...current, [key]: Math.round(Number(event.target.value) * divisor) }))} /></label>;
-  return <article className="agent-card agent-settings"><div className="agent-card__title"><span><FaCog /></span><div><h2>Ritmo das respostas</h2><p>Essas configurações se aplicam ao atendimento automático.</p></div></div>{loading ? <p>Carregando…</p> : <><label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes de cada resposta.</small></div></label><div className="agent-settings-grid">{field("Atraso antes de responder (s)", "replyDelayMs", 1000)}{field("Digitação mínima (s)", "typingMinMs", 1000)}{field("Digitação máxima (s)", "typingMaxMs", 1000)}{field("Velocidade (ms por caractere)", "typingMsPerChar")}</div><button className="agent-primary" disabled={saving} onClick={async () => { setSaving(true); try { await api("/crm/agente/config", { method: "POST", body: JSON.stringify(config) }); onMessage("Configuração salva."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar configurações"}</button></>}</article>;
+  return <article className="agent-card agent-settings">
+    <div className="agent-card__title"><span><FaCog /></span><div><h2>Comportamento de envio</h2><p>Ritmo das respostas e horário permitido para retomadas automáticas.</p></div></div>
+    {loading ? <p>Carregando…</p> : <>
+      <label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes de cada resposta.</small></div></label>
+      <div className="agent-settings-grid">{field("Atraso antes de responder (s)", "replyDelayMs", 1000)}{field("Digitação mínima (s)", "typingMinMs", 1000)}{field("Digitação máxima (s)", "typingMaxMs", 1000)}{field("Velocidade (ms por caractere)", "typingMsPerChar")}</div>
+      <div className="agent-card__title"><span><FaComments /></span><div><h2>Janela de retomadas</h2><p>Lembretes por falta de resposta ficam retidos fora deste período e saem na próxima janela.</p></div></div>
+      <div className="agent-settings-grid">
+        <label>Início permitido<input type="time" value={config.followupStartTime} onChange={(event) => setConfig((current) => ({ ...current, followupStartTime: event.target.value }))} /></label>
+        <label>Fim permitido<input type="time" value={config.followupEndTime} onChange={(event) => setConfig((current) => ({ ...current, followupEndTime: event.target.value }))} /></label>
+        <label>Fuso horário<select value={config.followupTimezone} onChange={(event) => setConfig((current) => ({ ...current, followupTimezone: event.target.value }))}><option value="America/Sao_Paulo">Brasília — America/Sao_Paulo</option></select></label>
+      </div>
+      <button className="agent-primary" disabled={saving || !config.followupStartTime || !config.followupEndTime} onClick={async () => { setSaving(true); try { await api("/crm/agente/config", { method: "POST", body: JSON.stringify(config) }); onMessage("Configuração salva."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar configurações"}</button>
+    </>}
+  </article>;
 }

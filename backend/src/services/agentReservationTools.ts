@@ -1192,7 +1192,12 @@ export const iniciarFinalizadorLeadsAgente = () => {
   setInterval(run, AGENT_LEAD_FINALIZER_INTERVAL_MS).unref();
 };
 
-export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId: unknown, pagamentoId?: unknown) => {
+export const concluirLeadAgenteComReserva = async (
+  telefone: unknown,
+  reservaId: unknown,
+  pagamentoId?: unknown,
+  telefonesAlternativos: unknown[] = [],
+) => {
   const phone = normalizePhone(telefone);
   const reservationId = clean(reservaId, 100);
   if (!phone || !reservationId) return false;
@@ -1206,16 +1211,39 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
   const reservationDraftRef = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
     .doc(agentReservationDraftId(false, sessionId, phone));
   const existing = await leadRef.get();
-  const base = draftSnapshot.exists ? finalLeadDataFromDraft(draftSnapshot.data()!) : {
+  const aliasPhones = Array.from(new Set(telefonesAlternativos.map(normalizePhone).filter((value) => value && value !== phone))).slice(0, 5);
+  const aliasEntries = await Promise.all(aliasPhones.map(async (aliasPhone) => {
+    const aliasSessionId = `whatsapp_${aliasPhone}`;
+    const aliasLeadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(false, aliasSessionId, aliasPhone));
+    const aliasDraftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(agentLeadDraftId(false, aliasSessionId, aliasPhone));
+    const aliasReservationDraftRef = db.collection(AGENT_RESERVATION_DRAFTS_COLLECTION)
+      .doc(agentReservationDraftId(false, aliasSessionId, aliasPhone));
+    const [aliasLead, aliasDraft] = await Promise.all([aliasLeadRef.get(), aliasDraftRef.get()]);
+    return { aliasPhone, aliasLeadRef, aliasDraftRef, aliasReservationDraftRef, aliasLead, aliasDraft };
+  }));
+  const base: FirebaseFirestore.DocumentData = {};
+  const mergeMeaningful = (source?: FirebaseFirestore.DocumentData) => {
+    if (!source) return;
+    Object.entries(source).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") return;
+      if (Array.isArray(value) && value.length === 0) return;
+      base[key] = value;
+    });
+  };
+  aliasEntries.forEach((entry) => {
+    if (entry.aliasLead.exists) mergeMeaningful(entry.aliasLead.data());
+    if (entry.aliasDraft.exists) mergeMeaningful(finalLeadDataFromDraft(entry.aliasDraft.data()!));
+  });
+  if (existing.exists) mergeMeaningful(existing.data());
+  if (draftSnapshot.exists) mergeMeaningful(finalLeadDataFromDraft(draftSnapshot.data()!));
+  const batch = db.batch();
+  batch.set(leadRef, {
+    ...base,
     canal: "whatsapp",
     teste: false,
     origem: "agente_whatsapp",
     telefone: phone,
     sessionId,
-  };
-  const batch = db.batch();
-  batch.set(leadRef, {
-    ...base,
     etapa: "concluida",
     resultado: "reserva_confirmada",
     motivo: null,
@@ -1227,18 +1255,23 @@ export const concluirLeadAgenteComReserva = async (telefone: unknown, reservaId:
     finalizarApos: null,
     atualizadoEm: FieldValue.serverTimestamp(),
     finalizadoEm: FieldValue.serverTimestamp(),
-    ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+    ...(base.criadoEm ? {} : { criadoEm: FieldValue.serverTimestamp() }),
   }, { merge: true });
   if (draftSnapshot.exists) batch.delete(draftRef);
   batch.delete(reservationDraftRef);
+  aliasEntries.forEach((entry) => {
+    if (entry.aliasLead.exists) batch.delete(entry.aliasLeadRef);
+    if (entry.aliasDraft.exists) batch.delete(entry.aliasDraftRef);
+    batch.delete(entry.aliasReservationDraftRef);
+  });
   await batch.commit();
-  const checkoutSnapshot = await db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION)
-    .where("telefone", "==", phone)
-    .limit(50)
-    .get();
-  if (!checkoutSnapshot.empty) {
+  const checkoutSnapshots = await Promise.all([phone, ...aliasPhones].map((checkoutPhone) =>
+    db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION).where("telefone", "==", checkoutPhone).limit(50).get()
+  ));
+  const checkoutDocuments = checkoutSnapshots.flatMap((snapshot) => snapshot.docs);
+  if (checkoutDocuments.length > 0) {
     const checkoutBatch = db.batch();
-    checkoutSnapshot.docs.forEach((document) => checkoutBatch.delete(document.ref));
+    checkoutDocuments.forEach((document) => checkoutBatch.delete(document.ref));
     await checkoutBatch.commit();
   }
   return true;

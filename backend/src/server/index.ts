@@ -2,7 +2,10 @@ import express, { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
 import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
-import webhookRouter from "./webhook";
+import webhookRouter, {
+  iniciarProcessadorConfirmacoesReservaAgente,
+  processarConfirmacaoReservaAgente,
+} from "./webhook";
 import apiRouter from "./api";
 import {
   iniciarLimpezaAutomaticaReservas,
@@ -280,14 +283,24 @@ app.post('/crm/agente/contatos/:jid/modo', exigirAdminCrm, async (req, res) => {
 
 app.post('/crm/agente/contatos/:jid/enviar', exigirAdminCrm, async (req, res) => {
   const text = String(req.body?.text ?? "").trim().slice(0, 4096);
+  const requestId = String(req.body?.requestId ?? "").trim().slice(0, 160);
   if (!text) {
     res.status(400).json({ error: "Mensagem vazia." });
     return;
   }
   responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/send", {
     method: "POST",
-    body: { jid: req.params.jid, text },
+    body: { jid: req.params.jid, text, requestId },
   }));
+});
+
+app.post('/crm/agente/reservas/:id/reenviar-confirmacao', exigirAdminCrm, async (req, res) => {
+  try {
+    const resultado = await processarConfirmacaoReservaAgente(String(req.params.id ?? "").slice(0, 100), true);
+    res.status(resultado.enviado || resultado.motivo === "ja_enviado" ? 200 : 409).json(resultado);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.delete('/crm/agente/contatos/:jid/sessao', exigirAdminCrm, async (req, res) => {
@@ -986,6 +999,7 @@ app.listen(port, () => {
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
+  iniciarProcessadorConfirmacoesReservaAgente();
   logarConfigWhatsapp();
 
   // Monitor de memoria — encerra WhatsApp se RSS passar do limite (default 700MB)
