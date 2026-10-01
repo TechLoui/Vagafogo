@@ -23,8 +23,50 @@ import {
 import { enfileirarAvisoNovaReservaEquipe } from "./whatsappReservationAlerts";
 import { registrarConclusaoJornadaReserva } from "./crmJourneys";
 import { registrarResultadoCampanhaReserva } from "./whatsappCampaigns";
+import { obterFirestoreAdmin } from "./firebaseAdmin";
+import { concluirLeadAgenteComReserva } from "./agentReservationTools";
 
 const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
+
+const telefoneSessaoAgente = (
+  atribuicao: AtribuicaoReservaPayload | undefined,
+  telefone: unknown,
+) => {
+  const sessionId = String(atribuicao?.agentSessionId ?? "").trim();
+  const sessionPhone = /^whatsapp_(\d{10,15})$/i.exec(sessionId)?.[1];
+  return sessionPhone || String(telefone ?? "").replace(/\D/g, "").slice(0, 15);
+};
+
+const reservaVeioDoAgente = (atribuicao?: AtribuicaoReservaPayload) =>
+  String(atribuicao?.sourceChannel ?? "").toLowerCase() === "whatsapp" &&
+  (String(atribuicao?.utmMedium ?? "").toLowerCase() === "agente" ||
+    /^whatsapp_\d{10,15}$/i.test(String(atribuicao?.agentSessionId ?? "")));
+
+const removerReservaProvisoria = async (reservaId: string, motivo: string) => {
+  const adminDb = obterFirestoreAdmin();
+  try {
+    if (!adminDb) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+    const batch = adminDb.batch();
+    batch.delete(adminDb.collection("whatsapp_notificacoes_internas").doc(reservaId));
+    batch.delete(adminDb.collection("reservas").doc(reservaId));
+    await batch.commit();
+    console.log(`[pagamento] Reserva provisoria ${reservaId} removida (${motivo}).`);
+    return true;
+  } catch (error) {
+    console.error(
+      `[pagamento] Falha ao remover reserva provisoria ${reservaId}:`,
+      error,
+    );
+    await updateDoc(doc(db, "reservas", reservaId), {
+      status: "recusado",
+      confirmada: false,
+      statusPagamentoIntegracao: "recusado",
+      motivoFalhaPagamento: motivo.slice(0, 300),
+      ...obterCamposRetencaoReservaNaAtualizacao({ status: "recusado" }),
+    }).catch(() => undefined);
+    return false;
+  }
+};
 
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
@@ -672,6 +714,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
   let paymentAttempt: PaymentAttemptContext | null = null;
   let paymentCreationStarted = false;
+  let provisionalReservationId: string | null = null;
 
   try {
     const disponibilidadeRef = doc(db, "disponibilidade", data);
@@ -912,30 +955,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       atribuicao,
       whatsappMarketingOptIn,
     });
+    provisionalReservationId = reservaId;
     console.log("✅ Reserva criada com ID:", reservaId);
-
-    void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, false).catch((error) => {
-      console.error(`[crm][campanha] Falha ao atribuir reserva ${reservaId}:`, error);
-    });
-
-    void registrarConclusaoJornadaReserva(atribuicao?.sessionId, reservaId).catch((error) => {
-      console.error(`[crm][jornada] Falha ao concluir jornada ${reservaId}:`, error);
-    });
-
-    void enfileirarAvisoNovaReservaEquipe(reservaId, {
-      nome,
-      email,
-      telefone,
-      atividade,
-      valor,
-      data,
-      horario: horarioFormatado,
-      participantes: participantesConsiderados,
-      formaPagamento: billingType,
-      status: "aguardando",
-    }).catch((error) => {
-      console.error(`[whatsapp][aviso-reserva] Falha ao enfileirar ${reservaId}:`, error);
-    });
 
     const dataHoje = new Date().toISOString().split("T")[0];
     const splitConfig = getSplitConfig();
@@ -998,6 +1019,8 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
             httpStatus: 400,
             body: errorResponse,
           });
+          await removerReservaProvisoria(reservaId, "cliente_asaas_recusado");
+          provisionalReservationId = null;
           res.status(400).json(errorResponse);
           return;
         }
@@ -1082,6 +1105,16 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
           httpStatus: 400,
           body: errorResponse,
         });
+        if (!cobrancaData?.id) {
+          await removerReservaProvisoria(reservaId, "cobranca_asaas_recusada");
+          provisionalReservationId = null;
+        } else {
+          await updateDoc(doc(db, "reservas", reservaId), {
+            asaasPaymentId: cobrancaData.id,
+            formaPagamento: billingType,
+            statusPagamentoIntegracao: "verificacao_pendente",
+          }).catch(() => undefined);
+        }
         res.status(400).json(errorResponse);
         return;
       }
@@ -1120,10 +1153,36 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     await updateDoc(doc(db, "reservas", reservaId), {
       asaasPaymentId: cobrancaData.id,
       formaPagamento: billingType,
+      statusPagamentoIntegracao: "cobranca_criada",
     });
-
+    provisionalReservationId = null;
     const statusPagamento = String(cobrancaData.status ?? "").toUpperCase();
     const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusPagamento);
+
+    // O CRM e os disparadores so recebem a reserva depois que o provedor
+    // aceitou a cobranca. Uma tentativa recusada nao e uma reserva valida.
+    void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, false).catch((error) => {
+      console.error(`[crm][campanha] Falha ao atribuir reserva ${reservaId}:`, error);
+    });
+
+    void registrarConclusaoJornadaReserva(atribuicao?.sessionId, reservaId).catch((error) => {
+      console.error(`[crm][jornada] Falha ao concluir jornada ${reservaId}:`, error);
+    });
+
+    void enfileirarAvisoNovaReservaEquipe(reservaId, {
+      nome,
+      email,
+      telefone,
+      atividade,
+      valor,
+      data,
+      horario: horarioFormatado,
+      participantes: participantesConsiderados,
+      formaPagamento: billingType,
+      status: pagamentoConfirmado ? "pago" : "aguardando",
+    }).catch((error) => {
+      console.error(`[whatsapp][aviso-reserva] Falha ao enfileirar ${reservaId}:`, error);
+    });
 
     if (pagamentoConfirmado) {
       void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, true).catch((error) => {
@@ -1139,12 +1198,26 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
           status: "pago",
           confirmada: true,
           dataPagamento: new Date(),
+          ...(reservaVeioDoAgente(atribuicao)
+            ? { whatsappAgenteConfirmacaoPagamentoPendente: true }
+            : {}),
           ...obterCamposRetencaoReservaNaAtualizacao({
             status: "pago",
             confirmada: true,
             criadoEm: reservaExistente.criadoEm,
           }),
         });
+
+        if (reservaVeioDoAgente(atribuicao)) {
+          await concluirLeadAgenteComReserva(
+            telefoneSessaoAgente(atribuicao, telefone),
+            reservaId,
+            cobrancaData.id,
+            [telefone],
+          ).catch((error) => {
+            console.error(`[crm][agente] Falha ao concluir lead ${reservaId}:`, error);
+          });
+        }
 
         const resultadoEmail = await enviarEmailConfirmacaoReserva(reservaId, {
           nome,
@@ -1228,6 +1301,23 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     res.status(200).json(resposta);
   } catch (error) {
     console.error("🔥 Erro inesperado ao criar cobrança:", error);
+    if (provisionalReservationId) {
+      if (!paymentCreationStarted) {
+        await removerReservaProvisoria(
+          provisionalReservationId,
+          "falha_antes_do_envio_ao_asaas",
+        );
+        provisionalReservationId = null;
+      } else {
+        // Se a resposta do POST se perdeu, a cobranca pode existir no Asaas.
+        // Mantemos o registro para reconciliacao e bloqueamos a repeticao
+        // imediata pela mesma chave idempotente.
+        await updateDoc(doc(db, "reservas", provisionalReservationId), {
+          statusPagamentoIntegracao: "verificacao_pendente",
+          pagamentoVerificacaoPendenteEm: new Date(),
+        }).catch(() => undefined);
+      }
+    }
     if (paymentAttempt) {
       try {
         // Depois que o POST ao adquirente comecou, uma falha de rede e ambigua:

@@ -20,6 +20,26 @@ type ReservaRetentionSnapshot = {
   expiraEmLimpeza?: unknown;
 };
 
+type ReservaConsistenciaSnapshot = ReservaRetentionSnapshot & {
+  asaasPaymentId?: unknown;
+  pagamentoId?: unknown;
+  telefone?: unknown;
+  Telefone?: unknown;
+  data?: unknown;
+  Data?: unknown;
+  horario?: unknown;
+  Horario?: unknown;
+  atividade?: unknown;
+  Atividade?: unknown;
+  participantes?: unknown;
+  Participantes?: unknown;
+  valor?: unknown;
+  Valor?: unknown;
+  comboId?: unknown;
+  pacoteIds?: unknown;
+  atribuicao?: unknown;
+};
+
 const STATUS_PRE_RESERVA = new Set([
   "pre_reserva",
   "pre-reserva",
@@ -105,6 +125,40 @@ const RESERVAS_COLLECTION = collection(db, "reservas");
 let cleanupInitialized = false;
 let cleanupRunning = false;
 let legacyCleanupRunning = false;
+let consistencyCleanupRunning = false;
+
+const cleanConsistencyText = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const agentSessionIdFrom = (reserva: ReservaConsistenciaSnapshot) => {
+  const atribuicao =
+    reserva.atribuicao && typeof reserva.atribuicao === "object"
+      ? (reserva.atribuicao as Record<string, unknown>)
+      : {};
+  const sessionId = String(atribuicao.agentSessionId ?? "").trim();
+  return /^whatsapp_\d{10,15}$/i.test(sessionId) ? sessionId : "";
+};
+
+const reservationIntentKey = (reserva: ReservaConsistenciaSnapshot) => {
+  const pacoteIds = Array.isArray(reserva.pacoteIds)
+    ? reserva.pacoteIds.map(String).sort().join(",")
+    : "";
+  return [
+    agentSessionIdFrom(reserva),
+    String(reserva.telefone ?? reserva.Telefone ?? "").replace(/\D/g, ""),
+    String(reserva.data ?? reserva.Data ?? "").trim(),
+    String(reserva.horario ?? reserva.Horario ?? "").trim(),
+    cleanConsistencyText(reserva.atividade ?? reserva.Atividade),
+    Math.max(0, Number(reserva.participantes ?? reserva.Participantes ?? 0) || 0),
+    Math.round(Math.max(0, Number(reserva.valor ?? reserva.Valor ?? 0) || 0) * 100),
+    String(reserva.comboId ?? "").trim(),
+    pacoteIds,
+  ].join("|");
+};
 
 const chunkArray = <T>(items: T[], size: number) => {
   const chunks: T[][] = [];
@@ -325,6 +379,116 @@ export async function limparReservasNaoPagasExpiradas(origem = "cron") {
   }
 }
 
+export async function limparDuplicidadesProvisoriasConfirmadas(origem = "cron") {
+  if (consistencyCleanupRunning) {
+    return { origem, removidas: 0, ignorado: true };
+  }
+
+  const adminDb = obterFirestoreAdmin();
+  if (!adminDb) {
+    return {
+      origem,
+      removidas: 0,
+      ignorado: true,
+      motivo: "firebase_admin_indisponivel",
+    };
+  }
+
+  consistencyCleanupRunning = true;
+  const startedAt = Date.now();
+
+  try {
+    const cutoffMs = Date.now() - 15 * 60 * 1000;
+    const pendingSnapshot = await adminDb
+      .collection("reservas")
+      .where("status", "in", [
+        "aguardando",
+        "aguardando_pagamento",
+        "pending",
+        "processing",
+        "processando",
+      ])
+      .limit(Math.min(LEGACY_CLEANUP_BATCH_LIMIT, 200))
+      .get();
+
+    const candidates = pendingSnapshot.docs.filter((document) => {
+      const data = document.data() as ReservaConsistenciaSnapshot;
+      if (!agentSessionIdFrom(data)) return false;
+      if (data.asaasPaymentId || data.pagamentoId) return false;
+      if (reservaEstaConfirmada(data)) return false;
+      const createdAt =
+        normalizarTimestamp(data.criadoEm)?.toMillis() ??
+        document.createTime.toMillis();
+      return createdAt <= cutoffMs;
+    });
+
+    const sessions = Array.from(
+      new Set(
+        candidates
+          .map((document) =>
+            agentSessionIdFrom(document.data() as ReservaConsistenciaSnapshot),
+          )
+          .filter(Boolean),
+      ),
+    );
+    const confirmedKeys = new Set<string>();
+
+    for (const sessionId of sessions) {
+      const sessionSnapshot = await adminDb
+        .collection("reservas")
+        .where("atribuicao.agentSessionId", "==", sessionId)
+        .limit(50)
+        .get();
+      sessionSnapshot.docs.forEach((document) => {
+        const data = document.data() as ReservaConsistenciaSnapshot;
+        if (reservaEstaConfirmada(data)) {
+          confirmedKeys.add(reservationIntentKey(data));
+        }
+      });
+    }
+
+    const duplicates = candidates.filter((document) =>
+      confirmedKeys.has(
+        reservationIntentKey(document.data() as ReservaConsistenciaSnapshot),
+      ),
+    );
+
+    for (const chunk of chunkArray(duplicates, 200)) {
+      const batch = adminDb.batch();
+      chunk.forEach((document) => {
+        batch.delete(document.ref);
+        batch.delete(
+          adminDb
+            .collection("whatsapp_notificacoes_internas")
+            .doc(document.id),
+        );
+      });
+      await batch.commit();
+    }
+
+    if (duplicates.length > 0) {
+      console.log(
+        `[cleanup-consistency] ${duplicates.length} tentativa(s) provisoria(s) duplicada(s) removida(s) em ${Date.now() - startedAt}ms. Origem: ${origem}.`,
+      );
+    }
+
+    return {
+      origem,
+      removidas: duplicates.length,
+      duracaoMs: Date.now() - startedAt,
+      ignorado: false,
+    };
+  } catch (error) {
+    console.error(
+      "[cleanup-consistency] Erro ao consolidar reservas provisorias:",
+      error,
+    );
+    throw error;
+  } finally {
+    consistencyCleanupRunning = false;
+  }
+}
+
 export async function processarReservasLegadasNaoPagas(origem = "startup") {
   if (!LEGACY_CLEANUP_ENABLED) {
     return {
@@ -460,6 +624,12 @@ export const iniciarLimpezaAutomaticaReservas = () => {
     console.log(
       `[cleanup] Limpeza automatica de reservas nao pagas habilitada (${RETENTION_HOURS}h, cron "${CLEANUP_CRON_EXPRESSION}").`
     );
+
+    setTimeout(() => {
+      void limparDuplicidadesProvisoriasConfirmadas("startup-consistency").catch((error) => {
+        console.error("[cleanup-consistency] Falha na execucao inicial:", error);
+      });
+    }, 5_000);
 
     setTimeout(() => {
       void processarReservasLegadasNaoPagas("startup-legacy").catch((error) => {

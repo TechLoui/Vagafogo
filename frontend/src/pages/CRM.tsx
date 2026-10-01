@@ -114,6 +114,9 @@ type RawReservation = Record<string, unknown> & {
   whatsappEnviado?: unknown;
   whatsappBoasVindasEnviado?: unknown;
   whatsappConfirmacaoEnviado?: unknown;
+  asaasPaymentId?: unknown;
+  pagamentoId?: unknown;
+  statusPagamentoIntegracao?: unknown;
   atribuicao?: unknown;
   canalOrigem?: unknown;
   dominioOrigem?: unknown;
@@ -140,6 +143,9 @@ type CRMReservation = {
   paymentMethod?: string;
   whatsappSent: boolean;
   campaignId?: string;
+  paymentId?: string;
+  agentSessionId?: string;
+  confirmed: boolean;
 };
 
 type Customer = {
@@ -455,7 +461,8 @@ const isPending = (status: string) => {
     value.includes("pending") ||
     value.includes("processing") ||
     value.includes("pre_reserva") ||
-    value.includes("pre-reserva")
+    value.includes("pre-reserva") ||
+    value.includes("verificacao")
   );
 };
 const isPaid = (status: string) =>
@@ -470,7 +477,9 @@ const isPaid = (status: string) =>
     "recebido",
   ].includes(normalizeText(status));
 const statusLabel = (status: string) =>
-  isCancelled(status)
+  normalizeText(status).includes("verificacao")
+    ? "Em verificação"
+    : isCancelled(status)
     ? "Cancelada"
     : isPending(status)
       ? "Pendente"
@@ -503,6 +512,42 @@ const journeyIsAbandoned = (journey: JourneyRecord, now = Date.now()) =>
   Boolean(journey.lastEventAt) &&
   dayjs(now).diff(dayjs(journey.lastEventAt), "minute") >= ABANDONMENT_MINUTES;
 const VAGAFOGO_DOMAINS = new Set(["vagafogopiri.com.br", "vagafogo.com.br"]);
+
+const reservationIntentKey = (reservation: CRMReservation) => {
+  const phone = reservation.phone.replace(/\D/g, "");
+  return [
+    reservation.agentSessionId,
+    phone,
+    reservation.date,
+    reservation.time,
+    normalizeText(reservation.activity),
+    reservation.people,
+    Math.round(reservation.value * 100),
+  ].join("|");
+};
+
+const consolidateReservationsForCrm = (items: CRMReservation[]) => {
+  const confirmedIntents = new Set(
+    items
+      .filter(
+        (item) =>
+          Boolean(item.agentSessionId) &&
+          (item.confirmed || isPaid(item.status)),
+      )
+      .map(reservationIntentKey),
+  );
+
+  return items.filter(
+    (item) =>
+      !(
+        item.agentSessionId &&
+        !item.paymentId &&
+        !item.confirmed &&
+        isPending(item.status) &&
+        confirmedIntents.has(reservationIntentKey(item))
+      ),
+  );
+};
 
 const exportCsv = (
   filename: string,
@@ -603,8 +648,8 @@ export function CRM() {
       onSnapshot(
         collection(db, "reservas"),
         (snapshot) => {
-          const next = snapshot.docs
-            .map((document) => {
+          const next = consolidateReservationsForCrm(
+            snapshot.docs.map((document) => {
               const raw = document.data() as RawReservation;
               const attribution =
                 raw.atribuicao && typeof raw.atribuicao === "object"
@@ -663,6 +708,18 @@ export function CRM() {
                   attribution.sourceChannel ||
                   attribution.sessionId,
               );
+              const storedStatus = String(
+                rawValue(raw, "status", "Status") ??
+                  (raw.confirmada ? "confirmado" : ""),
+              );
+              const paymentIntegrationStatus = normalizeText(
+                raw.statusPagamentoIntegracao,
+              );
+              const displayStatus =
+                paymentIntegrationStatus === "verificacao_pendente" &&
+                isPending(storedStatus)
+                  ? "verificacao_pagamento"
+                  : storedStatus;
               return {
                 id: document.id,
                 name: String(rawValue(raw, "nome", "Nome") ?? "").trim(),
@@ -683,10 +740,7 @@ export function CRM() {
                 ),
                 people: participantsFrom(raw),
                 value: toNumber(rawValue(raw, "valor", "Valor")),
-                status: String(
-                  rawValue(raw, "status", "Status") ??
-                    (raw.confirmada ? "confirmado" : ""),
-                ),
+                status: displayStatus,
                 origin,
                 sourceDomain: sourceDomain || undefined,
                 sourceChannel:
@@ -714,9 +768,17 @@ export function CRM() {
                 campaignId: attribution.campaignId
                   ? String(attribution.campaignId)
                   : undefined,
+                paymentId: String(
+                  raw.asaasPaymentId ?? raw.pagamentoId ?? "",
+                ).trim() || undefined,
+                agentSessionId: attribution.agentSessionId
+                  ? String(attribution.agentSessionId)
+                  : undefined,
+                confirmed: raw.confirmada === true,
               } satisfies CRMReservation;
             })
-            .filter((item) => Boolean(item.date && item.name));
+            .filter((item) => Boolean(item.date && item.name)),
+          );
           setReservations(next);
           setReservationsError("");
           setReservationsLoading(false);
