@@ -15,7 +15,7 @@ type DefaultGalleryPhoto = { id: string; path: string; titulo: string; legenda: 
 const DEFAULT_GALLERY: Record<AgentGalleryCategory, DefaultGalleryPhoto[]> = {
   brunch: [
     { id: "padrao-brunch-mesa", path: "/assets/brunch-1-CUij3LE7.webp", titulo: "Mesa do Brunch Vagafogo", legenda: "Brunch artesanal inspirado nos sabores do Cerrado." },
-    { id: "padrao-brunch-sabores", path: "/assets/brunch-2-BdafbEXK.webp", titulo: "Sabores do brunch", legenda: "Preparações sazonais feitas pela Família Vagafogo." },
+    { id: "padrao-brunch-sabores", path: "/assets/brunch-2-BdafbEXK.webp", titulo: "Sabores do brunch", legenda: "Preparações sazonais feitas pela Fazenda Vagafogo." },
     { id: "padrao-brunch-experiencia", path: "/assets/brunch-3-qneVD58f.webp", titulo: "Experiência gastronômica", legenda: "Uma manhã de sabores e natureza em Pirenópolis." },
   ],
   trilha: [
