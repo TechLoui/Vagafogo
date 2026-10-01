@@ -12,7 +12,6 @@ import { useNavigate } from "react-router-dom";
 import type { IconType } from "react-icons";
 import {
   FaArrowRight,
-  FaArrowUp,
   FaBars,
   FaBell,
   FaBullhorn,
@@ -27,6 +26,8 @@ import {
   FaCog,
   FaDollarSign,
   FaDownload,
+  FaEye,
+  FaEyeSlash,
   FaExclamationCircle,
   FaFileAlt,
   FaFilter,
@@ -272,8 +273,9 @@ const NEW_DOMAINS_LAUNCH_DATE = dayjs("2026-09-26").startOf("day");
 
 const sectionMeta: Record<SectionKey, { title: string; subtitle: string }> = {
   dashboard: {
-    title: "Visão geral",
-    subtitle: "Indicadores calculados com os dados disponíveis hoje.",
+    title: "Oportunidades e campanhas",
+    subtitle:
+      "Leads, recuperação e resultados para orientar as próximas ações.",
   },
   reservas: {
     title: "Reservas",
@@ -486,6 +488,24 @@ const statusLabel = (status: string) =>
       : isPaid(status)
         ? "Confirmada"
         : "Não classificada";
+const humanizeCrmLabel = (value: string) => {
+  const normalized = value.replaceAll("_", " ").replaceAll("-", " ").trim();
+  return normalized
+    ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
+    : "Não informado";
+};
+const agentLeadSignal = (lead: AgentLeadRecord) =>
+  normalizeText(`${lead.stage} ${lead.outcome} ${lead.reason ?? ""}`);
+const agentLeadIsConfirmed = (lead: AgentLeadRecord) =>
+  /reserva confirm|pagamento (aprovado|confirmado)|\bpago\b|concluida/.test(
+    agentLeadSignal(lead),
+  );
+const agentLeadIsClosedWithoutOpportunity = (lead: AgentLeadRecord) =>
+  /sem oportunidade|descart|irrelevante|assunto nao comercial|bloqueado/.test(
+    agentLeadSignal(lead),
+  );
+const agentLeadIsOpen = (lead: AgentLeadRecord) =>
+  !agentLeadIsConfirmed(lead) && !agentLeadIsClosedWithoutOpportunity(lead);
 const initials = (name: string) =>
   name
     .split(/\s+/)
@@ -630,6 +650,7 @@ export function CRM() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState("");
+  const [financialValuesVisible, setFinancialValuesVisible] = useState(false);
   const [reservations, setReservations] = useState<CRMReservation[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(true);
   const [reservationsError, setReservationsError] = useState("");
@@ -1239,6 +1260,10 @@ export function CRM() {
   );
 
   const exportCurrentSection = () => {
+    if (activeSection === "financeiro" && !financialValuesVisible) {
+      setToast("Revele os valores financeiros antes de exportar o relatório.");
+      return;
+    }
     const reservationRows = filteredReservations.map((item) => ({
       reserva: item.id,
       cliente: item.name,
@@ -1260,7 +1285,39 @@ export function CRM() {
             : "Não identificada",
     }));
     const rows: Array<Record<string, string | number>> =
-      activeSection === "clientes"
+      activeSection === "dashboard"
+        ? [
+            ...filteredJourneys
+              .filter(
+                (item) =>
+                  journeyIsAbandoned(item) &&
+                  item.recoveryOptIn &&
+                  item.phone,
+              )
+              .map((item) => ({
+                tipo: "Checkout abandonado",
+                contato: item.name ?? "Nome não informado",
+                telefone: item.phone ?? "",
+                interesse: item.activities.join(" + "),
+                etapa: `Etapa ${item.stage}`,
+                resultado: item.status,
+                proximaAcao: "Recuperar pelo WhatsApp",
+                ultimaAtividade: item.lastEventAt ?? "",
+              })),
+            ...filteredAgentLeads
+              .filter(agentLeadIsOpen)
+              .map((item) => ({
+                tipo: "Lead do agente",
+                contato: item.name ?? "Nome não informado",
+                telefone: item.phone,
+                interesse: item.activities.join(" + "),
+                etapa: humanizeCrmLabel(item.stage),
+                resultado: humanizeCrmLabel(item.outcome),
+                proximaAcao: item.nextAction ?? "Acompanhar atendimento",
+                ultimaAtividade: item.updatedAt ?? "",
+              })),
+          ]
+        : activeSection === "clientes"
         ? filteredCustomers.map((item) => ({
             cliente: item.name,
             telefone: item.phone,
@@ -1374,13 +1431,30 @@ export function CRM() {
                   },
                 ]
               : reservationRows;
-    if (!rows.length) {
+    const exportRows =
+      activeSection === "dashboard"
+        ? rows.filter((row, index, list) => {
+            const phone = String(row.telefone ?? "").replace(/\D/g, "");
+            if (!phone) return true;
+            return (
+              list.findIndex(
+                (candidate) =>
+                  String(candidate.telefone ?? "").replace(/\D/g, "") ===
+                  phone,
+              ) === index
+            );
+          })
+        : rows;
+    if (!exportRows.length) {
       setToast(
         `Não há dados em ${periodLabel.toLowerCase()} para exportar nesta aba.`,
       );
       return;
     }
-    exportCsv(`${activeSection}-${dayjs().format("YYYY-MM-DD")}.csv`, rows);
+    exportCsv(
+      `${activeSection}-${dayjs().format("YYYY-MM-DD")}.csv`,
+      exportRows,
+    );
     setToast(
       `Relatório de ${sectionMeta[activeSection].title.toLowerCase()} exportado.`,
     );
@@ -1605,7 +1679,7 @@ export function CRM() {
               </span>
               <h1>
                 {activeSection === "dashboard"
-                  ? "Dados que viram relacionamento"
+                  ? "Oportunidades para agir"
                   : sectionMeta[activeSection].title}
               </h1>
               <p>{sectionMeta[activeSection].subtitle}</p>
@@ -1694,10 +1768,12 @@ export function CRM() {
           ) : null}
 
           {activeSection === "dashboard" ? (
-            <DashboardSection
+            <OpportunityDashboardSection
               reservations={filteredReservations}
-              allReservations={filteredReservations}
-              customers={filteredCustomers}
+              customers={customers}
+              campaigns={filteredCampaigns}
+              journeys={filteredJourneys}
+              agentLeads={filteredAgentLeads}
               onNavigate={selectSection}
             />
           ) : activeSection === "reservas" ? (
@@ -1737,6 +1813,10 @@ export function CRM() {
             <FinanceSection
               reservations={filteredReservations}
               periodLabel={periodLabel}
+              valuesVisible={financialValuesVisible}
+              onToggleValues={() =>
+                setFinancialValuesVisible((visible) => !visible)
+              }
             />
           ) : (
             <DataSourcesSection
@@ -1750,182 +1830,202 @@ export function CRM() {
   );
 }
 
-function DashboardSection({
+function OpportunityDashboardSection({
   reservations,
-  allReservations,
   customers,
+  campaigns,
+  journeys,
+  agentLeads,
   onNavigate,
 }: {
   reservations: CRMReservation[];
-  allReservations: CRMReservation[];
   customers: Customer[];
+  campaigns: CampaignRecord[];
+  journeys: JourneyRecord[];
+  agentLeads: AgentLeadRecord[];
   onNavigate: (section: SectionKey) => void;
 }) {
-  const confirmed = reservations.filter((item) => isPaid(item.status));
-  const pending = reservations.filter((item) => isPending(item.status));
-  const revenue = confirmed.reduce((sum, item) => sum + item.value, 0);
-  const uniquePeriod = new Set(
-    confirmed.map(
-      (item) =>
-        item.phone.replace(/\D/g, "") || normalizeText(item.email || item.name),
+  const pending = reservations.filter(
+    (item) => isPending(item.status) && item.origin !== "manual" && item.phone,
+  );
+  const recoverableJourneys = journeys.filter(
+    (item) => journeyIsAbandoned(item) && item.recoveryOptIn && item.phone,
+  );
+  const realAgentLeads = agentLeads.filter((item) => !item.isTest);
+  const openLeads = realAgentLeads.filter(agentLeadIsOpen);
+  const displayedOpenLeads = agentLeads.filter(agentLeadIsOpen);
+  const isPaymentLead = (lead: AgentLeadRecord) =>
+    /pagamento|pix|cobranca/.test(agentLeadSignal(lead));
+  const isWaitingLead = (lead: AgentLeadRecord) =>
+    /aguardando cliente|sem resposta|inatividade|suspens/.test(
+      agentLeadSignal(lead),
+    );
+  const paymentLeads = openLeads.filter(isPaymentLead);
+  const waitingLeads = openLeads.filter(
+    (lead) => !isPaymentLead(lead) && isWaitingLead(lead),
+  );
+  const activeLeads = openLeads.filter(
+    (lead) => !isPaymentLead(lead) && !isWaitingLead(lead),
+  );
+  const confirmedLeads = realAgentLeads.filter(agentLeadIsConfirmed);
+  const closedLeads = realAgentLeads.filter(agentLeadIsClosedWithoutOpportunity);
+  const contactKey = (phone: string | undefined, fallback: string) =>
+    phone?.replace(/\D/g, "") || fallback;
+  const recoverableKeys = new Set(
+    recoverableJourneys.map((item) =>
+      contactKey(item.phone, `jornada:${item.sessionId}`),
     ),
-  ).size;
-  const counts = new Map<string, number>();
-  confirmed.forEach((item) => {
-    const key =
-      item.phone.replace(/\D/g, "") || normalizeText(item.email || item.name);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  });
-  const recurrentPeriod = [...counts.values()].filter(
-    (value) => value >= 2,
-  ).length;
+  );
+  const paymentKeys = new Set([
+    ...pending.map((item) => contactKey(item.phone, `reserva:${item.id}`)),
+    ...paymentLeads.map((item) =>
+      contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
+    ),
+  ]);
+  const opportunityKeys = new Set([
+    ...recoverableKeys,
+    ...openLeads.map((item) =>
+      contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
+    ),
+    ...paymentKeys,
+  ]);
+  const inactive90 = customers.filter((item) => item.daysInactive >= 90);
   const inactive180 = customers.filter((item) => item.daysInactive >= 180);
+  const recurring = customers.filter((item) => item.bookings >= 2);
+  const activeCampaigns = campaigns.filter((item) =>
+    ["agendada", "enviando", "pausada"].includes(normalizeText(item.status)),
+  );
+  const campaignTotals = campaigns.reduce(
+    (totals, campaign) => ({
+      eligible:
+        totals.eligible + (campaign.eligible ?? campaign.audienceSize ?? 0),
+      sent: totals.sent + (campaign.sent ?? 0),
+      replies: totals.replies + (campaign.replies ?? 0),
+      conversions: totals.conversions + (campaign.conversions ?? 0),
+    }),
+    { eligible: 0, sent: 0, replies: 0, conversions: 0 },
+  );
   const metrics = [
     {
-      label: "Reservas confirmadas",
-      value: String(confirmed.length),
-      hint: `${pending.length} pendentes`,
-      icon: FaCalendarAlt,
+      label: "Oportunidades abertas",
+      value: opportunityKeys.size,
+      hint: "contatos únicos para agir",
+      icon: FaUserFriends,
       tone: "blue",
     },
     {
-      label: "Receita confirmada",
-      value: currency.format(revenue),
-      hint: "somente status pagos",
-      icon: FaDollarSign,
-      tone: "green",
-    },
-    {
-      label: "Ticket médio",
-      value: currency.format(confirmed.length ? revenue / confirmed.length : 0),
-      hint: "por reserva confirmada",
-      icon: FaMoneyBillWave,
+      label: "Checkouts recuperáveis",
+      value: recoverableKeys.size,
+      hint: "com telefone e consentimento",
+      icon: FaLink,
       tone: "orange",
     },
     {
-      label: "Clientes no período",
-      value: String(uniquePeriod),
-      hint: "contatos únicos",
-      icon: FaUsers,
-      tone: "blue",
-    },
-    {
-      label: "Recorrentes no período",
-      value: String(recurrentPeriod),
-      hint: "2+ reservas",
-      icon: FaSyncAlt,
+      label: "Conversas em andamento",
+      value: openLeads.length,
+      hint: "leads ainda não finalizados",
+      icon: FaWhatsapp,
       tone: "green",
     },
     {
-      label: "Reativação 180+ dias",
-      value: String(inactive180.length),
-      hint: "base histórica",
-      icon: FaUserFriends,
+      label: "Pagamento pendente",
+      value: paymentKeys.size,
+      hint: "sem duplicar o mesmo contato",
+      icon: FaClock,
       tone: "red",
     },
-  ];
-  const monthly = Array.from({ length: 7 }, (_, index) => {
-    const month = dayjs().subtract(6 - index, "month");
-    const items = allReservations.filter(
-      (item) =>
-        dayjs(item.date).format("YYYY-MM") === month.format("YYYY-MM") &&
-        isPaid(item.status),
-    );
-    return {
-      label: month.format("MMM").replace(".", ""),
-      bookings: items.length,
-      revenue: items.reduce((sum, item) => sum + item.value, 0),
-    };
-  });
-  const maxBookings = Math.max(1, ...monthly.map((item) => item.bookings));
-  const maxRevenue = Math.max(1, ...monthly.map((item) => item.revenue));
-  const origins = [
     {
-      label: "vagafogopiri.com.br",
-      count: reservations.filter(
-        (item) =>
-          item.sourceDomain === "vagafogopiri.com.br" &&
-          item.origin !== "whatsapp",
-      ).length,
-      color: "#08a5df",
+      label: "Público 90+ dias",
+      value: inactive90.length,
+      hint: "base atual de reativação",
+      icon: FaSyncAlt,
+      tone: "orange",
     },
     {
-      label: "vagafogo.com.br",
-      count: reservations.filter(
-        (item) =>
-          item.sourceDomain === "vagafogo.com.br" && item.origin !== "whatsapp",
-      ).length,
-      color: "#20b67a",
-    },
-    {
-      label: "WhatsApp",
-      count: reservations.filter((item) => item.origin === "whatsapp").length,
-      color: "#25d366",
-    },
-    {
-      label: "Manual",
-      count: reservations.filter((item) => item.origin === "manual").length,
-      color: "#8b5cf6",
-    },
-    {
-      label: "Não identificada",
-      count: reservations.filter(
-        (item) =>
-          item.origin === "unknown" ||
-          (item.origin === "checkout" &&
-            !VAGAFOGO_DOMAINS.has(item.sourceDomain ?? "")),
-      ).length,
-      color: "#cbd5dc",
+      label: "Campanhas ativas",
+      value: activeCampaigns.length,
+      hint: `${campaigns.length} no período`,
+      icon: FaBullhorn,
+      tone: "blue",
     },
   ];
-  const originTotal = Math.max(
-    1,
-    origins.reduce((sum, item) => sum + item.count, 0),
-  );
-  let accumulated = 0;
-  const donutStops = origins
-    .map((item) => {
-      const start = (accumulated / originTotal) * 100;
-      accumulated += item.count;
-      return `${item.color} ${start}% ${(accumulated / originTotal) * 100}%`;
+  const radarItems = [
+    {
+      label: "Recuperar checkout abandonado",
+      description: "Parou no formulário e autorizou contato pelo WhatsApp.",
+      count: recoverableKeys.size,
+      icon: FaLink,
+      tone: "blue",
+      section: "jornadas" as SectionKey,
+    },
+    {
+      label: "Retomar conversa do agente",
+      description: "Atendimento iniciado, mas ainda sem uma conclusão.",
+      count: openLeads.length,
+      icon: FaWhatsapp,
+      tone: "green",
+      section: "jornadas" as SectionKey,
+    },
+    {
+      label: "Acompanhar pagamento pendente",
+      description: "Cliente chegou à cobrança e ainda não concluiu.",
+      count: paymentKeys.size,
+      icon: FaClock,
+      tone: "orange",
+      section: "jornadas" as SectionKey,
+    },
+    {
+      label: "Reativar cliente antigo",
+      description: "Cliente confirmado sem retornar há pelo menos 90 dias.",
+      count: inactive90.length,
+      icon: FaSyncAlt,
+      tone: "red",
+      section: "campanhas" as SectionKey,
+    },
+  ];
+  const funnel = [
+    { label: "Novos / em atendimento", value: activeLeads.length, tone: "#169fd2" },
+    { label: "Aguardando cliente", value: waitingLeads.length, tone: "#75c7e6" },
+    { label: "Pagamento pendente", value: paymentLeads.length, tone: "#f3a33b" },
+    { label: "Reserva confirmada", value: confirmedLeads.length, tone: "#23ae75" },
+    { label: "Sem oportunidade", value: closedLeads.length, tone: "#a8b6c0" },
+  ];
+  const maxFunnel = Math.max(1, ...funnel.map((item) => item.value));
+  const recentCampaigns = campaigns
+    .slice()
+    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
+    .slice(0, 4);
+  const recentOpportunityKeys = new Set<string>();
+  const recentOpportunities = [
+    ...recoverableJourneys.map((item) => ({
+      id: `jornada-${item.id}`,
+      name: item.name ?? "Nome não informado",
+      phone: item.phone ?? "",
+      interest: item.activities.join(" + ") || "Reserva pelo site",
+      stage: `Checkout na etapa ${item.stage}`,
+      nextAction: "Recuperar pelo WhatsApp",
+      updatedAt: item.lastEventAt,
+      isTest: false,
+    })),
+    ...displayedOpenLeads.map((item) => ({
+      id: `agente-${item.id}`,
+      name: item.name ?? "Nome não informado",
+      phone: item.phone,
+      interest: item.activities.join(" + ") || "Interesse em coleta",
+      stage: humanizeCrmLabel(item.stage),
+      nextAction: item.nextAction ?? "Acompanhar atendimento",
+      updatedAt: item.updatedAt,
+      isTest: item.isTest,
+    })),
+  ]
+    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+    .filter((item) => {
+      const key = contactKey(item.phone, item.id);
+      if (recentOpportunityKeys.has(key)) return false;
+      recentOpportunityKeys.add(key);
+      return true;
     })
-    .join(", ");
-  const quality = [
-    {
-      label: "Telefone disponível",
-      value: percent(
-        allReservations.filter((item) => item.phone).length,
-        allReservations.length,
-      ),
-      tone: "#0ea5df",
-    },
-    {
-      label: "Data de criação",
-      value: percent(
-        allReservations.filter((item) => item.createdAt).length,
-        allReservations.length,
-      ),
-      tone: "#20b67a",
-    },
-    {
-      label: "Chegada registrada",
-      value: percent(
-        allReservations.filter((item) => item.arrived !== undefined).length,
-        allReservations.length,
-      ),
-      tone: "#f2a238",
-    },
-    {
-      label: "Origem classificada",
-      value: percent(
-        allReservations.filter((item) => item.origin !== "unknown").length,
-        allReservations.length,
-      ),
-      tone: "#ef6c75",
-    },
-  ];
-  const paidRevenue = revenue;
-  const pendingRevenue = pending.reduce((sum, item) => sum + item.value, 0);
+    .slice(0, 6);
 
   return (
     <div className="crm-dashboard">
@@ -1937,288 +2037,143 @@ function DashboardSection({
               className={`crm-metric-card crm-tone--${metric.tone}`}
               key={metric.label}
             >
-              <span className="crm-metric-card__icon">
-                <Icon />
-              </span>
+              <span className="crm-metric-card__icon"><Icon /></span>
               <div>
                 <p>{metric.label}</p>
                 <strong>{metric.value}</strong>
-                <small>
-                  <FaArrowUp /> dado atual
-                </small>
                 <em>{metric.hint}</em>
               </div>
             </article>
           );
         })}
       </div>
-      <div className="crm-dashboard-grid crm-dashboard-grid--primary">
-        <article className="crm-card crm-chart-card">
+
+      <div className="crm-dashboard-grid crm-dashboard-grid--opportunities">
+        <article className="crm-card crm-opportunity-radar">
           <div className="crm-card__head">
-            <div>
-              <span>
-                <FaChartBar />
-              </span>
-              <h3>Reservas x receita confirmada</h3>
-            </div>
-            <div className="crm-legend">
-              <i className="is-blue" />
-              Reservas
-              <i className="is-green" />
-              Receita
-            </div>
+            <div><span><FaFilter /></span><h3>Radar de oportunidades</h3></div>
+            <button onClick={() => onNavigate("jornadas")}>Ver todas <FaArrowRight /></button>
           </div>
-          <div className="crm-combo-chart">
-            <div className="crm-combo-chart__axis">
-              <span>{maxBookings}</span>
-              <span>{Math.ceil(maxBookings / 2)}</span>
-              <span>0</span>
-            </div>
-            <div className="crm-combo-chart__plot">
-              {[0, 1, 2].map((line) => (
-                <i
-                  className="crm-combo-chart__line"
-                  style={{ top: `${line * 50}%` }}
-                  key={line}
-                />
-              ))}
-              {monthly.map((item) => (
-                <div className="crm-combo-chart__column" key={item.label}>
-                  <div
-                    className="crm-combo-chart__bar"
-                    style={{
-                      height: `${Math.max(7, (item.bookings / maxBookings) * 78)}%`,
-                    }}
-                    title={`${item.bookings} reservas`}
-                  />
-                  <i
-                    className="crm-combo-chart__dot"
-                    style={{
-                      bottom: `${Math.max(8, (item.revenue / maxRevenue) * 84)}%`,
-                    }}
-                    title={currency.format(item.revenue)}
-                  />
-                  <span>{item.label}</span>
-                </div>
-              ))}
-              <svg
-                className="crm-combo-chart__curve"
-                viewBox="0 0 700 200"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-              >
-                <polyline
-                  points={monthly
-                    .map(
-                      (item, index) =>
-                        `${50 + index * 100},${184 - Math.max(16, (item.revenue / maxRevenue) * 168)}`,
-                    )
-                    .join(" ")}
-                />
-              </svg>
-            </div>
+          <p className="crm-card__intro">
+            Filas reais que podem virar atendimento, recuperação ou campanha.
+          </p>
+          <div className="crm-opportunity-radar__grid">
+            {radarItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  type="button"
+                  key={item.label}
+                  className={`crm-opportunity-item crm-tone--${item.tone}`}
+                  onClick={() => onNavigate(item.section)}
+                >
+                  <span><Icon /></span>
+                  <div><strong>{item.label}</strong><small>{item.description}</small></div>
+                  <em>{item.count}</em>
+                  <FaChevronRight />
+                </button>
+              );
+            })}
           </div>
         </article>
-        <article className="crm-card crm-origin-card">
+
+        <article className="crm-card crm-campaign-overview">
           <div className="crm-card__head">
-            <div>
-              <span>
-                <FaLink />
-              </span>
-              <h3>Origem registrada</h3>
-            </div>
+            <div><span><FaBullhorn /></span><h3>Campanhas no período</h3></div>
+            <button onClick={() => onNavigate("campanhas")}>Gerenciar <FaArrowRight /></button>
           </div>
-          <div className="crm-origin-card__body">
-            <div
-              className="crm-donut"
-              style={{ background: `conic-gradient(${donutStops})` }}
-            >
-              <div>
-                <strong>{originTotal}</strong>
-                <span>reservas</span>
-              </div>
-            </div>
-            <div className="crm-origin-list">
-              {origins.map((item) => (
-                <div key={item.label}>
-                  <i style={{ background: item.color }} />
-                  <p>
-                    <strong>{item.label}</strong>
-                    <span>
-                      {item.count} ({percent(item.count, originTotal)}%)
-                    </span>
-                  </p>
+          <div className="crm-campaign-summary">
+            <div><span>Elegíveis</span><strong>{campaignTotals.eligible}</strong></div>
+            <div><span>Enviadas</span><strong>{campaignTotals.sent}</strong></div>
+            <div><span>Respostas</span><strong>{campaignTotals.replies}</strong></div>
+            <div><span>Conversões</span><strong>{campaignTotals.conversions}</strong></div>
+          </div>
+          <div className="crm-dashboard-campaigns">
+            {recentCampaigns.length ? recentCampaigns.map((campaign) => {
+              const eligible = Math.max(1, campaign.eligible ?? campaign.audienceSize ?? 0);
+              const processed = (campaign.sent ?? 0) + (campaign.errors ?? 0) + (campaign.ignored ?? 0);
+              return (
+                <div key={campaign.id} className="crm-dashboard-campaign">
+                  <div>
+                    <p><strong>{campaign.name}</strong><span>{humanizeCrmLabel(campaign.status)}</span></p>
+                    <small>{campaign.segmentLabel}</small>
+                  </div>
+                  <div className="crm-dashboard-campaign__progress">
+                    <i><span style={{ width: `${Math.min(100, percent(processed, eligible))}%` }} /></i>
+                    <em>{processed}/{eligible}</em>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </article>
-        <article className="crm-card crm-funnel-card">
-          <div className="crm-card__head">
-            <div>
-              <span>
-                <FaFilter />
-              </span>
-              <h3>Cobertura dos dados</h3>
-            </div>
-          </div>
-          <div className="crm-quality-list">
-            {quality.map((item) => (
-              <div key={item.label}>
-                <span>{item.label}</span>
-                <div>
-                  <i
-                    style={{ width: `${item.value}%`, background: item.tone }}
-                  />
-                </div>
-                <strong>{item.value}%</strong>
+              );
+            }) : (
+              <div className="crm-dashboard-empty">
+                <FaBullhorn /><p><strong>Nenhuma campanha neste período</strong><span>Crie uma campanha a partir dos públicos disponíveis.</span></p>
               </div>
-            ))}
+            )}
           </div>
         </article>
       </div>
-      <div className="crm-dashboard-grid crm-dashboard-grid--secondary">
-        <article className="crm-card crm-latest-leads">
+
+      <div className="crm-dashboard-grid crm-dashboard-grid--strategy">
+        <article className="crm-card crm-latest-leads crm-opportunity-table">
           <div className="crm-card__head">
-            <div>
-              <span>
-                <FaUserFriends />
-              </span>
-              <h3>Prioridade de reativação</h3>
+            <div><span><FaUserFriends /></span><h3>Oportunidades recentes</h3></div>
+            <button onClick={() => onNavigate("jornadas")}>Acompanhar <FaArrowRight /></button>
+          </div>
+          {recentOpportunities.length ? (
+            <div className="crm-table-wrap">
+              <table>
+                <thead><tr><th>Contato</th><th>Interesse</th><th>Etapa</th><th>Próxima ação</th><th>Atualização</th></tr></thead>
+                <tbody>
+                  {recentOpportunities.map((opportunity) => (
+                    <tr key={opportunity.id}>
+                      <td><strong>{opportunity.name}</strong><small>{formatPhone(opportunity.phone)}</small></td>
+                      <td>{opportunity.interest}</td>
+                      <td>
+                        <span className="crm-pill crm-pill--interessado">{opportunity.stage}</span>
+                        {opportunity.isTest ? <small className="crm-test-flag">Teste</small> : null}
+                      </td>
+                      <td>{opportunity.nextAction}</td>
+                      <td>{opportunity.updatedAt ? dayjs(opportunity.updatedAt).format("DD/MM, HH:mm") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <button onClick={() => onNavigate("jornadas")}>
-              Ver segmentos <FaArrowRight />
-            </button>
-          </div>
-          <div className="crm-table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>Última visita</th>
-                  <th>Sem retornar</th>
-                  <th>Reservas</th>
-                  <th>Valor histórico</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inactive180.slice(0, 5).map((customer) => (
-                  <tr key={customer.id}>
-                    <td>
-                      <strong>{customer.name}</strong>
-                    </td>
-                    <td>{dayjs(customer.lastVisit).format("DD/MM/YYYY")}</td>
-                    <td>
-                      <span className="crm-pill crm-pill--aguardando-decisao">
-                        {customer.daysInactive} dias
-                      </span>
-                    </td>
-                    <td>{customer.bookings}</td>
-                    <td>{currency.format(customer.total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          ) : (
+            <div className="crm-dashboard-empty">
+              <FaCheckCircle /><p><strong>Nenhuma oportunidade aberta no período</strong><span>Novos abandonos e conversas aparecerão aqui.</span></p>
+            </div>
+          )}
         </article>
+
+        <article className="crm-card crm-lead-funnel">
+          <div className="crm-card__head">
+            <div><span><FaChartBar /></span><h3>Funil dos leads</h3></div>
+          </div>
+          <div className="crm-lead-funnel__list">
+            {funnel.map((item) => (
+              <div key={item.label}>
+                <p><span>{item.label}</span><strong>{item.value}</strong></p>
+                <i><span style={{ width: `${Math.max(3, (item.value / maxFunnel) * 100)}%`, background: item.tone }} /></i>
+              </div>
+            ))}
+          </div>
+          <small className="crm-card__note">
+            Cada lead aparece em uma única etapa conforme seu estado mais atual.
+          </small>
+        </article>
+
         <article className="crm-card crm-reactivation">
           <div className="crm-card__head">
-            <div>
-              <span>
-                <FaBullhorn />
-              </span>
-              <h3>Segmentos utilizáveis</h3>
-            </div>
-            <button onClick={() => onNavigate("campanhas")}>
-              Criar campanha <FaArrowRight />
-            </button>
+            <div><span><FaUsers /></span><h3>Públicos para estratégia</h3></div>
+            <button onClick={() => onNavigate("campanhas")}>Criar campanha <FaArrowRight /></button>
           </div>
           <div className="crm-reactivation__list">
-            <div>
-              <span>
-                <FaClock />
-              </span>
-              <p>
-                <strong>Sem visita há 90+ dias</strong>
-                <small>
-                  {customers.filter((item) => item.daysInactive >= 90).length}{" "}
-                  clientes
-                </small>
-              </p>
-              <em className="is-ready">Disponível</em>
-            </div>
-            <div>
-              <span>
-                <FaUsers />
-              </span>
-              <p>
-                <strong>Sem visita há 180+ dias</strong>
-                <small>{inactive180.length} clientes</small>
-              </p>
-              <em className="is-ready">Disponível</em>
-            </div>
-            <div>
-              <span>
-                <FaSyncAlt />
-              </span>
-              <p>
-                <strong>Clientes recorrentes</strong>
-                <small>
-                  {customers.filter((item) => item.bookings >= 2).length}{" "}
-                  clientes
-                </small>
-              </p>
-              <em className="is-ready">Disponível</em>
-            </div>
+            <div><span><FaClock /></span><p><strong>Sem visita há 90+ dias</strong><small>{inactive90.length} clientes</small></p><em className="is-ready">Disponível</em></div>
+            <div><span><FaUsers /></span><p><strong>Sem visita há 180+ dias</strong><small>{inactive180.length} clientes</small></p><em className="is-ready">Disponível</em></div>
+            <div><span><FaSyncAlt /></span><p><strong>Clientes recorrentes</strong><small>{recurring.length} clientes</small></p><em className="is-ready">Disponível</em></div>
           </div>
-          <blockquote>
-            Segmentação calculada pelas reservas confirmadas.
-          </blockquote>
-        </article>
-        <article className="crm-card crm-financial-summary">
-          <div className="crm-card__head">
-            <div>
-              <span>
-                <FaDollarSign />
-              </span>
-              <h3>Resumo do período</h3>
-            </div>
-          </div>
-          <div className="crm-financial-summary__rows">
-            <div>
-              <span className="is-green">
-                <FaCheck />
-              </span>
-              <p>Confirmadas</p>
-              <strong>{currency.format(paidRevenue)}</strong>
-              <small>{confirmed.length}</small>
-            </div>
-            <div>
-              <span className="is-orange">
-                <FaClock />
-              </span>
-              <p>Pendentes</p>
-              <strong>{currency.format(pendingRevenue)}</strong>
-              <small>{pending.length}</small>
-            </div>
-            <div>
-              <span className="is-red">
-                <FaWhatsapp />
-              </span>
-              <p>WhatsApp registrado</p>
-              <strong>
-                {reservations.filter((item) => item.whatsappSent).length}
-              </strong>
-              <small>envios</small>
-            </div>
-          </div>
-          <div className="crm-financial-summary__art">
-            <FaLeaf />
-            <p>
-              Conhecer a história ajuda
-              <br />a criar o próximo encontro.
-            </p>
-          </div>
+          <blockquote>Públicos calculados pela base atual de reservas confirmadas.</blockquote>
         </article>
       </div>
     </div>
@@ -4326,9 +4281,13 @@ function ReportsSection({
 function FinanceSection({
   reservations,
   periodLabel,
+  valuesVisible,
+  onToggleValues,
 }: {
   reservations: CRMReservation[];
   periodLabel: string;
+  valuesVisible: boolean;
+  onToggleValues: () => void;
 }) {
   const paid = reservations.filter((item) => isPaid(item.status));
   const pending = reservations.filter((item) => isPending(item.status));
@@ -4349,16 +4308,36 @@ function FinanceSection({
       .reduce((sum, item) => sum + item.value, 0),
   }));
   const max = Math.max(1, ...byExperience.map((item) => item.value));
+  const displayMoney = (value: number) =>
+    valuesVisible ? currency.format(value) : "R$ •••••";
   return (
     <section className="crm-section">
       <SectionTitle
         title="Financeiro"
         subtitle={`Visão gerencial · ${periodLabel}. Não substitui o sistema contábil.`}
+        actions={
+          <button
+            type="button"
+            className="crm-privacy-toggle"
+            onClick={onToggleValues}
+            aria-pressed={valuesVisible}
+            aria-label={
+              valuesVisible
+                ? "Ocultar valores financeiros"
+                : "Revelar valores financeiros"
+            }
+          >
+            {valuesVisible ? <FaEyeSlash /> : <FaEye />}
+            <span>{valuesVisible ? "Ocultar valores" : "Mostrar valores"}</span>
+          </button>
+        }
       />
       <div className="crm-finance-hero">
         <div>
           <span>Receita confirmada</span>
-          <strong>{currency.format(paidValue)}</strong>
+          <strong className={!valuesVisible ? "is-private" : ""}>
+            {displayMoney(paidValue)}
+          </strong>
           <small>{paid.length} reservas pagas no período</small>
         </div>
         <FaChartLine />
@@ -4379,7 +4358,9 @@ function FinanceSection({
           </span>
           <div>
             <small>Valores pendentes</small>
-            <strong>{currency.format(pendingValue)}</strong>
+            <strong className={!valuesVisible ? "is-private" : ""}>
+              {displayMoney(pendingValue)}
+            </strong>
           </div>
         </article>
         <article>
@@ -4388,7 +4369,9 @@ function FinanceSection({
           </span>
           <div>
             <small>Cancelamentos</small>
-            <strong>{currency.format(cancelledValue)}</strong>
+            <strong className={!valuesVisible ? "is-private" : ""}>
+              {displayMoney(cancelledValue)}
+            </strong>
           </div>
         </article>
         <article>
@@ -4397,8 +4380,8 @@ function FinanceSection({
           </span>
           <div>
             <small>Ticket médio</small>
-            <strong>
-              {currency.format(paid.length ? paidValue / paid.length : 0)}
+            <strong className={!valuesVisible ? "is-private" : ""}>
+              {displayMoney(paid.length ? paidValue / paid.length : 0)}
             </strong>
           </div>
         </article>
@@ -4418,10 +4401,18 @@ function FinanceSection({
               <div key={item.label}>
                 <div>
                   <span>{item.label}</span>
-                  <strong>{currency.format(item.value)}</strong>
+                  <strong className={!valuesVisible ? "is-private" : ""}>
+                    {displayMoney(item.value)}
+                  </strong>
                 </div>
                 <i>
-                  <span style={{ width: `${(item.value / max) * 100}%` }} />
+                  <span
+                    style={{
+                      width: valuesVisible
+                        ? `${(item.value / max) * 100}%`
+                        : "0%",
+                    }}
+                  />
                 </i>
               </div>
             ))}
@@ -4460,7 +4451,9 @@ function FinanceSection({
                       {item.activity} · {dayjs(item.date).format("DD/MM")}
                     </small>
                   </p>
-                  <em>{currency.format(item.value)}</em>
+                  <em className={!valuesVisible ? "is-private" : ""}>
+                    {displayMoney(item.value)}
+                  </em>
                 </div>
               ))}
           </div>
