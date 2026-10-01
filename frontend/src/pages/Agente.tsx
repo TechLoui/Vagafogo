@@ -109,7 +109,17 @@ type AgentLead = {
   isTest: boolean;
 };
 
-type InternalPermissionKey = "consultarReservas" | "consultarDisponibilidade" | "alterarDisponibilidade" | "verDadosPessoais" | "verFinanceiro";
+type InternalPermissionKey =
+  | "consultarReservasConfirmadas"
+  | "consultarReservasPendentes"
+  | "consultarReservasCanceladas"
+  | "consultarDisponibilidade"
+  | "alterarDia"
+  | "alterarExperiencia"
+  | "alterarHorario"
+  | "ajustarVagasExtras"
+  | "verDadosPessoais"
+  | "verFinanceiro";
 type InternalPermissions = Record<InternalPermissionKey, boolean>;
 type InternalOperator = {
   id: string;
@@ -556,18 +566,34 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
   </>;
 }
 
-const internalPermissionOptions: Array<{ key: InternalPermissionKey; title: string; description: string }> = [
-  { key: "consultarReservas", title: "Consultar reservas", description: "Totais, status, participantes, horários e experiências por data." },
-  { key: "consultarDisponibilidade", title: "Consultar disponibilidade", description: "Capacidade, ocupação e vagas restantes por experiência e horário." },
-  { key: "alterarDisponibilidade", title: "Alterar disponibilidade", description: "Fechar ou abrir dia, experiência ou horário e definir vagas extras." },
-  { key: "verDadosPessoais", title: "Ver dados pessoais", description: "Inclui nome e telefone dos clientes nas listas solicitadas." },
-  { key: "verFinanceiro", title: "Ver dados financeiros", description: "Inclui valores confirmados e valores individuais das reservas." },
+const internalPermissionGroups: Array<{ title: string; options: Array<{ key: InternalPermissionKey; title: string; description: string }> }> = [
+  { title: "Reservas", options: [
+    { key: "consultarReservasConfirmadas", title: "Reservas confirmadas", description: "Totais e listas de reservas com pagamento confirmado." },
+    { key: "consultarReservasPendentes", title: "Reservas pendentes", description: "Inclui cobranças pendentes e outros status ainda não confirmados." },
+    { key: "consultarReservasCanceladas", title: "Reservas canceladas", description: "Inclui reservas canceladas ou recusadas." },
+  ] },
+  { title: "Disponibilidade", options: [
+    { key: "consultarDisponibilidade", title: "Consultar vagas", description: "Capacidade, ocupação e vagas restantes por experiência e horário." },
+    { key: "alterarDia", title: "Abrir ou fechar dia", description: "Controla todas as novas reservas de uma data." },
+    { key: "alterarExperiencia", title: "Abrir ou fechar experiência", description: "Controla uma experiência específica em uma data." },
+    { key: "alterarHorario", title: "Abrir ou fechar horário", description: "Controla um horário específico de uma experiência." },
+    { key: "ajustarVagasExtras", title: "Ajustar vagas extras", description: "Adiciona ou remove capacidade extra por experiência e horário." },
+  ] },
+  { title: "Dados sensíveis", options: [
+    { key: "verDadosPessoais", title: "Ver dados pessoais", description: "Inclui nome e telefone dos clientes nas listas solicitadas." },
+    { key: "verFinanceiro", title: "Ver dados financeiros", description: "Inclui valores confirmados e valores individuais das reservas." },
+  ] },
 ];
 
 const defaultInternalPermissions = (): InternalPermissions => ({
-  consultarReservas: true,
+  consultarReservasConfirmadas: true,
+  consultarReservasPendentes: false,
+  consultarReservasCanceladas: false,
   consultarDisponibilidade: true,
-  alterarDisponibilidade: true,
+  alterarDia: false,
+  alterarExperiencia: false,
+  alterarHorario: false,
+  ajustarVagasExtras: false,
   verDadosPessoais: false,
   verFinanceiro: false,
 });
@@ -720,7 +746,7 @@ function InternalAccessPanel({ onMessage, onError }: { onMessage: (text: string)
         <form onSubmit={createOperator}>
           <label>Nome do operador<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="Ex.: Gerência" /></label>
           <label>WhatsApp<input value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} inputMode="tel" required placeholder="+55 (62) 99999-9999" /></label>
-          <fieldset><legend>Permissões iniciais</legend>{internalPermissionOptions.map((permission) => <label key={permission.key} className="agent-internal-permission"><input type="checkbox" checked={newPermissions[permission.key]} onChange={(event) => setNewPermissions((current) => ({ ...current, [permission.key]: event.target.checked }))} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</fieldset>
+          <fieldset><legend>Permissões iniciais</legend><div className="agent-internal-permission-groups">{internalPermissionGroups.map((group) => <section key={group.title}><h3>{group.title}</h3>{group.options.map((permission) => <label key={permission.key} className="agent-internal-permission"><input type="checkbox" checked={newPermissions[permission.key]} onChange={(event) => setNewPermissions((current) => ({ ...current, [permission.key]: event.target.checked }))} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</section>)}</div></fieldset>
           <button className="agent-primary" disabled={saving === "new"}>{saving === "new" ? "Autorizando..." : "Autorizar acesso"}</button>
         </form>
       </article>
@@ -730,7 +756,7 @@ function InternalAccessPanel({ onMessage, onError }: { onMessage: (text: string)
       <div className="agent-card__title"><span><FaUser /></span><div><h2>Números autorizados</h2><p>Desative temporariamente ou ajuste exatamente o que cada pessoa pode consultar e alterar.</p></div></div>
       {loading ? <p className="agent-empty">Carregando acessos...</p> : operators.length === 0 ? <p className="agent-empty">Nenhum número interno autorizado.</p> : <div className="agent-internal-operator-list">{operators.map((operator) => <article key={operator.id} className={!operator.ativo ? "is-inactive" : ""}>
         <header><div><input value={operator.nome} onChange={(event) => patchOperator(operator.id, { nome: event.target.value })} maxLength={120} /><span>{formatPhone(operator.telefone)}</span></div><label className="agent-toggle"><input type="checkbox" checked={operator.ativo} onChange={(event) => patchOperator(operator.id, { ativo: event.target.checked })} /><span /><strong>{operator.ativo ? "Ativo" : "Desativado"}</strong></label></header>
-        <div className="agent-internal-permissions">{internalPermissionOptions.map((permission) => <label key={permission.key}><input type="checkbox" checked={operator.permissoes[permission.key]} onChange={(event) => patchPermission(operator.id, permission.key, event.target.checked)} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</div>
+        <div className="agent-internal-permission-groups agent-internal-permission-groups--operator">{internalPermissionGroups.map((group) => <section key={group.title}><h3>{group.title}</h3><div className="agent-internal-permissions">{group.options.map((permission) => <label key={permission.key}><input type="checkbox" checked={operator.permissoes[permission.key]} onChange={(event) => patchPermission(operator.id, permission.key, event.target.checked)} /><span><strong>{permission.title}</strong><small>{permission.description}</small></span></label>)}</div></section>)}</div>
         <footer><small>{operator.atualizadoEm ? `Atualizado em ${dateTimeLabel(operator.atualizadoEm)}` : "Novo acesso"}{operator.atualizadoPor ? ` por ${operator.atualizadoPor}` : ""}</small><button className="agent-link is-danger" onClick={() => void deleteOperator(operator)} disabled={saving === operator.id}><FaTrash /> Remover</button><button className="agent-primary" onClick={() => void saveOperator(operator)} disabled={saving === operator.id}><FaSave /> Salvar</button></footer>
       </article>)}</div>}
     </article>

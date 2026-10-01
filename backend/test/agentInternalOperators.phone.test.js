@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { operatorPhoneVariants } = require("../dist/services/agentInternalOperators.js");
+const {
+  internalPermissionsFrom,
+  operatorPhoneVariants,
+} = require("../dist/services/agentInternalOperators.js");
 
 test("reconhece celular brasileiro com e sem o nono digito como a mesma identidade", () => {
   assert.deepEqual(
@@ -23,4 +26,28 @@ test("aceita numero nacional e inclui o codigo do Brasil", () => {
     operatorPhoneVariants("(61) 98189-1707"),
     ["5561981891707", "556181891707"],
   );
+});
+
+test("migra permissao antiga de reservas somente para confirmadas", () => {
+  const permissions = internalPermissionsFrom({
+    consultarReservas: true,
+    consultarDisponibilidade: true,
+    alterarDisponibilidade: false,
+  });
+  assert.equal(permissions.consultarReservasConfirmadas, true);
+  assert.equal(permissions.consultarReservasPendentes, false);
+  assert.equal(permissions.consultarReservasCanceladas, false);
+});
+
+test("preserva escopos granulares de disponibilidade", () => {
+  const permissions = internalPermissionsFrom({
+    alterarDia: true,
+    alterarExperiencia: false,
+    alterarHorario: true,
+    ajustarVagasExtras: false,
+  });
+  assert.equal(permissions.alterarDia, true);
+  assert.equal(permissions.alterarExperiencia, false);
+  assert.equal(permissions.alterarHorario, true);
+  assert.equal(permissions.ajustarVagasExtras, false);
 });

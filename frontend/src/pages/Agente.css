@@ -300,6 +300,11 @@
 .agent-internal-create input, .agent-internal-test-toolbar select, .agent-internal-operator-list header input { width: 100%; margin-top: 6px; border: 1px solid #d6e3e8; border-radius: 10px; padding: 10px 11px; outline: 0; background: white; color: #2e4658; font-size: .69rem; }
 .agent-internal-create fieldset { display: grid; gap: 7px; margin: 1px 0 0; border: 1px solid #dce7ec; border-radius: 12px; padding: 11px; }
 .agent-internal-create legend { padding: 0 6px; color: #587084; font-size: .61rem; font-weight: 800; }
+.agent-internal-permission-groups { display: grid; gap: 11px; }
+.agent-internal-permission-groups > section { display: grid; gap: 7px; }
+.agent-internal-permission-groups > section > h3 { margin: 0; color: #365466; font-size: .62rem; letter-spacing: .04em; text-transform: uppercase; }
+.agent-internal-permission-groups--operator { grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: 12px; }
+.agent-internal-permission-groups--operator > section { align-content: start; border: 1px solid #e0e9ed; border-radius: 11px; padding: 10px; background: #fff; }
 .agent-internal-permission, .agent-internal-permissions label { display: flex; gap: 8px; align-items: flex-start; border-radius: 9px; padding: 8px; background: #f7fafb; cursor: pointer; }
 .agent-internal-permission input, .agent-internal-permissions input { width: 15px; height: 15px; flex: 0 0 auto; margin: 1px 0 0; accent-color: #078fc7; }
 .agent-internal-permission span, .agent-internal-permission strong, .agent-internal-permission small, .agent-internal-permissions span, .agent-internal-permissions strong, .agent-internal-permissions small { display: block; }
@@ -342,7 +347,8 @@
   .agent-lead-data { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .agent-gallery-layout { grid-template-columns: 1fr; }
   .agent-internal-intro { grid-template-columns: 1fr; }
-  .agent-internal-permissions { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .agent-internal-permission-groups--operator { grid-template-columns: 1fr; }
+  .agent-internal-permissions { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
 @media (max-width: 760px) {

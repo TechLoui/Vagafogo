@@ -17,18 +17,28 @@ const CLIENT_STATE_COLLECTIONS = [
 const CLIENT_STATE_CLEANUP_VERSION = 2;
 
 export type AgentInternalPermission =
-  | "consultarReservas"
+  | "consultarReservasConfirmadas"
+  | "consultarReservasPendentes"
+  | "consultarReservasCanceladas"
   | "consultarDisponibilidade"
-  | "alterarDisponibilidade"
+  | "alterarDia"
+  | "alterarExperiencia"
+  | "alterarHorario"
+  | "ajustarVagasExtras"
   | "verDadosPessoais"
   | "verFinanceiro";
 
 export type AgentInternalPermissions = Record<AgentInternalPermission, boolean>;
 
 const DEFAULT_PERMISSIONS: AgentInternalPermissions = {
-  consultarReservas: true,
+  consultarReservasConfirmadas: true,
+  consultarReservasPendentes: false,
+  consultarReservasCanceladas: false,
   consultarDisponibilidade: true,
-  alterarDisponibilidade: false,
+  alterarDia: false,
+  alterarExperiencia: false,
+  alterarHorario: false,
+  ajustarVagasExtras: false,
   verDadosPessoais: false,
   verFinanceiro: false,
 };
@@ -69,11 +79,31 @@ const normalizeDate = (value: unknown) => {
 const todayKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 const numberValue = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const nonNegativeInteger = (value: unknown, maximum = 10000) => Math.min(maximum, Math.max(0, Math.trunc(numberValue(value))));
-const permissionsFrom = (value: unknown): AgentInternalPermissions => {
+export const internalPermissionsFrom = (value: unknown): AgentInternalPermissions => {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  return Object.fromEntries(
-    Object.keys(DEFAULT_PERMISSIONS).map((key) => [key, raw[key] === true]),
-  ) as AgentInternalPermissions;
+  const hasGranularReservationPermissions = [
+    "consultarReservasConfirmadas", "consultarReservasPendentes", "consultarReservasCanceladas",
+  ].some((key) => Object.prototype.hasOwnProperty.call(raw, key));
+  const hasGranularAvailabilityPermissions = [
+    "alterarDia", "alterarExperiencia", "alterarHorario", "ajustarVagasExtras",
+  ].some((key) => Object.prototype.hasOwnProperty.call(raw, key));
+  return {
+    consultarReservasConfirmadas: raw.consultarReservasConfirmadas === true
+      || (!hasGranularReservationPermissions && raw.consultarReservas === true),
+    consultarReservasPendentes: raw.consultarReservasPendentes === true,
+    consultarReservasCanceladas: raw.consultarReservasCanceladas === true,
+    consultarDisponibilidade: raw.consultarDisponibilidade === true,
+    alterarDia: raw.alterarDia === true
+      || (!hasGranularAvailabilityPermissions && raw.alterarDisponibilidade === true),
+    alterarExperiencia: raw.alterarExperiencia === true
+      || (!hasGranularAvailabilityPermissions && raw.alterarDisponibilidade === true),
+    alterarHorario: raw.alterarHorario === true
+      || (!hasGranularAvailabilityPermissions && raw.alterarDisponibilidade === true),
+    ajustarVagasExtras: raw.ajustarVagasExtras === true
+      || (!hasGranularAvailabilityPermissions && raw.alterarDisponibilidade === true),
+    verDadosPessoais: raw.verDadosPessoais === true,
+    verFinanceiro: raw.verFinanceiro === true,
+  };
 };
 const operatorId = (phone: string) => createHash("sha256").update(`agente-operador:v1\0${phone}`).digest("hex");
 
@@ -89,7 +119,7 @@ const serializeOperator = (id: string, data: FirebaseFirestore.DocumentData) => 
   nome: clean(data.nome, 120),
   telefone: clean(data.telefone, 15),
   ativo: data.ativo !== false,
-  permissoes: permissionsFrom(data.permissoes),
+  permissoes: internalPermissionsFrom(data.permissoes),
   criadoEm: serializeTimestamp(data.criadoEm),
   atualizadoEm: serializeTimestamp(data.atualizadoEm),
   atualizadoPor: clean(data.atualizadoPor, 180),
@@ -161,7 +191,7 @@ export const salvarOperadorInternoAgente = async (
     nome: name,
     telefone: phone,
     ativo: input.ativo !== false,
-    permissoes: permissionsFrom(input.permissoes ?? DEFAULT_PERMISSIONS),
+    permissoes: internalPermissionsFrom(input.permissoes ?? DEFAULT_PERMISSIONS),
     ...(existing.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
     atualizadoEm: FieldValue.serverTimestamp(),
     atualizadoPor: clean(updatedBy, 180),
@@ -192,7 +222,7 @@ export const atualizarOperadorInternoAgente = async (
     ...(Object.prototype.hasOwnProperty.call(input, "nome") ? { nome: clean(input.nome, 120) } : {}),
     ...(Object.prototype.hasOwnProperty.call(input, "ativo") ? { ativo: input.ativo === true } : {}),
     ...(Object.prototype.hasOwnProperty.call(input, "permissoes")
-      ? { permissoes: permissionsFrom(input.permissoes) }
+      ? { permissoes: internalPermissionsFrom(input.permissoes) }
       : {}),
     atualizadoEm: FieldValue.serverTimestamp(),
     atualizadoPor: clean(updatedBy, 180),
@@ -246,6 +276,18 @@ const requireOperator = async (phoneValue: unknown, permission: AgentInternalPer
   return context.operador;
 };
 
+const requireOperatorWithAnyPermission = async (
+  phoneValue: unknown,
+  permissions: AgentInternalPermission[],
+) => {
+  const context = await obterContextoOperadorInternoAgente(phoneValue);
+  if (!context.autorizado || !context.operador) throw new Error("AGENT_INTERNAL_ACCESS_DENIED");
+  if (!permissions.some((permission) => context.operador?.permissoes[permission])) {
+    throw new Error("AGENT_INTERNAL_PERMISSION_DENIED");
+  }
+  return context.operador;
+};
+
 const reservationParticipants = (data: FirebaseFirestore.DocumentData) => Math.max(
   nonNegativeInteger(data.participantes ?? data.Participantes),
   nonNegativeInteger(data.adultos ?? data.Adultos)
@@ -274,9 +316,19 @@ const reservationsForDate = async (date: string) => {
 };
 
 export const consultarReservasOperadorAgente = async (input: Record<string, unknown>) => {
-  const operator = await requireOperator(input.telefoneOperador, "consultarReservas");
+  const operator = await requireOperatorWithAnyPermission(input.telefoneOperador, [
+    "consultarReservasConfirmadas",
+    "consultarReservasPendentes",
+    "consultarReservasCanceladas",
+  ]);
   const date = normalizeDate(input.data);
-  const documents = await reservationsForDate(date);
+  const allDocuments = await reservationsForDate(date);
+  const documents = allDocuments.filter((document) => {
+    const group = reservationStatusGroup(document.data());
+    if (group === "confirmada") return operator.permissoes.consultarReservasConfirmadas;
+    if (group === "cancelada") return operator.permissoes.consultarReservasCanceladas;
+    return operator.permissoes.consultarReservasPendentes;
+  });
   const groups = { confirmadas: 0, pendentes: 0, canceladas: 0, outras: 0 };
   let participants = 0;
   let confirmedValue = 0;
@@ -313,6 +365,11 @@ export const consultarReservasOperadorAgente = async (input: Record<string, unkn
     ...groups,
     participantesConfirmados: participants,
     ...(operator.permissoes.verFinanceiro ? { valorConfirmado: Math.round(confirmedValue * 100) / 100 } : {}),
+    filtrosAutorizados: {
+      confirmadas: operator.permissoes.consultarReservasConfirmadas,
+      pendentes: operator.permissoes.consultarReservasPendentes,
+      canceladas: operator.permissoes.consultarReservasCanceladas,
+    },
     reservas: input.incluirDetalhes === false ? [] : details.slice(0, 100),
     detalhesLimitados: details.length > 100,
   };
@@ -414,18 +471,27 @@ type AvailabilityAction =
   | "definir_vagas_extras";
 
 export const alterarDisponibilidadeOperadorAgente = async (input: Record<string, unknown>) => {
-  const operator = await requireOperator(input.telefoneOperador, "alterarDisponibilidade");
-  if (input.confirmado !== true) throw new Error("AGENT_INTERNAL_CONFIRMATION_REQUIRED");
-  const simulation = input.simulacao === true;
-  const db = firestore();
-  const date = normalizeDate(input.data);
-  if (date < todayKey()) throw new Error("AGENT_INTERNAL_PAST_DATE_NOT_ALLOWED");
   const action = clean(input.acao, 40) as AvailabilityAction;
   const allowed = new Set<AvailabilityAction>([
     "fechar_dia", "abrir_dia", "fechar_pacote", "abrir_pacote",
     "fechar_horario", "abrir_horario", "definir_vagas_extras",
   ]);
   if (!allowed.has(action)) throw new Error("AGENT_INTERNAL_ACTION_INVALID");
+  const permissionByAction: Record<AvailabilityAction, AgentInternalPermission> = {
+    fechar_dia: "alterarDia",
+    abrir_dia: "alterarDia",
+    fechar_pacote: "alterarExperiencia",
+    abrir_pacote: "alterarExperiencia",
+    fechar_horario: "alterarHorario",
+    abrir_horario: "alterarHorario",
+    definir_vagas_extras: "ajustarVagasExtras",
+  };
+  const operator = await requireOperator(input.telefoneOperador, permissionByAction[action]);
+  if (input.confirmado !== true) throw new Error("AGENT_INTERNAL_CONFIRMATION_REQUIRED");
+  const simulation = input.simulacao === true;
+  const db = firestore();
+  const date = normalizeDate(input.data);
+  if (date < todayKey()) throw new Error("AGENT_INTERNAL_PAST_DATE_NOT_ALLOWED");
   const dayRef = db.collection("disponibilidade").doc(date);
   const beforeDaySnapshot = await dayRef.get();
   const beforeDay = beforeDaySnapshot.exists ? beforeDaySnapshot.data() ?? {} : {};
