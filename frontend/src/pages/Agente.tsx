@@ -12,6 +12,7 @@ import {
   FaComments,
   FaEdit,
   FaHeadset,
+  FaImage,
   FaPaperPlane,
   FaPlug,
   FaQrcode,
@@ -32,7 +33,7 @@ import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import "./Agente.css";
 
-type TabKey = "overview" | "sessions" | "leads" | "whatsapp" | "prompt" | "diagnostics" | "settings";
+type TabKey = "overview" | "sessions" | "leads" | "gallery" | "whatsapp" | "prompt" | "diagnostics" | "settings";
 type ContactMode = "bot" | "human" | "blocked";
 
 type AgentStatus = {
@@ -103,12 +104,27 @@ type AgentLead = {
   isTest: boolean;
 };
 
+type GalleryCategory = "brunch" | "trilha" | "espacos" | "combo" | "educacao_ambiental";
+type GalleryPhoto = {
+  id: string;
+  categoria: GalleryCategory;
+  titulo: string;
+  legenda?: string | null;
+  mimeType: string;
+  filename: string;
+  sizeBytes: number;
+  ativo: boolean;
+  previewUrl?: string;
+  padrao?: boolean;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://vagafogo-production.up.railway.app";
 
 const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
   { key: "overview", label: "Visão geral", icon: FaRobot },
   { key: "sessions", label: "Atendimentos", icon: FaHeadset },
   { key: "leads", label: "Leads gerados", icon: FaChartLine },
+  { key: "gallery", label: "Galeria", icon: FaImage },
   { key: "whatsapp", label: "WhatsApp", icon: FaWhatsapp },
   { key: "prompt", label: "Assistente", icon: FaEdit },
   { key: "diagnostics", label: "Diagnóstico", icon: FaPlug },
@@ -119,6 +135,7 @@ const titles: Record<TabKey, { title: string; subtitle: string }> = {
   overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp em um só lugar." },
   sessions: { title: "Atendimentos ativos", subtitle: "Assuma, devolva ao bot ou bloqueie contatos específicos." },
   leads: { title: "Leads em acompanhamento", subtitle: "Acompanhe a coleta desde o primeiro interesse até o encerramento, sem armazenar a conversa." },
+  gallery: { title: "Galeria do agente", subtitle: "Cadastre as fotos que a Jatobá pode enviar durante o atendimento." },
   whatsapp: { title: "Conexão do WhatsApp", subtitle: "Conecte o número do agente e valide o envio antes de operar." },
   prompt: { title: "Assistente e prompt", subtitle: "Ajuste o comportamento da IA e teste sem enviar mensagens reais." },
   diagnostics: { title: "Diagnóstico dos serviços", subtitle: "Verificação sob demanda da integração entre os serviços." },
@@ -322,16 +339,16 @@ export function Agente() {
     setLeadsLoading(false);
   }), []);
 
-  const showMessage = (text: string) => {
+  const showMessage = useCallback((text: string) => {
     setError("");
     setNotice(text);
     window.setTimeout(() => setNotice(""), 4_000);
-  };
+  }, []);
 
-  const showError = (caught: unknown) => {
+  const showError = useCallback((caught: unknown) => {
     setNotice("");
     setError(caught instanceof Error ? caught.message : "Não foi possível concluir a ação.");
-  };
+  }, []);
 
   const selectTab = (next: TabKey) => {
     setTab(next);
@@ -443,6 +460,8 @@ export function Agente() {
             />
           ) : tab === "leads" ? (
             <LeadsPanel leads={leads} loading={leadsLoading} error={leadsError} onMessage={showMessage} onError={showError} />
+          ) : tab === "gallery" ? (
+            <GalleryPanel onMessage={showMessage} onError={showError} />
           ) : tab === "whatsapp" ? (
             <WhatsappPanel status={status} onReload={() => loadStatus()} onMessage={showMessage} onError={showError} />
           ) : tab === "prompt" ? (
@@ -656,6 +675,107 @@ function Sessions(props: SessionsProps) {
   </section>;
 }
 
+const galleryCategoryLabels: Record<GalleryCategory, string> = {
+  brunch: "Brunch",
+  trilha: "Trilha",
+  espacos: "Espaços e natureza",
+  combo: "Combo Brunch + Trilha",
+  educacao_ambiental: "Educação ambiental",
+};
+
+function GalleryPanel({ onMessage, onError }: { onMessage: (text: string) => void; onError: (error: unknown) => void }) {
+  const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [category, setCategory] = useState<GalleryCategory>("espacos");
+  const [title, setTitle] = useState("");
+  const [caption, setCaption] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api("/crm/agente/galeria") as { fotos?: GalleryPhoto[] };
+      setPhotos(Array.isArray(data.fotos) ? data.fotos : []);
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const upload = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file || !title.trim()) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      onError(new Error("Use uma imagem JPG, PNG ou WebP."));
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      onError(new Error("A imagem deve ter no máximo 5 MB."));
+      return;
+    }
+    setUploading(true);
+    try {
+      await api("/crm/agente/galeria", {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type,
+          "X-File-Name": encodeURIComponent(file.name),
+          "X-Gallery-Category": encodeURIComponent(category),
+          "X-Gallery-Title": encodeURIComponent(title.trim()),
+          "X-Gallery-Caption": encodeURIComponent(caption.trim()),
+        },
+        body: file,
+      });
+      setFile(null);
+      setTitle("");
+      setCaption("");
+      const input = document.getElementById("agent-gallery-file") as HTMLInputElement | null;
+      if (input) input.value = "";
+      await load();
+      onMessage("Foto adicionada à galeria da Jatobá.");
+    } catch (caught) {
+      onError(caught);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const remove = async (photo: GalleryPhoto) => {
+    if (!window.confirm(`Excluir a foto “${photo.titulo}”?`)) return;
+    try {
+      await api(`/crm/agente/galeria/${encodeURIComponent(photo.id)}`, { method: "DELETE" });
+      await load();
+      onMessage("Foto removida da galeria.");
+    } catch (caught) {
+      onError(caught);
+    }
+  };
+
+  return <section className="agent-gallery-layout">
+    <article className="agent-card agent-gallery-form">
+      <div className="agent-card__title"><span><FaImage /></span><div><h2>Adicionar foto</h2><p>Estas imagens são permanentes e separadas do histórico temporário das conversas.</p></div></div>
+      <form onSubmit={upload}>
+        <label>Categoria<select value={category} onChange={(event) => setCategory(event.target.value as GalleryCategory)}>{Object.entries(galleryCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} placeholder="Ex.: Mesa do brunch" /></label>
+        <label>Legenda opcional<textarea value={caption} onChange={(event) => setCaption(event.target.value)} maxLength={500} placeholder="Legenda curta enviada junto da imagem" /></label>
+        <label className="agent-gallery-file">Imagem<input id="agent-gallery-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><span>{file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB` : "JPG, PNG ou WebP · até 5 MB"}</span></label>
+        <button className="agent-primary" type="submit" disabled={uploading || !file || !title.trim()}><FaImage />{uploading ? "Enviando…" : "Adicionar à galeria"}</button>
+      </form>
+    </article>
+    <article className="agent-card agent-gallery-list-card">
+      <div className="agent-card__title"><span><FaImage /></span><div><h2>Fotos disponíveis</h2><p>A Jatobá escolhe até três imagens da categoria solicitada.</p></div></div>
+      {loading ? <p className="agent-empty">Carregando galeria…</p> : photos.length === 0 ? <p className="agent-empty">Nenhuma foto cadastrada. Adicione as primeiras imagens para habilitar o envio pelo bot.</p> : <div className="agent-gallery-grid">{photos.map((photo) => <article key={photo.id}>
+        {photo.previewUrl ? <img src={photo.previewUrl} alt={photo.titulo} /> : <div className="agent-gallery-placeholder"><FaImage /></div>}
+        <div><small>{galleryCategoryLabels[photo.categoria] || photo.categoria}</small><strong>{photo.titulo}</strong>{photo.legenda ? <p>{photo.legenda}</p> : null}<span>{photo.padrao ? "Foto padrão do site" : `${(photo.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</span></div>
+        {!photo.padrao ? <button type="button" onClick={() => void remove(photo)} title="Excluir foto"><FaTrash /></button> : null}
+      </article>)}</div>}
+    </article>
+  </section>;
+}
+
 function WhatsappPanel({ status, onReload, onMessage, onError }: { status: AgentStatus; onReload: () => Promise<void>; onMessage: (text: string) => void; onError: (error: unknown) => void }) {
   const [qr, setQr] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -697,12 +817,12 @@ function PromptPanel({ onMessage, onError }: { onMessage: (text: string) => void
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [history, setHistory] = useState<Array<{ role: "user" | "assistant"; text: string; media?: { type?: string; dataUrl?: string; items?: Array<{ dataUrl?: string; titulo?: string }> } }>>([]);
   const [sessionId, setSessionId] = useState("");
   const [testing, setTesting] = useState(false);
   useEffect(() => { api("/crm/agente/prompt").then((data) => setPrompt(String((data as { prompt?: string }).prompt || ""))).catch(onError).finally(() => setLoading(false)); }, [onError]);
-  const test = async () => { const pergunta = input.trim(); if (!pergunta) return; setHistory((items) => [...items, { role: "user", text: pergunta }]); setInput(""); setTesting(true); try { const data = await api("/crm/agente/testar", { method: "POST", body: JSON.stringify({ pergunta, session_id: sessionId }) }) as { resposta?: string; session_id?: string }; if (data.session_id) setSessionId(data.session_id); setHistory((items) => [...items, { role: "assistant", text: String(data.resposta || "Resposta vazia") }]); } catch (caught) { onError(caught); } finally { setTesting(false); } };
-  return <div className="agent-prompt-grid"><article className="agent-card agent-prompt-editor"><div className="agent-card__title"><span><FaEdit /></span><div><h2>Prompt principal</h2><p>Não inclua regras de preço ou disponibilidade que pertencem ao sistema.</p></div></div>{loading ? <p>Carregando…</p> : <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />}<button className="agent-primary" disabled={saving || !prompt.trim()} onClick={async () => { setSaving(true); try { await api("/crm/agente/prompt", { method: "POST", body: JSON.stringify({ prompt }) }); onMessage("Prompt salvo. As novas regras entram na próxima resposta sem apagar as sessões ativas."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar prompt"}</button></article><article className="agent-card agent-chat-test"><div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado</h2><p>Não envia WhatsApp nem cria cobrança. Leads usam o número padrão +55 (00) 00000-0000 e recebem o sinalizador TESTE.</p></div></div><div className="agent-test-history">{history.length === 0 ? <p>Envie uma pergunta para validar o comportamento.</p> : history.map((item, index) => <div key={`${item.role}-${index}`} className={item.role}>{item.text}</div>)}</div><div className="agent-test-input"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void test(); }} placeholder="Pergunte como se fosse um cliente…" /><button onClick={() => void test()} disabled={testing || !input.trim()}><FaPaperPlane /></button></div><button className="agent-link" onClick={() => { setHistory([]); setSessionId(""); }}>Iniciar novo teste</button></article></div>;
+  const test = async () => { const pergunta = input.trim(); if (!pergunta) return; setHistory((items) => [...items, { role: "user", text: pergunta }]); setInput(""); setTesting(true); try { const data = await api("/crm/agente/testar", { method: "POST", body: JSON.stringify({ pergunta, session_id: sessionId }) }) as { resposta?: string; session_id?: string; media?: { type?: string; dataUrl?: string; items?: Array<{ dataUrl?: string; titulo?: string }> } }; if (data.session_id) setSessionId(data.session_id); setHistory((items) => [...items, { role: "assistant", text: String(data.resposta || "Resposta vazia"), media: data.media }]); } catch (caught) { onError(caught); } finally { setTesting(false); } };
+  return <div className="agent-prompt-grid"><article className="agent-card agent-prompt-editor"><div className="agent-card__title"><span><FaEdit /></span><div><h2>Prompt principal</h2><p>Não inclua regras de preço ou disponibilidade que pertencem ao sistema.</p></div></div>{loading ? <p>Carregando…</p> : <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />}<button className="agent-primary" disabled={saving || !prompt.trim()} onClick={async () => { setSaving(true); try { await api("/crm/agente/prompt", { method: "POST", body: JSON.stringify({ prompt }) }); onMessage("Prompt salvo. As novas regras entram na próxima resposta sem apagar as sessões ativas."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar prompt"}</button></article><article className="agent-card agent-chat-test"><div className="agent-card__title"><span><FaComments /></span><div><h2>Teste privado</h2><p>Não envia WhatsApp nem cria cobrança. Leads usam o número padrão +55 (00) 00000-0000 e recebem o sinalizador TESTE.</p></div></div><div className="agent-test-history">{history.length === 0 ? <p>Envie uma pergunta para validar o comportamento.</p> : history.map((item, index) => <div key={`${item.role}-${index}`} className={item.role}>{item.media?.type === "gallery" ? <span className="agent-test-gallery">{item.media.items?.map((photo, photoIndex) => photo.dataUrl ? <img key={`${photo.titulo || "foto"}-${photoIndex}`} src={photo.dataUrl} alt={photo.titulo || "Foto da galeria"} /> : null)}</span> : item.media?.type === "image" && item.media.dataUrl ? <img className="agent-test-image" src={item.media.dataUrl} alt="Imagem gerada pelo fluxo" /> : null}<span>{item.text}</span></div>)}</div><div className="agent-test-input"><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void test(); }} placeholder="Pergunte como se fosse um cliente…" /><button onClick={() => void test()} disabled={testing || !input.trim()}><FaPaperPlane /></button></div><button className="agent-link" onClick={() => { setHistory([]); setSessionId(""); }}>Iniciar novo teste</button></article></div>;
 }
 
 function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {

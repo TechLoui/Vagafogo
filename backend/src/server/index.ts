@@ -54,6 +54,12 @@ import { registrarEventoJornada } from "../services/crmJourneys";
 import { agentServiceConfigured, requestAgentService, type AgentResponse } from "../services/agentGateway";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
+  armazenarFotoGaleriaAgente,
+  excluirFotoGaleriaAgente,
+  listarGaleriaAgente,
+  obterFotosGaleriaParaAgente,
+} from "../services/agentMediaGallery";
+import {
   atualizarLeadAgente,
   criarLinkCartaoAgente,
   excluirLeadAgente,
@@ -73,6 +79,32 @@ app.set("trust proxy", 1);
 
 // Permitir requisições do localhost:5173 (seu front-end)
 app.use(cors());
+
+const decodeHeader = (value: string | undefined) => {
+  try { return decodeURIComponent(value ?? ""); } catch { return value ?? ""; }
+};
+
+app.post('/crm/agente/galeria', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '5mb' }), exigirAdminCrm, async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body)) {
+      res.status(400).json({ error: 'AGENT_GALLERY_MEDIA_BODY_INVALID' });
+      return;
+    }
+    const foto = await armazenarFotoGaleriaAgente(
+      req.body,
+      req.get('Content-Type'),
+      decodeHeader(req.get('X-File-Name')),
+      decodeHeader(req.get('X-Gallery-Category')),
+      decodeHeader(req.get('X-Gallery-Title')),
+      decodeHeader(req.get('X-Gallery-Caption')),
+      obterIdentidadeAdminCrm(res),
+    );
+    res.status(201).json({ foto });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
 
 app.post('/crm/campanhas/midia', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '5mb' }), exigirAdminCrm, async (req, res) => {
   try {
@@ -134,6 +166,24 @@ const responderProxyAgente = (res: Response, response: AgentResponse) => {
 // servicos nunca e exposto no navegador.
 app.get('/crm/agente/status', exigirAdminCrm, async (_req, res) => {
   responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/status"));
+});
+
+app.get('/crm/agente/galeria', exigirAdminCrm, async (_req, res) => {
+  try {
+    res.json({ fotos: await listarGaleriaAgente() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.delete('/crm/agente/galeria/:id', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await excluirFotoGaleriaAgente(req.params.id));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
 });
 
 app.get('/crm/agente/qrcode', exigirAdminCrm, async (_req, res) => {
@@ -331,6 +381,15 @@ app.get('/internal/agente/ferramentas/pacotes', exigirServicoAgente, async (_req
     res.json(await listarCatalogoAgente());
   } catch (error) {
     res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/internal/agente/ferramentas/galeria', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await obterFotosGaleriaParaAgente(req.query.categoria, req.query.limite));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
   }
 });
 

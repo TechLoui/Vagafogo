@@ -173,6 +173,8 @@
 .agent-test-history > p { color: #8a9aa5; font-size: .65rem; text-align: center; }
 .agent-test-history > div { width: fit-content; max-width: 80%; margin-bottom: 8px; border-radius: 13px 13px 13px 4px; padding: 9px 11px; background: white; color: #344c5d; font-size: .68rem; line-height: 1.45; white-space: pre-wrap; }
 .agent-test-history > div.user { margin-left: auto; border-radius: 13px 13px 4px 13px; background: var(--agent-blue); color: white; }
+.agent-test-gallery { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; margin-bottom: 7px; }
+.agent-test-gallery img, .agent-test-image { width: 100%; max-height: 150px; border-radius: 8px; object-fit: cover; }
 .agent-test-input { display: flex; gap: 8px; margin-top: 10px; }
 .agent-test-input input { flex: 1; border: 1px solid #d6e2e8; border-radius: 10px; padding: 10px 11px; outline: 0; color: #2d4658; font-size: .68rem; }
 .agent-link { align-self: flex-start; margin-top: 10px; border: 0; background: transparent; color: #0788bf; font-size: .61rem; font-weight: 750; }
@@ -263,6 +265,24 @@
 .agent-modal > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .agent-modal > footer .agent-link, .agent-modal > footer .agent-primary { align-self: auto; margin-top: 0; }
 
+.agent-gallery-layout { display: grid; grid-template-columns: minmax(280px,.72fr) minmax(520px,1.5fr); gap: 15px; align-items: start; }
+.agent-gallery-form form { display: grid; gap: 12px; }
+.agent-gallery-form label { display: block; color: #587084; font-size: .64rem; font-weight: 750; }
+.agent-gallery-form input, .agent-gallery-form select, .agent-gallery-form textarea { width: 100%; margin-top: 6px; border: 1px solid #d6e3e8; border-radius: 10px; padding: 10px 11px; outline: 0; background: white; color: #2e4658; font-size: .69rem; }
+.agent-gallery-form textarea { min-height: 92px; resize: vertical; }
+.agent-gallery-file input { padding: 8px; }
+.agent-gallery-file span { display: block; margin-top: 5px; color: #8797a3; font-size: .56rem; font-weight: 500; }
+.agent-gallery-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
+.agent-gallery-grid > article { position: relative; min-width: 0; overflow: hidden; border: 1px solid #dce7ec; border-radius: 13px; background: #f8fafb; }
+.agent-gallery-grid img, .agent-gallery-placeholder { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; object-fit: cover; background: #eaf2f5; color: #7ca6b8; }
+.agent-gallery-grid > article > div:not(.agent-gallery-placeholder) { padding: 10px; }
+.agent-gallery-grid small, .agent-gallery-grid strong, .agent-gallery-grid span { display: block; }
+.agent-gallery-grid small { color: #0c8bbd; font-size: .52rem; font-weight: 850; text-transform: uppercase; }
+.agent-gallery-grid strong { margin-top: 4px; overflow-wrap: anywhere; color: #29495d; font-size: .68rem; }
+.agent-gallery-grid p { margin: 5px 0 0; color: #6e8290; font-size: .57rem; line-height: 1.4; }
+.agent-gallery-grid span { margin-top: 7px; color: #8a9aa5; font-size: .52rem; }
+.agent-gallery-grid > article > button { position: absolute; top: 7px; right: 7px; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.8); border-radius: 9px; background: rgba(255,255,255,.92); color: #c43846; box-shadow: 0 3px 10px rgba(24,53,67,.14); }
+
 @media (max-width: 1050px) {
   .agent-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .agent-next-card { grid-column: span 2; }
@@ -271,6 +291,7 @@
   .agent-thread-actions button:not(.is-close) { font-size: 0; }
   .agent-thread-actions button svg { font-size: .8rem; }
   .agent-lead-data { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .agent-gallery-layout { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -305,4 +326,5 @@
   .agent-lead-data { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .agent-lead-editor__grid { grid-template-columns: 1fr; }
   .agent-lead-editor__grid label.is-wide { grid-column: auto; }
+  .agent-gallery-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
