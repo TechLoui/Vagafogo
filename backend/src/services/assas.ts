@@ -1150,13 +1150,40 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       throw new Error("O Asaas nao retornou o identificador da cobranca.");
     }
 
+    const statusPagamento = String(cobrancaData.status ?? "").toUpperCase();
+    const pagamentoNegado = [
+      "DECLINED",
+      "DENIED",
+      "REFUSED",
+      "FAILED",
+      "CANCELED",
+      "CANCELLED",
+      "CHARGEBACK",
+    ].includes(statusPagamento);
+
+    if (pagamentoNegado) {
+      const errorResponse = {
+        status: "erro",
+        code: "PAYMENT_DECLINED",
+        error: `Pagamento nao autorizado (${statusPagamento}). Verifique os dados e tente novamente.`,
+      };
+      await concluirTentativaPagamento(
+        paymentAttempt,
+        { httpStatus: 400, body: errorResponse },
+        cobrancaData.id,
+      );
+      await removerReservaProvisoria(reservaId, `cobranca_${statusPagamento.toLowerCase()}`);
+      provisionalReservationId = null;
+      res.status(400).json(errorResponse);
+      return;
+    }
+
     await updateDoc(doc(db, "reservas", reservaId), {
       asaasPaymentId: cobrancaData.id,
       formaPagamento: billingType,
       statusPagamentoIntegracao: "cobranca_criada",
     });
     provisionalReservationId = null;
-    const statusPagamento = String(cobrancaData.status ?? "").toUpperCase();
     const pagamentoConfirmado = ["CONFIRMED", "RECEIVED", "PAID"].includes(statusPagamento);
 
     // O CRM e os disparadores so recebem a reserva depois que o provedor
