@@ -1199,6 +1199,15 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     () => pacotes.filter((p) => p.id && selectedPackages.includes(p.id)),
     [pacotes, selectedPackages]
   );
+  const algumaExperienciaAceitaPet = selectedPacotes.some((pacote) => pacote.aceitaPet === true);
+
+  useEffect(() => {
+    if (selectedPacotes.length > 0 && !algumaExperienciaAceitaPet) {
+      setTemPet(false);
+      setSubPassoParticipantes(0);
+      setFieldError("pet");
+    }
+  }, [algumaExperienciaAceitaPet, selectedPacotes.length, setFieldError]);
 
   const pacoteHorarioAtual = selectedPacotes[indicePacoteHorario] ?? null;
   const temProximoPacoteHorario = indicePacoteHorario < selectedPacotes.length - 1;
@@ -2433,7 +2442,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         }
       }
 
-      if (temPet === null) {
+      if (algumaExperienciaAceitaPet && temPet === null) {
         errors.pet = "Informe se vai levar pet.";
       }
     }
@@ -2512,7 +2521,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     etapa === 2 && temProximoPacoteHorario
       ? "Próxima atividade"
       : etapa === 3 && subPassoParticipantes === 0
-      ? "Continuar para pet"
+      ? algumaExperienciaAceitaPet
+        ? "Continuar para pet"
+        : "Continuar para pagamento"
       : etapa === 3
       ? "Continuar para pagamento"
       : etapa < 4
@@ -2672,6 +2683,12 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           scrollToErrorField(errors);
           return;
         }
+        if (!algumaExperienciaAceitaPet) {
+          setTemPet(false);
+          setEtapa(4);
+          setSubEtapaPagamento("metodo");
+          return;
+        }
         setSubPassoParticipantes(1);
         return;
       }
@@ -2721,7 +2738,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       return;
     }
 
-    if (!selectedDay || selectedPackages.length === 0 || temPet === null) {
+    const temPetNaReserva = algumaExperienciaAceitaPet ? temPet : false;
+    if (!selectedDay || selectedPackages.length === 0 || temPetNaReserva === null) {
       return;
     }
 
@@ -2801,7 +2819,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         billingType: formaPagamento,
         horario: horarioSelecionado,
         horariosPorPacote,
-        temPet,
+        temPet: temPetNaReserva,
         pacoteIds: selectedPackages,
         comboId: grupoComboPrincipal?.refId || null,
         atribuicao: obterAtribuicaoReserva(),
@@ -4158,25 +4176,27 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F7FAEF] p-1">
-                      {["Pessoas", "Pet"].map((label, indice) => (
-                        <button
-                          key={label}
-                          type="button"
-                          disabled={indice > subPassoParticipantes}
-                          onClick={() => indice <= subPassoParticipantes && setSubPassoParticipantes(indice)}
-                          className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
-                            indice === subPassoParticipantes
-                              ? "bg-[#8B4F23] text-white shadow-sm"
-                              : indice < subPassoParticipantes
-                              ? "bg-white text-[#8B4F23]"
-                              : "cursor-not-allowed text-slate-400"
-                          }`}
-                        >
-                          {indice + 1}. {label}
-                        </button>
-                      ))}
-                    </div>
+                    {algumaExperienciaAceitaPet && (
+                      <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F7FAEF] p-1">
+                        {["Pessoas", "Pet"].map((label, indice) => (
+                          <button
+                            key={label}
+                            type="button"
+                            disabled={indice > subPassoParticipantes}
+                            onClick={() => indice <= subPassoParticipantes && setSubPassoParticipantes(indice)}
+                            className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                              indice === subPassoParticipantes
+                                ? "bg-[#8B4F23] text-white shadow-sm"
+                                : indice < subPassoParticipantes
+                                ? "bg-white text-[#8B4F23]"
+                                : "cursor-not-allowed text-slate-400"
+                            }`}
+                          >
+                            {indice + 1}. {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Seletor único de participantes por tipo */}
                     {subPassoParticipantes === 0 && (
@@ -4287,7 +4307,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                     )}
 
                     {/* Pet */}
-                    {subPassoParticipantes === 1 && (
+                    {algumaExperienciaAceitaPet && subPassoParticipantes === 1 && (
                     <div ref={petRef} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                       <h4 className="mb-2 text-sm font-bold text-[#2D1E0F]">Vai levar pet? <span className="text-red-500">*</span></h4>
 
