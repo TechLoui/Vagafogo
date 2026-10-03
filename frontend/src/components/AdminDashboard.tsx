@@ -110,7 +110,7 @@ const whatsappTemplateLembreteDiaPadrao =
   'Bom dia, {nome}! 🌿\n\nA Fazenda Vagafogo espera você hoje.\n\n⏰ Horário: {horario}\n🎫 Experiência: {atividade}\n👥 Participantes: {participantes}\n\nOrientações importantes:\n{instrucoes}\n\nDesejamos uma ótima experiência!';
 
 const whatsappTemplateAvisoNovaReservaPadrao =
-  '🌿 Nova reserva recebida\n\nCódigo: {id}\nCliente: {nome}\nTelefone: {telefone}\nE-mail: {email}\nData: {data}\nHorário: {horario}\nAtividade: {atividade}\nParticipantes: {participantes}\nValor: {valor}\nPagamento: {pagamento}\nStatus: {status}';
+  '🌿 Reserva para hoje\n\nCódigo: {id}\nCliente: {nome}\nTelefone: {telefone}\nE-mail: {email}\nData: {data}\nHorário: {horario}\nAtividade: {atividade}\nParticipantes: {participantes}\nValor: {valor}\nPagamento: {pagamento}\nStatus: {status}';
 
 const emailAssuntoConfirmacaoPadrao = 'Confirmação de reserva - Vagafogo';
 
@@ -480,7 +480,7 @@ type WhatsappReservationAlert = {
   nome: string;
   data: string;
   horario: string;
-  status: 'aguardando' | 'enviando' | 'enviado' | 'erro' | 'ignorado';
+  status: 'agendado' | 'aguardando' | 'aguardando_confirmacao' | 'enviando' | 'enviado' | 'erro' | 'ignorado';
   tentativas: number;
   destino?: string;
   ultimoErro?: string;
@@ -15866,7 +15866,7 @@ const totalParticipantesDoDia = useMemo(() => {
               {
                 label: 'Avisos de reserva',
                 value: whatsappReservationAlerts.filter((item) => item.status === 'enviado').length.toLocaleString('pt-BR'),
-                hint: `${whatsappReservationAlerts.filter((item) => item.status === 'aguardando' || item.status === 'enviando').length} na fila · ${whatsappReservationAlerts.filter((item) => item.status === 'erro').length} com erro`,
+                hint: `${whatsappReservationAlerts.filter((item) => ['agendado', 'aguardando', 'aguardando_confirmacao', 'enviando'].includes(item.status)).length} na fila · ${whatsappReservationAlerts.filter((item) => item.status === 'erro').length} com erro`,
                 icon: FaPaperPlane,
                 tone: whatsappReservationAlerts.some((item) => item.status === 'erro') ? 'amber' : 'emerald',
               },
@@ -15877,7 +15877,7 @@ const totalParticipantesDoDia = useMemo(() => {
           <nav className="admin-whatsapp-shortcuts" aria-label="Atalhos da configuração do WhatsApp">
             {[
               { id: 'whatsapp-conexao', label: 'Campanhas', hint: 'Sessão separada, quando necessária', icon: FaQrcode },
-              { id: 'whatsapp-nova-reserva', label: 'Aviso ao Uirá', hint: 'Somente novas entradas do dia', icon: FaCalendarAlt },
+              { id: 'whatsapp-nova-reserva', label: 'Aviso ao Uirá', hint: 'Somente visitas do dia', icon: FaCalendarAlt },
               { id: 'whatsapp-lembrete-dia', label: 'Lembrete do dia', hint: 'Visitantes confirmados às 08h', icon: FaClock },
               { id: 'whatsapp-confirmacao', label: 'Confirmação', hint: 'Pagamento aprovado no site', icon: FaCheck },
               { id: 'whatsapp-testes', label: 'Testes', hint: 'Envio somente ao número interno', icon: FaPaperPlane },
@@ -16096,7 +16096,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Aviso interno de nova reserva para o Uirá</h3>
                   <p className="text-sm text-slate-500">
-                    Avisa somente quando uma nova reserva entra no sistema naquele dia. Histórico e filas de dias anteriores não são disparados.
+                    Envia somente no dia da visita. Reservas para datas futuras ficam agendadas até o dia correto.
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
@@ -16125,8 +16125,10 @@ const totalParticipantesDoDia = useMemo(() => {
                     <ul className="mt-2 space-y-1 text-xs leading-relaxed text-emerald-900">
                       <li>• Uma entrada por reserva, sem duplicar em tentativas de pagamento.</li>
                       <li>• Reservas criadas manualmente no painel não geram este aviso.</li>
+                      <li>• Somente reservas confirmadas e pagas são enviadas.</li>
+                      <li>• Reservas futuras aguardam a data da visita; nunca são antecipadas.</li>
                       <li>• Entre avisos consecutivos há uma espera aleatória de 1 a 2 minutos.</li>
-                      <li>• Itens que não forem processados no mesmo dia são descartados, sem backlog.</li>
+                      <li>• Os envios começam às 08h e registros de dias passados são ignorados.</li>
                       <li>• Até cinco tentativas com espera progressiva quando houver falha.</li>
                       <li>• Histórico de enviados, fila e erros preservado no Firestore.</li>
                     </ul>
@@ -16193,7 +16195,7 @@ const totalParticipantesDoDia = useMemo(() => {
                           <td className="px-2 py-2 font-mono">#{alert.reservaId.slice(-8)}</td>
                           <td className="px-2 py-2 font-semibold">{alert.nome}</td>
                           <td className="px-2 py-2">{alert.data || '-'} {alert.horario || ''}</td>
-                          <td className="px-2 py-2"><span className={`rounded-full px-2 py-1 font-semibold ${alert.status === 'enviado' ? 'bg-emerald-50 text-emerald-700' : alert.status === 'erro' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{alert.status}</span></td>
+                          <td className="px-2 py-2"><span className={`rounded-full px-2 py-1 font-semibold ${alert.status === 'enviado' ? 'bg-emerald-50 text-emerald-700' : alert.status === 'erro' ? 'bg-rose-50 text-rose-700' : alert.status === 'agendado' ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>{alert.status === 'aguardando_confirmacao' ? 'aguardando pagamento' : alert.status}</span></td>
                           <td className="px-2 py-2">{alert.tentativas}</td>
                           <td className="max-w-[260px] truncate px-2 py-2 text-slate-500" title={alert.ultimoErro}>{alert.ultimoErro || (alert.enviadoEm ? `Enviado em ${dayjs(alert.enviadoEm.toDate()).format('DD/MM HH:mm')}` : 'Aguardando processamento')}</td>
                           <td className="px-2 py-2 text-right">{alert.status === 'erro' ? <button type="button" onClick={() => reenviarAvisoNovaReserva(alert.reservaId)} disabled={whatsappAlertRetryingId === alert.reservaId} className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-600 disabled:opacity-50">{whatsappAlertRetryingId === alert.reservaId ? 'Reenviando...' : 'Reenviar'}</button> : null}</td>

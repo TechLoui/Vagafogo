@@ -12,7 +12,7 @@ const MIN_SEND_DELAY_MS = 60_000;
 const MAX_SEND_DELAY_MS = 120_000;
 
 const DEFAULT_TEMPLATE =
-  "🌿 Nova reserva recebida\n\n" +
+  "🌿 Reserva para hoje\n\n" +
   "Código: {id}\n" +
   "Cliente: {nome}\n" +
   "Telefone: {telefone}\n" +
@@ -38,6 +38,30 @@ const normalizePhone = (value: unknown) => {
 };
 const formatCurrency = (value: unknown) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numberValue(value));
 const dateKey = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(date);
+const localMinutes = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return value("hour") * 60 + value("minute");
+};
+const parseMinutes = (value: unknown, fallback = 8 * 60) => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(clean(value, 20));
+  if (!match) return fallback;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 ? hours * 60 + minutes : fallback;
+};
+const reservationDate = (value: unknown) => {
+  const raw = clean(value, 40);
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+  if (iso) return iso[1];
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(raw);
+  return br ? `${br[3]}-${br[2]}-${br[1]}` : "";
+};
 const timestampMillis = (value: any) => {
   if (typeof value?.toMillis === "function") return Number(value.toMillis());
   if (typeof value?.toDate === "function") return Number(value.toDate().getTime());
@@ -63,6 +87,56 @@ const renderTemplate = (template: string, alert: FirebaseFirestore.DocumentData)
   return template.replace(/\{([a-z]+)\}/gi, (match, key) => values[key.toLowerCase()] ?? match).trim();
 };
 
+const confirmedReservationForToday = (reservation: FirebaseFirestore.DocumentData, today: string) =>
+  reservation.origem !== "manual"
+  && reservation.confirmada === true
+  && ["pago", "confirmada", "confirmado"].includes(clean(reservation.status, 40).toLowerCase())
+  && reservationDate(reservation.data ?? reservation.Data) === today;
+
+const reservationAlertData = (reservaId: string, reserva: FirebaseFirestore.DocumentData) => ({
+  reservaId,
+  nome: clean(reserva.nome ?? reserva.Nome, 160),
+  telefone: clean(reserva.telefone ?? reserva.Telefone, 80),
+  email: clean(reserva.email ?? reserva.Email, 240),
+  data: reservationDate(reserva.data ?? reserva.Data),
+  horario: clean(reserva.horario ?? reserva.Horario, 100),
+  atividade: clean(reserva.atividade ?? reserva.Atividade, 300),
+  participantes: numberValue(reserva.participantes ?? reserva.Participantes),
+  valor: numberValue(reserva.valor ?? reserva.Valor),
+  formaPagamento: clean(reserva.formaPagamento, 80),
+  statusReserva: clean(reserva.status ?? reserva.Status ?? "aguardando", 80),
+});
+
+const discoverTodayReservations = async () => {
+  const db = obterFirestoreAdmin();
+  if (!db) return;
+  const today = dateKey();
+  const reservations = await db.collection("reservas").where("data", "==", today).limit(500).get();
+  const eligible = reservations.docs.filter((document) => confirmedReservationForToday(document.data(), today));
+  if (eligible.length === 0) return;
+  const refs = eligible.map((document) => db.collection("whatsapp_notificacoes_internas").doc(document.id));
+  const existing = await db.getAll(...refs);
+  const batch = db.batch();
+  let changed = false;
+  existing.forEach((snapshot, index) => {
+    const reservation = eligible[index];
+    const current = snapshot.exists ? snapshot.data() ?? {} : {};
+    if (snapshot.exists && current.status === "enviado" && current.dataEnvioProgramada === today) return;
+    const payload = reservationAlertData(reservation.id, reservation.data());
+    batch.set(snapshot.ref, {
+      ...payload,
+      dataEntrada: current.dataEntrada ?? dateKey(),
+      status: current.status === "enviando" ? "enviando" : "aguardando",
+      tentativas: Number(current.tentativas ?? 0),
+      destino: current.destino ?? DESTINATION_DEFAULT,
+      criadoEm: current.criadoEm ?? FieldValue.serverTimestamp(),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    changed = true;
+  });
+  if (changed) await batch.commit();
+};
+
 export const enfileirarAvisoNovaReservaEquipe = async (
   reservaId: string,
   reserva: Record<string, unknown>,
@@ -70,6 +144,8 @@ export const enfileirarAvisoNovaReservaEquipe = async (
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const ref = db.collection("whatsapp_notificacoes_internas").doc(reservaId);
+  const dataReserva = reservationDate(reserva.data ?? reserva.Data);
+  const initialStatus = dataReserva > dateKey() ? "agendado" : dataReserva === dateKey() ? "aguardando" : "ignorado";
   return db.runTransaction(async (transaction) => {
     const existing = await transaction.get(ref);
     if (existing.exists) return false;
@@ -79,14 +155,14 @@ export const enfileirarAvisoNovaReservaEquipe = async (
       nome: clean(reserva.nome ?? reserva.Nome, 160),
       telefone: clean(reserva.telefone ?? reserva.Telefone, 80),
       email: clean(reserva.email ?? reserva.Email, 240),
-      data: clean(reserva.data ?? reserva.Data, 40),
+      data: dataReserva,
       horario: clean(reserva.horario ?? reserva.Horario, 100),
       atividade: clean(reserva.atividade ?? reserva.Atividade, 300),
       participantes: numberValue(reserva.participantes ?? reserva.Participantes),
       valor: numberValue(reserva.valor ?? reserva.Valor),
       formaPagamento: clean(reserva.formaPagamento, 80),
       statusReserva: clean(reserva.status ?? reserva.Status ?? "aguardando", 80),
-      status: "aguardando",
+      status: initialStatus,
       tentativas: 0,
       destino: DESTINATION_DEFAULT,
       criadoEm: FieldValue.serverTimestamp(),
@@ -102,8 +178,9 @@ export const reenfileirarAvisoNovaReservaEquipe = async (reservaId: string) => {
   const ref = db.collection("whatsapp_notificacoes_internas").doc(reservaId);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new Error("RESERVATION_ALERT_NOT_FOUND");
+  const visitDate = reservationDate(snapshot.data()?.data);
   await ref.update({
-    status: "aguardando",
+    status: visitDate > dateKey() ? "agendado" : visitDate === dateKey() ? "aguardando" : "ignorado",
     tentativas: 0,
     proximaTentativaEm: Timestamp.now(),
     ultimoErro: FieldValue.delete(),
@@ -117,12 +194,26 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
   const controlRef = db.collection("whatsapp_automacoes_controle").doc(`aviso-reserva-equipe-${today}`);
   const acquired = await db.runTransaction(async (transaction) => {
     const fresh = await transaction.get(document.ref);
-    const control = await transaction.get(controlRef);
     if (!fresh.exists) return null;
-    if (fresh.data()?.dataEntrada !== today) {
+    const reservationRef = db.collection("reservas").doc(clean(fresh.data()?.reservaId, 100));
+    const reservation = await transaction.get(reservationRef);
+    const control = await transaction.get(controlRef);
+    if (reservationDate(fresh.data()?.data) !== today) {
       transaction.update(document.ref, {
-        status: "ignorado",
-        motivo: "fila_de_dia_anterior",
+        status: reservationDate(fresh.data()?.data) > today ? "agendado" : "ignorado",
+        motivo: "fora_da_data_da_visita",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      return null;
+    }
+    if (!reservation.exists || !confirmedReservationForToday(reservation.data()!, today)) {
+      const reservationData = reservation.exists ? reservation.data()! : {};
+      const canceled = ["cancelada", "cancelado", "canceled", "cancelled", "estornada", "estornado"]
+        .includes(clean(reservationData.status, 40).toLowerCase());
+      transaction.update(document.ref, {
+        status: canceled || reservationData.origem === "manual" ? "ignorado" : "aguardando_confirmacao",
+        motivo: canceled ? "reserva_cancelada" : reservationData.origem === "manual" ? "reserva_manual" : "pagamento_nao_confirmado",
+        proximaTentativaEm: Timestamp.fromMillis(Date.now() + 5 * 60_000),
         atualizadoEm: FieldValue.serverTimestamp(),
       });
       return null;
@@ -130,7 +221,7 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     if (timestampMillis(control.data()?.proximoEnvioEm) > Date.now()) return null;
     if (timestampMillis(control.data()?.bloqueadoAte) > Date.now()) return null;
     const currentStatus = String(fresh.data()?.status ?? "");
-    if (!["aguardando", "enviando"].includes(currentStatus)) return null;
+    if (!["aguardando", "agendado", "aguardando_confirmacao", "enviando"].includes(currentStatus)) return null;
     if (currentStatus === "enviando") {
       const lastAttempt = fresh.data()?.ultimaTentativaEm?.toDate?.() as Date | undefined;
       if (!lastAttempt || lastAttempt.getTime() > Date.now() - STALE_SENDING_MS) return null;
@@ -178,6 +269,7 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     const batch = db.batch();
     batch.update(document.ref, {
       status: "enviado",
+      dataEnvioProgramada: today,
       destino: destination,
       mensagem: message,
       messageId: result.messageId ?? null,
@@ -232,23 +324,22 @@ export const processarAvisosNovaReservaEquipe = async () => {
   if (!db) return;
   workerRunning = true;
   try {
-    const config = await db.collection("configuracoes").doc("whatsapp").get();
-    if (config.exists && config.data()?.avisoNovaReservaEquipeAtivo === false) return;
-    const snapshot = await db.collection("whatsapp_notificacoes_internas").where("status", "in", ["aguardando", "enviando"]).limit(20).get();
+    const configSnapshot = await db.collection("configuracoes").doc("whatsapp").get();
+    const config = configSnapshot.exists ? configSnapshot.data() ?? {} : {};
+    if (config.avisoNovaReservaEquipeAtivo === false) return;
+    const startAt = parseMinutes(config.horarioLembreteDia, 8 * 60);
+    const nowMinutes = localMinutes();
+    if (nowMinutes < startAt || nowMinutes >= 18 * 60) return;
+    await discoverTodayReservations();
+    const snapshot = await db.collection("whatsapp_notificacoes_internas").where("data", "==", dateKey()).limit(500).get();
     const candidate = snapshot.docs
-      .filter((document) => document.data().dataEntrada === dateKey())
-      .sort((left, right) => timestampMillis(left.data().criadoEm) - timestampMillis(right.data().criadoEm))[0];
+      .filter((document) => ["aguardando", "agendado", "aguardando_confirmacao", "enviando"].includes(clean(document.data().status, 40)))
+      .filter((document) => timestampMillis(document.data().proximaTentativaEm) <= Date.now())
+      .sort((left, right) => {
+        const timeDifference = parseMinutes(left.data().horario, 24 * 60) - parseMinutes(right.data().horario, 24 * 60);
+        return timeDifference || timestampMillis(left.data().criadoEm) - timestampMillis(right.data().criadoEm);
+      })[0];
     if (candidate) await processOne(candidate);
-    const stale = snapshot.docs.filter((document) => document.data().dataEntrada !== dateKey());
-    if (stale.length > 0) {
-      const batch = db.batch();
-      stale.forEach((document) => batch.update(document.ref, {
-        status: "ignorado",
-        motivo: "fila_de_dia_anterior",
-        atualizadoEm: FieldValue.serverTimestamp(),
-      }));
-      await batch.commit();
-    }
   } finally {
     workerRunning = false;
   }

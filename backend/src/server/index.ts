@@ -163,7 +163,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-03.2-agent-transactional-whatsapp',
+    build: '2026-10-03.3-visit-day-internal-alerts',
     timestamp: new Date().toISOString(),
   });
 });
