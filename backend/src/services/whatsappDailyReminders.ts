@@ -1,8 +1,9 @@
 import { createHash } from "crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { enviarMensagemWhatsappGerenciada, type ResultadoEnvio } from "./whatsapp";
+import type { ResultadoEnvio } from "./whatsapp";
 import { TEMPLATE_LEMBRETE_DIA_PADRAO } from "./whatsappAutomationConfig";
+import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 
 const TIMEZONE = "America/Sao_Paulo";
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_DAILY_REMINDER_WORKER_MS ?? 15000), 10000);
@@ -206,9 +207,10 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
     const reservation = reservationSnapshot.data()!;
     const template = clean(config.mensagemLembreteDia, 4096) || TEMPLATE_LEMBRETE_DIA_PADRAO;
     const message = renderMessage(template, reservation).slice(0, 4096);
-    const result: ResultadoEnvio = await enviarMensagemWhatsappGerenciada(
+    const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
       normalizePhone(reservation.telefone ?? reservation.Telefone),
       message,
+      `lembrete-dia:${today}:${clean(acquired.data.reservaId, 120)}`,
     ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
     const nextGlobalAt = Timestamp.fromMillis(Date.now() + randomDelayMs(config));
     if (result.enviado) {

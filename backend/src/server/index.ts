@@ -21,12 +21,13 @@ import {
 } from "../services/emailReservas";
 import {
   desconectarWhatsApp,
-  enviarBoasVindasWhatsapp,
   iniciarWhatsApp,
   obterStatusWhatsApp,
   encerrarWhatsAppSeMemoriaAlta,
   logarConfigWhatsapp,
+  prepararBoasVindasWhatsapp,
 } from "../services/whatsapp";
+import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
 import {
   cancelarCampanhaWhatsapp,
   criarCampanhaWhatsapp,
@@ -162,7 +163,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-03.1-whatsapp-automations',
+    build: '2026-10-03.2-agent-transactional-whatsapp',
     timestamp: new Date().toISOString(),
   });
 });
@@ -1024,7 +1025,14 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
       return res.json({ enviado: false, motivo: 'ja_enviado' });
     }
 
-    const resultado = await enviarBoasVindasWhatsapp(reservaId, reserva);
+    const prepared = await prepararBoasVindasWhatsapp(reservaId, reserva);
+    const resultado = prepared.enviado && prepared.telefone && prepared.mensagem
+      ? await enviarMensagemTransacionalPeloAgente(
+        prepared.telefone,
+        prepared.mensagem,
+        `boas-vindas:${reservaId}:${prepared.telefone}`,
+      )
+      : prepared;
 
     if (resultado.enviado) {
       await updateDoc(reservaRef, {

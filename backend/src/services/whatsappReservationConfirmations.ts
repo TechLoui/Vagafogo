@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { enviarConfirmacaoWhatsapp, type ResultadoEnvio } from "./whatsapp";
+import { prepararConfirmacaoWhatsapp, type ResultadoEnvio } from "./whatsapp";
+import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_CONFIRMATION_WORKER_MS ?? 30000), 10000);
 const MAX_ATTEMPTS = 5;
@@ -73,13 +74,23 @@ export const processarConfirmacaoReservaWhatsapp = async (reservaId: string, for
   });
 
   if (!acquired) return { enviado: false, motivo: "nao_elegivel_ou_aguardando" };
-  const result = await enviarConfirmacaoWhatsapp(reservaId, {
+  const prepared = await prepararConfirmacaoWhatsapp(reservaId, {
     ...acquired.data,
     ...(force ? { whatsappConfirmacaoEnviado: false } : {}),
   }, force ? { confirmacaoAutomaticaAtiva: true } : undefined).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),
   }));
+  const result = prepared.enviado && prepared.telefone && prepared.mensagem
+    ? await enviarMensagemTransacionalPeloAgente(
+      prepared.telefone,
+      prepared.mensagem,
+      `reserva-confirmada:${reservaId}:${prepared.telefone}${force ? `:manual:${Date.now()}` : ""}`,
+    ).catch((error): ResultadoEnvio => ({
+      enviado: false,
+      motivo: error instanceof Error ? error.message : String(error),
+    }))
+    : prepared;
 
   if (result.enviado) {
     await ref.set({

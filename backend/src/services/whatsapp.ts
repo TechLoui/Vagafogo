@@ -123,7 +123,7 @@ type WhatsappStatusPayload = {
   };
 };
 
-type WhatsappConfig = {
+export type WhatsappConfig = {
   mensagemBoasVindas?: string;
   /** Liga/desliga o envio automatico de WhatsApp quando reserva e confirmada. */
   confirmacaoAutomaticaAtiva?: boolean;
@@ -963,36 +963,41 @@ export async function enviarMensagemWhatsappGerenciada(
   }
 }
 
+export async function prepararBoasVindasWhatsapp(
+  reservaId: string,
+  reserva: Record<string, any>,
+  configOverride?: WhatsappConfig,
+): Promise<ResultadoEnvio> {
+  const config = configOverride ?? (await obterConfig());
+  const telefone = normalizarTelefone(reserva?.telefone);
+  if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
+  const template = (config.mensagemBoasVindas || TEMPLATE_BOAS_VINDAS_PADRAO).trim();
+  if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
+  return {
+    enviado: true,
+    telefone,
+    mensagem: montarMensagem(template, { ...reserva, id: reservaId }),
+  };
+}
+
 export async function enviarBoasVindasWhatsapp(
   reservaId: string,
   reserva: Record<string, any>,
   configOverride?: WhatsappConfig
 ): Promise<ResultadoEnvio> {
+  const prepared = await prepararBoasVindasWhatsapp(reservaId, reserva, configOverride);
+  if (!prepared.enviado || !prepared.telefone || !prepared.mensagem) return prepared;
+  const telefone = prepared.telefone;
+  const mensagem = prepared.mensagem;
+
   iniciarWhatsApp();
   clearIdleTimer();
-
-  const config = configOverride ?? (await obterConfig());
-
-  const telefone = normalizarTelefone(reserva?.telefone);
-  if (!telefone) {
-    return { enviado: false, motivo: "telefone_invalido" };
-  }
-
-  const template = (config.mensagemBoasVindas || TEMPLATE_BOAS_VINDAS_PADRAO).trim();
-  if (!template) {
-    return { enviado: false, motivo: "mensagem_vazia" };
-  }
 
   const pronto = await aguardarWhatsAppPronto(WHATSAPP_SEND_READY_TIMEOUT_MS);
   if (!pronto || !client || status !== "ready") {
     scheduleIdleShutdown();
     return { enviado: false, motivo: "whatsapp_nao_conectado" };
   }
-
-  const mensagem = montarMensagem(template, {
-    ...reserva,
-    id: reservaId,
-  });
 
   let whatsappId: string | null;
   try {
@@ -1024,6 +1029,25 @@ export async function enviarBoasVindasWhatsapp(
   };
 }
 
+export async function prepararConfirmacaoWhatsapp(
+  reservaId: string,
+  reserva: Record<string, any>,
+  configOverride?: WhatsappConfig,
+): Promise<ResultadoEnvio> {
+  const config = configOverride ?? (await obterConfig());
+  if (config.confirmacaoAutomaticaAtiva === false) return { enviado: false, motivo: "desativado" };
+  if (reserva?.whatsappConfirmacaoEnviado === true) return { enviado: false, motivo: "ja_enviado" };
+  const telefone = normalizarTelefone(reserva?.telefone);
+  if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
+  const template = (config.mensagemConfirmacaoAutomatica || TEMPLATE_CONFIRMACAO_PADRAO).trim();
+  if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
+  return {
+    enviado: true,
+    telefone,
+    mensagem: montarMensagem(template, { ...reserva, id: reservaId }),
+  };
+}
+
 /**
  * Dispara mensagem de confirmação automática quando a reserva é paga.
  * Respeita a config `confirmacaoAutomaticaAtiva`. Idempotente: verifica
@@ -1034,25 +1058,10 @@ export async function enviarConfirmacaoWhatsapp(
   reserva: Record<string, any>,
   configOverride?: WhatsappConfig
 ): Promise<ResultadoEnvio> {
-  const config = configOverride ?? (await obterConfig());
-
-  if (config.confirmacaoAutomaticaAtiva === false) {
-    return { enviado: false, motivo: "desativado" };
-  }
-
-  if (reserva?.whatsappConfirmacaoEnviado === true) {
-    return { enviado: false, motivo: "ja_enviado" };
-  }
-
-  const telefone = normalizarTelefone(reserva?.telefone);
-  if (!telefone) {
-    return { enviado: false, motivo: "telefone_invalido" };
-  }
-
-  const template = (config.mensagemConfirmacaoAutomatica || TEMPLATE_CONFIRMACAO_PADRAO).trim();
-  if (!template) {
-    return { enviado: false, motivo: "mensagem_vazia" };
-  }
+  const prepared = await prepararConfirmacaoWhatsapp(reservaId, reserva, configOverride);
+  if (!prepared.enviado || !prepared.telefone || !prepared.mensagem) return prepared;
+  const telefone = prepared.telefone;
+  const mensagem = prepared.mensagem;
 
   iniciarWhatsApp();
   clearIdleTimer();
@@ -1062,11 +1071,6 @@ export async function enviarConfirmacaoWhatsapp(
     scheduleIdleShutdown();
     return { enviado: false, motivo: "whatsapp_nao_conectado" };
   }
-
-  const mensagem = montarMensagem(template, {
-    ...reserva,
-    id: reservaId,
-  });
 
   let whatsappId: string | null;
   try {

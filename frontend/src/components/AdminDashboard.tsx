@@ -6069,11 +6069,6 @@ const totalParticipantesDoDia = useMemo(() => {
       return;
     }
 
-    if (whatsappStatus.status !== 'ready') {
-      setFeedback({ type: 'error', message: 'Conecte o WhatsApp pelo QR Code antes de enviar o teste.' });
-      return;
-    }
-
     const mensagem = tipo === 'aviso-reserva'
       ? mensagemPreviewAvisoNovaReserva.trim()
       : tipo === 'lembrete-dia'
@@ -6096,22 +6091,26 @@ const totalParticipantesDoDia = useMemo(() => {
     setWhatsappTestando(tipo);
     try {
       const token = await user.getIdToken();
-      const response = await fetch(`${API_BASE}/crm/campanhas/teste-interno`, {
+      const response = await fetch(`${API_BASE}/crm/agente/teste-whatsapp`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ variacoes: [mensagem] }),
+        body: JSON.stringify({ phone: numero, text: mensagem }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.enviado !== true) {
+      if (!response.ok || data?.ok !== true) {
         const motivo = data?.error || data?.motivo || `Status ${response.status}`;
-        throw new Error(motivo === 'whatsapp_nao_conectado' ? 'O WhatsApp não está conectado.' : motivo);
+        throw new Error(
+          motivo === 'whatsapp_nao_conectado' || /whatsapp.+n[aã]o conectado/i.test(String(motivo))
+            ? 'A sessão da Jatobá não está conectada.'
+            : motivo,
+        );
       }
       setFeedback({
         type: 'success',
-        message: `Teste de ${descricao} enviado para ${data?.destinoMascarado ?? `***${numero.slice(-4)}`}.`,
+        message: `Teste de ${descricao} enviado pela sessão ativa da Jatobá para ***${numero.slice(-4)}.`,
       });
     } catch (error: unknown) {
       setFeedback({
@@ -15816,7 +15815,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
           <AdminTabHeader
             title="Central do WhatsApp"
-            description="Conecte o número remetente, configure cada automação e faça testes internos antes de liberar os disparos."
+            description="Configure campanhas e automações. Confirmações, lembretes e avisos internos aproveitam a sessão já ativa da Jatobá."
             icon={FaWhatsapp}
             actions={[
               {
@@ -15829,7 +15828,7 @@ const totalParticipantesDoDia = useMemo(() => {
             ]}
             metrics={[
               {
-                label: 'Conexao',
+                label: 'Campanhas',
                 value: whatsappStatusInfo.label,
                 hint: whatsappStatusInfo.hint,
                 icon: FaWhatsapp,
@@ -15877,7 +15876,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
           <nav className="admin-whatsapp-shortcuts" aria-label="Atalhos da configuração do WhatsApp">
             {[
-              { id: 'whatsapp-conexao', label: 'Conexão', hint: 'QR Code e sessão remetente', icon: FaQrcode },
+              { id: 'whatsapp-conexao', label: 'Campanhas', hint: 'Sessão separada, quando necessária', icon: FaQrcode },
               { id: 'whatsapp-nova-reserva', label: 'Aviso ao Uirá', hint: 'Somente novas entradas do dia', icon: FaCalendarAlt },
               { id: 'whatsapp-lembrete-dia', label: 'Lembrete do dia', hint: 'Visitantes confirmados às 08h', icon: FaClock },
               { id: 'whatsapp-confirmacao', label: 'Confirmação', hint: 'Pagamento aprovado no site', icon: FaCheck },
@@ -15902,14 +15901,14 @@ const totalParticipantesDoDia = useMemo(() => {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Central de testes</p>
                 <h3 className="mt-1 text-lg font-semibold text-slate-900">Teste as automações sem envolver clientes</h3>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  O teste usa a sessão conectada e envia somente para o número interno salvo em “Nova reserva”. Salve alterações antes de testar.
+                  O teste usa a sessão já ativa da Jatobá e envia somente para o número interno salvo em “Aviso ao Uirá”. Salve alterações antes de testar.
                 </p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => enviarTesteAutomacaoWhatsapp('aviso-reserva')}
-                  disabled={whatsappStatus.status !== 'ready' || whatsappTestando !== null}
+                  disabled={whatsappTestando !== null}
                   className="admin-whatsapp-test-button"
                 >
                   <FaCalendarAlt className="h-4 w-4" />
@@ -15918,7 +15917,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <button
                   type="button"
                   onClick={() => enviarTesteAutomacaoWhatsapp('agradecimento')}
-                  disabled={whatsappStatus.status !== 'ready' || whatsappTestando !== null}
+                  disabled={whatsappTestando !== null}
                   className="admin-whatsapp-test-button"
                 >
                   <FaWhatsapp className="h-4 w-4" />
@@ -15927,7 +15926,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <button
                   type="button"
                   onClick={() => enviarTesteAutomacaoWhatsapp('lembrete-dia')}
-                  disabled={whatsappStatus.status !== 'ready' || whatsappTestando !== null}
+                  disabled={whatsappTestando !== null}
                   className="admin-whatsapp-test-button"
                 >
                   <FaClock className="h-4 w-4" />
@@ -15941,8 +15940,8 @@ const totalParticipantesDoDia = useMemo(() => {
             <div id="whatsapp-conexao" className="admin-whatsapp-section admin-whatsapp-card--connection rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Conexão do número remetente</h3>
-                  <p className="text-sm text-slate-500">Esta única sessão envia campanhas, avisos internos, confirmações, lembretes do dia e agradecimentos.</p>
+                  <h3 className="text-lg font-semibold text-slate-900">Conexão exclusiva para campanhas</h3>
+                  <p className="text-sm text-slate-500">Use esta sessão apenas quando quiser disparar campanhas por um número separado. As automações operacionais abaixo usam o WhatsApp já conectado da Jatobá.</p>
                 </div>
 
                 <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
@@ -16028,7 +16027,7 @@ const totalParticipantesDoDia = useMemo(() => {
               <span>Automações</span>
               <div>
                 <h3>Configure quando cada mensagem será enviada</h3>
-                <p>Os disparos abaixo usam a mesma sessão conectada acima, mas têm destinatários e gatilhos diferentes.</p>
+                <p>Confirmação, lembrete do dia e aviso ao Uirá usam a sessão ativa do bot e respeitam a lista de contatos bloqueados.</p>
               </div>
             </div>
 

@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { enviarMensagemWhatsappGerenciada, type ResultadoEnvio } from "./whatsapp";
+import type { ResultadoEnvio } from "./whatsapp";
+import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 
 const DESTINATION_DEFAULT = "5562991150376";
 const TIMEZONE = "America/Sao_Paulo";
@@ -163,7 +164,11 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     || DESTINATION_DEFAULT;
   const template = clean(config.mensagemAvisoNovaReservaEquipe, 3000) || DEFAULT_TEMPLATE;
   const message = renderTemplate(template, acquired.data);
-  const result: ResultadoEnvio = await enviarMensagemWhatsappGerenciada(destination, message).catch((error): ResultadoEnvio => ({
+  const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
+    destination,
+    message,
+    `aviso-reserva:${today}:${clean(acquired.data.reservaId, 100)}`,
+  ).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),
   }));
