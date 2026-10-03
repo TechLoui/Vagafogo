@@ -3,7 +3,10 @@ import { collection, doc, getDoc, getDocs, limit, query, updateDoc, where } from
 import { db } from "../services/firebase";
 import { obterCamposRetencaoReservaNaAtualizacao } from "../services/reservaRetention";
 import { enviarEmailConfirmacaoReserva } from "../services/emailReservas";
-import { enviarConfirmacaoWhatsapp } from "../services/whatsapp";
+import {
+  enfileirarConfirmacaoReservaWhatsapp,
+  processarConfirmacaoReservaWhatsapp,
+} from "../services/whatsappReservationConfirmations";
 import { registrarResultadoCampanhaReserva } from "../services/whatsappCampaigns";
 import { requestAgentService } from "../services/agentGateway";
 import { concluirLeadAgenteComReserva } from "../services/agentReservationTools";
@@ -421,26 +424,15 @@ async function handleWebhook(payload: WebhookPayload) {
     const resultado = await processarConfirmacaoReservaAgente(externalReference);
     console.log(`[webhook] Confirmacao pelo Agente ${resultado.enviado ? "enviada" : "nao enviada"} para ${externalReference}: ${resultado.motivo ?? "ok"}.`);
   } else {
-    // Reservas do site continuam usando o disparador transacional do Vagafogo.
-    void enviarConfirmacaoWhatsapp(externalReference, reserva)
-    .then(async (resultado) => {
-      if (resultado.enviado) {
-        await updateDoc(reservaRef, {
-          whatsappConfirmacaoEnviado: true,
-          dataWhatsappConfirmacao: new Date(),
-          whatsappConfirmacaoMensagem: resultado.mensagem ?? "",
-        }).catch(() => undefined);
-        console.log(`[webhook] WhatsApp confirmacao enviado para ${externalReference}.`);
-      } else if (resultado.motivo !== "desativado" && resultado.motivo !== "ja_enviado") {
-        await updateDoc(reservaRef, {
-          whatsappConfirmacaoErro: resultado.motivo ?? "erro",
-          dataWhatsappConfirmacaoErro: new Date(),
-        }).catch(() => undefined);
-        console.warn(`[webhook] WhatsApp confirmacao nao enviado para ${externalReference}: ${resultado.motivo}`);
-      }
-    })
-    .catch((error: any) => {
-      console.error(`[webhook] Erro ao enviar WhatsApp confirmacao para ${externalReference}:`, error);
+    // Reservas pagas no checkout do site entram em uma fila persistente. Se o
+    // WhatsApp Web estiver reconectando, o worker tenta novamente sem duplicar.
+    await enfileirarConfirmacaoReservaWhatsapp(externalReference).catch((error) => {
+      console.error(`[webhook] Erro ao enfileirar WhatsApp confirmacao para ${externalReference}:`, error);
+    });
+    void processarConfirmacaoReservaWhatsapp(externalReference).then((resultado) => {
+      console.log(`[webhook] Confirmacao do site ${resultado.enviado ? "enviada" : "aguardando"} para ${externalReference}: ${resultado.motivo ?? "ok"}.`);
+    }).catch((error) => {
+      console.error(`[webhook] Erro ao processar WhatsApp confirmacao para ${externalReference}:`, error);
     });
   }
 

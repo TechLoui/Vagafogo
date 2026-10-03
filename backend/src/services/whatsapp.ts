@@ -129,6 +129,11 @@ type WhatsappConfig = {
   confirmacaoAutomaticaAtiva?: boolean;
   /** Template enviado quando o pagamento da reserva e confirmado. */
   mensagemConfirmacaoAutomatica?: string;
+  lembreteDiaAtivo?: boolean;
+  horarioLembreteDia?: string;
+  mensagemLembreteDia?: string;
+  intervaloLembreteDiaMinSegundos?: number;
+  intervaloLembreteDiaMaxSegundos?: number;
 };
 
 export type ResultadoEnvio = {
@@ -175,10 +180,10 @@ export const registrarObservadorMensagemWhatsapp = (observer: InboundObserver) =
 };
 
 const TEMPLATE_BOAS_VINDAS_PADRAO =
-  "Olá {nome}! 🌿 Seja muito bem-vindo(a) ao Santuário Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.";
+  "Olá {nome}! 🌿 Seja muito bem-vindo(a) à Fazenda Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.";
 
 const TEMPLATE_CONFIRMACAO_PADRAO =
-  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva no Santuário Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\nNos vemos em breve! 🌿";
+  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\nNos vemos em breve! 🌿";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -1001,8 +1006,9 @@ export async function enviarBoasVindasWhatsapp(
     return { enviado: false, motivo: "telefone_sem_whatsapp" };
   }
 
+  let sent;
   try {
-    await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
+    sent = await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
   } catch (error: any) {
     scheduleIdleShutdown();
     return { enviado: false, motivo: error?.message || "erro_envio" };
@@ -1014,6 +1020,7 @@ export async function enviarBoasVindasWhatsapp(
     enviado: true,
     mensagem,
     telefone,
+    messageId: sent?.id?._serialized,
   };
 }
 
@@ -1073,8 +1080,9 @@ export async function enviarConfirmacaoWhatsapp(
     return { enviado: false, motivo: "telefone_sem_whatsapp" };
   }
 
+  let sent;
   try {
-    await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
+    sent = await client.sendMessage(whatsappId, mensagem, { sendSeen: false });
   } catch (error: any) {
     scheduleIdleShutdown();
     return { enviado: false, motivo: error?.message || "erro_envio" };
@@ -1086,5 +1094,6 @@ export async function enviarConfirmacaoWhatsapp(
     enviado: true,
     mensagem,
     telefone,
+    messageId: sent?.id?._serialized,
   };
 }

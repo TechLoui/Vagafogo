@@ -3,9 +3,12 @@ import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { enviarMensagemWhatsappGerenciada, type ResultadoEnvio } from "./whatsapp";
 
 const DESTINATION_DEFAULT = "5562991150376";
+const TIMEZONE = "America/Sao_Paulo";
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_RESERVATION_ALERT_WORKER_MS ?? 15000), 5000);
 const MAX_ATTEMPTS = 5;
 const STALE_SENDING_MS = 2 * 60 * 1000;
+const MIN_SEND_DELAY_MS = 60_000;
+const MAX_SEND_DELAY_MS = 120_000;
 
 const DEFAULT_TEMPLATE =
   "🌿 Nova reserva recebida\n\n" +
@@ -33,6 +36,14 @@ const normalizePhone = (value: unknown) => {
   return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
 };
 const formatCurrency = (value: unknown) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numberValue(value));
+const dateKey = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(date);
+const timestampMillis = (value: any) => {
+  if (typeof value?.toMillis === "function") return Number(value.toMillis());
+  if (typeof value?.toDate === "function") return Number(value.toDate().getTime());
+  const parsed = new Date(value ?? 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const randomSendDelay = () => MIN_SEND_DELAY_MS + Math.floor(Math.random() * (MAX_SEND_DELAY_MS - MIN_SEND_DELAY_MS + 1));
 
 const renderTemplate = (template: string, alert: FirebaseFirestore.DocumentData) => {
   const values: Record<string, string> = {
@@ -63,6 +74,7 @@ export const enfileirarAvisoNovaReservaEquipe = async (
     if (existing.exists) return false;
     transaction.create(ref, {
       reservaId,
+      dataEntrada: dateKey(),
       nome: clean(reserva.nome ?? reserva.Nome, 160),
       telefone: clean(reserva.telefone ?? reserva.Telefone, 80),
       email: clean(reserva.email ?? reserva.Email, 240),
@@ -100,9 +112,22 @@ export const reenfileirarAvisoNovaReservaEquipe = async (reservaId: string) => {
 
 const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => {
   const db = document.ref.firestore;
+  const today = dateKey();
+  const controlRef = db.collection("whatsapp_automacoes_controle").doc(`aviso-reserva-equipe-${today}`);
   const acquired = await db.runTransaction(async (transaction) => {
     const fresh = await transaction.get(document.ref);
+    const control = await transaction.get(controlRef);
     if (!fresh.exists) return null;
+    if (fresh.data()?.dataEntrada !== today) {
+      transaction.update(document.ref, {
+        status: "ignorado",
+        motivo: "fila_de_dia_anterior",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      return null;
+    }
+    if (timestampMillis(control.data()?.proximoEnvioEm) > Date.now()) return null;
+    if (timestampMillis(control.data()?.bloqueadoAte) > Date.now()) return null;
     const currentStatus = String(fresh.data()?.status ?? "");
     if (!["aguardando", "enviando"].includes(currentStatus)) return null;
     if (currentStatus === "enviando") {
@@ -118,6 +143,11 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
       ultimaTentativaEm: FieldValue.serverTimestamp(),
       atualizadoEm: FieldValue.serverTimestamp(),
     });
+    transaction.set(controlRef, {
+      data: today,
+      bloqueadoAte: Timestamp.fromMillis(Date.now() + 60_000),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
     return { data: fresh.data()!, attempts };
   });
   if (!acquired) return;
@@ -137,6 +167,7 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),
   }));
+  const nextSendAt = Timestamp.fromMillis(Date.now() + randomSendDelay());
 
   if (result.enviado) {
     const batch = db.batch();
@@ -156,6 +187,13 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
       whatsappAvisoEquipeMensagem: message,
       whatsappAvisoEquipeErro: FieldValue.delete(),
     }, { merge: true });
+    batch.set(controlRef, {
+      data: today,
+      proximoEnvioEm: nextSendAt,
+      bloqueadoAte: FieldValue.delete(),
+      enviados: FieldValue.increment(1),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
     await batch.commit();
     return;
   }
@@ -174,6 +212,12 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     whatsappAvisoEquipeErro: result.motivo ?? "erro_envio",
     dataWhatsappAvisoEquipeErro: FieldValue.serverTimestamp(),
   }, { merge: true });
+  batch.set(controlRef, {
+    data: today,
+    proximoEnvioEm: nextSendAt,
+    bloqueadoAte: FieldValue.delete(),
+    atualizadoEm: FieldValue.serverTimestamp(),
+  }, { merge: true });
   await batch.commit();
 };
 
@@ -185,8 +229,21 @@ export const processarAvisosNovaReservaEquipe = async () => {
   try {
     const config = await db.collection("configuracoes").doc("whatsapp").get();
     if (config.exists && config.data()?.avisoNovaReservaEquipeAtivo === false) return;
-    const snapshot = await db.collection("whatsapp_notificacoes_internas").where("status", "in", ["aguardando", "enviando"]).limit(10).get();
-    for (const document of snapshot.docs) await processOne(document);
+    const snapshot = await db.collection("whatsapp_notificacoes_internas").where("status", "in", ["aguardando", "enviando"]).limit(20).get();
+    const candidate = snapshot.docs
+      .filter((document) => document.data().dataEntrada === dateKey())
+      .sort((left, right) => timestampMillis(left.data().criadoEm) - timestampMillis(right.data().criadoEm))[0];
+    if (candidate) await processOne(candidate);
+    const stale = snapshot.docs.filter((document) => document.data().dataEntrada !== dateKey());
+    if (stale.length > 0) {
+      const batch = db.batch();
+      stale.forEach((document) => batch.update(document.ref, {
+        status: "ignorado",
+        motivo: "fila_de_dia_anterior",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      }));
+      await batch.commit();
+    }
   } finally {
     workerRunning = false;
   }

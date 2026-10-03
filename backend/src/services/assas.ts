@@ -21,6 +21,10 @@ import {
   renovarTentativaPagamento,
 } from "./paymentIdempotency";
 import { enfileirarAvisoNovaReservaEquipe } from "./whatsappReservationAlerts";
+import {
+  enfileirarConfirmacaoReservaWhatsapp,
+  processarConfirmacaoReservaWhatsapp,
+} from "./whatsappReservationConfirmations";
 import { registrarConclusaoJornadaReserva } from "./crmJourneys";
 import { registrarResultadoCampanhaReserva } from "./whatsappCampaigns";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
@@ -1243,6 +1247,13 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
             [telefone],
           ).catch((error) => {
             console.error(`[crm][agente] Falha ao concluir lead ${reservaId}:`, error);
+          });
+        } else {
+          await enfileirarConfirmacaoReservaWhatsapp(reservaId).catch((error) => {
+            console.error(`[whatsapp][confirmacao] Falha ao enfileirar ${reservaId}:`, error);
+          });
+          void processarConfirmacaoReservaWhatsapp(reservaId).catch((error) => {
+            console.error(`[whatsapp][confirmacao] Falha no envio imediato ${reservaId}:`, error);
           });
         }
 

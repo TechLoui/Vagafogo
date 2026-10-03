@@ -22,7 +22,6 @@ import {
 import {
   desconectarWhatsApp,
   enviarBoasVindasWhatsapp,
-  enviarConfirmacaoWhatsapp,
   iniciarWhatsApp,
   obterStatusWhatsApp,
   encerrarWhatsAppSeMemoriaAlta,
@@ -51,6 +50,12 @@ import {
   processarAvisosNovaReservaEquipe,
   reenfileirarAvisoNovaReservaEquipe,
 } from "../services/whatsappReservationAlerts";
+import {
+  iniciarProcessadorConfirmacoesReservaWhatsapp,
+  processarConfirmacaoReservaWhatsapp,
+} from "../services/whatsappReservationConfirmations";
+import { iniciarProcessadorLembretesWhatsappDoDia } from "../services/whatsappDailyReminders";
+import { garantirConfiguracaoAutomacoesWhatsapp } from "../services/whatsappAutomationConfig";
 import { exigirAdminCrm, obterIdentidadeAdminCrm } from "../middleware/crmAdminAuth";
 import { limitarEventosJornada } from "../middleware/crmJourneyRateLimit";
 import { registrarEventoJornada } from "../services/crmJourneys";
@@ -1044,33 +1049,7 @@ app.post('/whatsapp/confirmacao/:reservaId', exigirAdminCrm, async (req, res) =>
       return res.status(400).json({ enviado: false, motivo: 'reserva_id_ausente' });
     }
 
-    const { doc, getDoc, updateDoc } = await import('firebase/firestore');
-    const { db } = await import('../services/firebase');
-
-    const reservaRef = doc(db, 'reservas', reservaId);
-    const reservaSnap = await getDoc(reservaRef);
-    if (!reservaSnap.exists()) {
-      return res.status(404).json({ enviado: false, motivo: 'reserva_nao_encontrada' });
-    }
-
-    const reserva = reservaSnap.data() as Record<string, any>;
-
-    // Reenvio manual ignora o flag de "ja_enviado" — admin pode forcar
-    const reservaForcada = { ...reserva, whatsappConfirmacaoEnviado: false };
-    // E ignora a config "desativada" tambem (reenvio manual e explicito)
-    const resultado = await enviarConfirmacaoWhatsapp(reservaId, reservaForcada, {
-      confirmacaoAutomaticaAtiva: true,
-    });
-
-    if (resultado.enviado) {
-      await updateDoc(reservaRef, {
-        whatsappConfirmacaoEnviado: true,
-        dataWhatsappConfirmacao: new Date(),
-        whatsappConfirmacaoMensagem: resultado.mensagem ?? '',
-        whatsappConfirmacaoErro: '',
-      });
-    }
-
+    const resultado = await processarConfirmacaoReservaWhatsapp(reservaId, true);
     res.json(resultado);
   } catch (error: any) {
     console.error('Erro ao enviar confirmacao WhatsApp:', error);
@@ -1158,10 +1137,18 @@ app.use(jsonBodyErrorHandler);
 const port = process.env.PORT || 3001;
 const WHATSAPP_AUTO_START = (process.env.WHATSAPP_AUTO_START ?? "false").toLowerCase() === "true";
 
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`Servidor rodando na porta ${port}`);
   iniciarLimpezaAutomaticaReservas();
+  try {
+    const migrada = await garantirConfiguracaoAutomacoesWhatsapp();
+    if (migrada) console.log("[whatsapp] Automacoes transacionais habilitadas e configuradas.");
+  } catch (error) {
+    console.error("[whatsapp] Falha ao garantir configuracao das automacoes:", error);
+  }
   iniciarProcessadorAvisosNovaReserva();
+  iniciarProcessadorConfirmacoesReservaWhatsapp();
+  iniciarProcessadorLembretesWhatsappDoDia();
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
   iniciarProcessadorConfirmacoesReservaAgente();
