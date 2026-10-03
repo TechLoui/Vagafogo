@@ -162,7 +162,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-01.4-agent-flow-integrity',
+    build: '2026-10-03.1-whatsapp-automations',
     timestamp: new Date().toISOString(),
   });
 });
