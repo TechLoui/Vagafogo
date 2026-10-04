@@ -1922,8 +1922,12 @@ export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown, m
   const protectedFlow = ["dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "atendimento_humano", "concluida"].includes(stage)
     || ["pagamento_pendente", "reserva_confirmada", "atendimento_humano"].includes(outcome);
   if (protectedFlow) return { atualizado: false, motivo: "fluxo_pendente_ou_convertido" };
-  if (["atendimento_concluido", "encerrado_sem_reserva"].includes(stage)
-    || ["duvida_resolvida", "nao_convertido"].includes(outcome)) {
+  const alreadyFinalized = ["atendimento_concluido", "encerrado_sem_reserva"].includes(stage)
+    || ["duvida_resolvida", "nao_convertido"].includes(outcome);
+  // Se o gateway trouxe a intencao mais especifica depois do fechamento
+  // generico, reclassifique o mesmo lead em vez de criar outro registro.
+  const canRefineDeferred = customerDeferred && outcome === "duvida_resolvida";
+  if (alreadyFinalized && !canRefineDeferred) {
     return { atualizado: false, motivo: "ja_finalizado" };
   }
   const closure = customerDeferred ? {
