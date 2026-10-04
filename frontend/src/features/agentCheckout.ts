@@ -7,6 +7,7 @@ export type AgentCheckoutAnswer = {
 
 export type AgentCheckoutHandoff = {
   version: 1;
+  tipo?: "checkout_cartao" | "pix_existente";
   tipoOferta: "combo" | "pacote";
   ofertaId: string;
   ofertaNome: string;
@@ -24,8 +25,13 @@ export type AgentCheckoutHandoff = {
   telefone: string;
   temPet: boolean;
   whatsappMarketingOptIn: boolean;
-  formaPagamento: "CREDIT_CARD";
+  formaPagamento: "CREDIT_CARD" | "PIX";
   valorValidado: number;
+  reservaId?: string;
+  paymentId?: string;
+  pixKey?: string;
+  qrCodeImage?: string;
+  pixExpirationDate?: string | null;
   sessionId?: string | null;
   campaignId?: string | null;
   recipientId?: string | null;

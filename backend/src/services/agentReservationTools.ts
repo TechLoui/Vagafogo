@@ -888,6 +888,112 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
   return { url: `${baseUrl}/reservar?${query.toString()}`, expiraEmMinutos: 120, expiraEm: expiresAt.toISOString() };
 };
 
+export const criarLinkPixExistenteAgente = async (input: {
+  reservaId?: unknown;
+  paymentId?: unknown;
+  telefone?: unknown;
+}) => {
+  const reservaId = clean(input.reservaId, 100);
+  const paymentId = clean(input.paymentId, 100);
+  const telefone = normalizePhone(input.telefone);
+  if (!reservaId || !paymentId || telefone.length < 10) {
+    throw new Error("AGENT_EXISTING_PIX_IDENTITY_REQUIRED");
+  }
+
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const reservationSnapshot = await db.collection("reservas").doc(reservaId).get();
+  if (!reservationSnapshot.exists) throw new Error("AGENT_EXISTING_PIX_RESERVATION_NOT_FOUND");
+  const reservation = reservationSnapshot.data()!;
+  if (clean(reservation.asaasPaymentId, 100) !== paymentId) {
+    throw new Error("AGENT_EXISTING_PIX_PAYMENT_MISMATCH");
+  }
+  const reservationPhone = normalizePhone(reservation.telefone);
+  if (!leadPhoneVariants(reservationPhone).some((value) => leadPhoneVariants(telefone).includes(value))) {
+    throw new Error("AGENT_EXISTING_PIX_PHONE_MISMATCH");
+  }
+
+  const attempts = await db.collection("_payment_idempotency")
+    .where("paymentId", "==", paymentId)
+    .limit(1)
+    .get();
+  const responseBody = attempts.docs[0]?.data()?.responseBody;
+  const charge = responseBody && typeof responseBody === "object"
+    ? (responseBody as Record<string, any>).cobranca
+    : null;
+  const pixKey = clean(charge?.pixKey, 2_000);
+  const qrCodeImage = String(charge?.qrCodeImage ?? "").trim();
+  if (!pixKey || !qrCodeImage.startsWith("data:image/")) {
+    throw new Error("AGENT_EXISTING_PIX_DATA_UNAVAILABLE");
+  }
+
+  const pacoteIds = Array.isArray(reservation.pacoteIds)
+    ? reservation.pacoteIds.map((value: unknown) => clean(value, 100)).filter(Boolean)
+    : [];
+  const comboId = clean(reservation.comboId, 100);
+  const offerId = comboId || pacoteIds[0] || "";
+  if (!offerId || pacoteIds.length === 0) throw new Error("AGENT_EXISTING_PIX_OFFER_UNAVAILABLE");
+  const firstParticipationGroup = Array.isArray(reservation.gruposParticipacao)
+    && reservation.gruposParticipacao[0]
+    && typeof reservation.gruposParticipacao[0] === "object"
+    ? reservation.gruposParticipacao[0] as Record<string, unknown>
+    : {};
+
+  const token = randomBytes(32).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + AGENT_CHECKOUT_HANDOFF_TTL_MS);
+  const payload = {
+    version: 1,
+    tipo: "pix_existente",
+    tipoOferta: comboId ? "combo" : "pacote",
+    ofertaId: offerId,
+    ofertaNome: clean(reservation.atividade, 240),
+    pacoteIds,
+    data: clean(reservation.data, 20),
+    horario: clean(reservation.horario, 20),
+    horariosPorPacote: timeMap(reservation.horariosPorPacote),
+    participantesPorTipo: numericMap(reservation.participantesPorTipo),
+    idadesPorTipo: ageMap(reservation.idadesPorTipo ?? firstParticipationGroup.idadesPorTipo),
+    perguntasPersonalizadas: customQuestionAnswers(reservation.perguntasPersonalizadas),
+    confirmouCarteirinhaBariatrica: reservation.confirmouCarteirinhaBariatrica === true,
+    nome: clean(reservation.nome, 160),
+    email: clean(reservation.email, 240),
+    cpf: String(reservation.cpf ?? "").replace(/\D/g, ""),
+    telefone: reservationPhone,
+    temPet: reservation.temPet === true,
+    whatsappMarketingOptIn: reservation.whatsappMarketingOptIn === true,
+    formaPagamento: "PIX",
+    valorValidado: Number(reservation.valor ?? 0),
+    reservaId,
+    paymentId,
+    pixKey,
+    qrCodeImage,
+    pixExpirationDate: clean(charge?.expirationDate, 80) || null,
+    sessionId: clean(reservation.atribuicao?.sessionId, 100) || null,
+    geradoEm: now.toISOString(),
+    expiraEm: expiresAt.toISOString(),
+  };
+  await db.collection(AGENT_CHECKOUT_HANDOFFS_COLLECTION).doc(checkoutTokenHash(token)).set({
+    payload,
+    telefone: reservationPhone,
+    sessionId: payload.sessionId,
+    reservaId,
+    paymentId,
+    tipo: "pix_existente",
+    criadoEm: now,
+    expiraEm: expiresAt,
+    acessos: 0,
+  });
+
+  return {
+    url: `https://vagafogo.com.br/reservar?agent_checkout=${encodeURIComponent(token)}`,
+    expiraEmMinutos: 120,
+    expiraEm: expiresAt.toISOString(),
+    reservaId,
+    paymentId,
+  };
+};
+
 export const obterCheckoutAgente = async (tokenValue: unknown) => {
   const token = clean(tokenValue, 80);
   if (!/^[A-Za-z0-9_-]{40,80}$/.test(token)) throw new Error("AGENT_CHECKOUT_TOKEN_INVALID");

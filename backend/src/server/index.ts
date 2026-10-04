@@ -72,6 +72,7 @@ import {
 import {
   atualizarLeadAgente,
   criarLinkCartaoAgente,
+  criarLinkPixExistenteAgente,
   diagnosticarIntegridadeAgente,
   excluirLeadAgente,
   excluirRascunhoReservaAgente,
@@ -163,7 +164,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-04.2-agent-cpf-prevalidation',
+    build: '2026-10-04.3-existing-pix-link',
     timestamp: new Date().toISOString(),
   });
 });
@@ -591,6 +592,15 @@ app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async 
   try {
     const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
     res.json(await criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/ferramentas/link-pix-existente', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await criarLinkPixExistenteAgente(req.body ?? {}));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });

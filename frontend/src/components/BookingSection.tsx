@@ -674,6 +674,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const cartaoValidadeExibicao = cartaoValidade.trim() ? cartaoValidade : "MM/AA";
   const pixGerado =
     formaPagamento === "PIX" && Boolean(checkoutUrl || pixKey || qrCodeImage);
+  const pixExistenteDoAgente = initialAgentCheckout?.tipo === "pix_existente"
+    && initialAgentCheckout.formaPagamento === "PIX";
   const resultadoPagamentoDedicado = pixGerado || cartaoResultado !== null;
   const bloqueiaEnvioCartao =
     formaPagamento === "CREDIT_CARD" &&
@@ -1143,11 +1145,20 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         },
       ])
     ));
-    setFormaPagamento("CREDIT_CARD");
-    setSubEtapaPagamento("metodo");
+    const existingPix = initialAgentCheckout.tipo === "pix_existente"
+      && initialAgentCheckout.formaPagamento === "PIX"
+      && Boolean(initialAgentCheckout.pixKey || initialAgentCheckout.qrCodeImage);
+    setFormaPagamento(existingPix ? "PIX" : "CREDIT_CARD");
+    setSubEtapaPagamento(existingPix ? "pix" : "metodo");
+    if (existingPix) {
+      setPixKey(initialAgentCheckout.pixKey || null);
+      setQrCodeImage(initialAgentCheckout.qrCodeImage || null);
+      setExpirationDate(initialAgentCheckout.pixExpirationDate || null);
+      setPixCopiado(false);
+    }
     setEtapa(4);
     setFormErrors({});
-    setModalReembolsoAberto(true);
+    setModalReembolsoAberto(!existingPix);
   }, [initialAgentCheckout, loadingPacotes, pacotes, tiposClientes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
@@ -4879,7 +4890,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                       </button>
                     </div>
 
-                    {subEtapaPagamento === "pix" && (
+                    {subEtapaPagamento === "pix" && !pixExistenteDoAgente && (
                       <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
                         <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
                           <p className="text-sm font-bold text-emerald-900">PIX selecionado</p>
