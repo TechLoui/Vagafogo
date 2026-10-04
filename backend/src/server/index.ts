@@ -163,7 +163,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-03.3-visit-day-internal-alerts',
+    build: '2026-10-04.2-agent-cpf-prevalidation',
     timestamp: new Date().toISOString(),
   });
 });

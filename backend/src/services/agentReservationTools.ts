@@ -158,6 +158,23 @@ export const leadAgenteEstaFinalizado = (etapa: unknown, resultado: unknown) => 
 };
 export const reservaAgenteTemConfirmacaoResumo = (input: Pick<AgentAvailabilityInput, "confirmouResumo">) =>
   input.confirmouResumo === true;
+
+export const cpfValidoParaReservaAgente = (value: unknown) => {
+  const cpf = String(value ?? "").replace(/\D/g, "");
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+
+  const calculateDigit = (length: number, initialWeight: number) => {
+    let sum = 0;
+    for (let index = 0; index < length; index += 1) {
+      sum += Number(cpf[index]) * (initialWeight - index);
+    }
+    const digit = (sum * 10) % 11;
+    return digit === 10 ? 0 : digit;
+  };
+
+  return calculateDigit(9, 10) === Number(cpf[9])
+    && calculateDigit(10, 11) === Number(cpf[10]);
+};
 const nonNegativeInteger = (value: unknown, maximum = 500) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(maximum, Math.max(0, Math.trunc(number))) : 0;
@@ -722,6 +739,9 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
     ...participation.pending,
     ...questionValidation.pending,
     ...petRequirements,
+    ...(owns(input, "cpf") && clean(input.cpf, 40) && !cpfValidoParaReservaAgente(input.cpf)
+      ? ["Informe um CPF valido antes de confirmar o resumo ou criar o pagamento."]
+      : []),
   ]));
   const times = Object.fromEntries(packageResults.filter((item) => item.horario).map((item) => [item.id, item.horario as string]));
   const categorySummary = Object.fromEntries(types.map((type) => [typeKey(type), {
@@ -783,9 +803,9 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
 
   const nome = clean(input.nome, 160);
   const email = clean(input.email, 240).toLowerCase();
-  const cpf = String(input.cpf ?? "").replace(/\D/g, "").slice(0, 11);
+  const cpf = String(input.cpf ?? "").replace(/\D/g, "");
   const telefone = normalizePhone(input.telefone);
-  if (!nome || !/^\S+@\S+\.\S+$/.test(email) || cpf.length !== 11 || telefone.length < 10) {
+  if (!nome || !/^\S+@\S+\.\S+$/.test(email) || !cpfValidoParaReservaAgente(cpf) || telefone.length < 10) {
     throw new Error("AGENT_CHECKOUT_PERSONAL_DATA_REQUIRED");
   }
   if (typeof input.temPet !== "boolean") throw new Error("AGENT_CHECKOUT_PET_ANSWER_REQUIRED");
@@ -954,7 +974,7 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   copyText("nome", 160);
   copyText("email", 240);
   if (owns(input, "cpf")) {
-    const cpf = String(input.cpf ?? "").replace(/\D/g, "").slice(0, 11);
+    const cpf = String(input.cpf ?? "").replace(/\D/g, "");
     if (cpf) patch.cpf = cpf;
   }
   if (owns(input, "horariosPorPacote")) patch.horariosPorPacote = timeMap(input.horariosPorPacote);
