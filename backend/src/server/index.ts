@@ -164,7 +164,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-04.3-existing-pix-link',
+    build: '2026-10-04.4-pix-link-agent',
     timestamp: new Date().toISOString(),
   });
 });

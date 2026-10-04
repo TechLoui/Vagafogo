@@ -1282,6 +1282,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     // ✅ Resposta de sucesso
     const resposta: any = {
       status: "ok",
+      reservaId,
       cobranca: {
         id: cobrancaData.id,
         status: cobrancaData.status,

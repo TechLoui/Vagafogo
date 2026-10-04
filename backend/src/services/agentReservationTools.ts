@@ -42,6 +42,9 @@ type AgentReservationDraftInput = AgentAvailabilityInput & {
   canalConclusao?: unknown;
   formaPagamento?: unknown;
   whatsappMarketingOptIn?: unknown;
+  reservaId?: unknown;
+  pagamentoId?: unknown;
+  pixLinkVagafogo?: unknown;
 };
 
 type AgentLeadInput = {
@@ -1098,6 +1101,9 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
     const value = clean(input.formaPagamento, 30).toUpperCase();
     if (value === "PIX" || value === "CREDIT_CARD") patch.formaPagamento = value;
   }
+  copyText("reservaId", 100);
+  copyText("pagamentoId", 100);
+  copyText("pixLinkVagafogo", 500);
   return patch;
 };
 
