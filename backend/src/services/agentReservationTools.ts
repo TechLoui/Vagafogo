@@ -1908,10 +1908,11 @@ export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {
   return true;
 };
 
-export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown) => {
+export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown, motivoValue?: unknown) => {
   if (!leadPhoneVariants(telefone).length) return { atualizado: false, motivo: "telefone_invalido" };
   const db = obterFirestoreAdmin();
   if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
+  const customerDeferred = canonicalLeadValue(motivoValue) === "cliente_adiou_decisao";
   const located = await localizarLeadAgentePorTelefone(db, telefone);
   if (!located) return { atualizado: false, motivo: "lead_nao_encontrado" };
   const { draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
@@ -1921,16 +1922,24 @@ export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown) =
   const protectedFlow = ["dados_em_coleta", "aguardando_confirmacao", "pagamento_pendente", "atendimento_humano", "concluida"].includes(stage)
     || ["pagamento_pendente", "reserva_confirmada", "atendimento_humano"].includes(outcome);
   if (protectedFlow) return { atualizado: false, motivo: "fluxo_pendente_ou_convertido" };
-  if (stage === "atendimento_concluido" || outcome === "duvida_resolvida") {
+  if (["atendimento_concluido", "encerrado_sem_reserva"].includes(stage)
+    || ["duvida_resolvida", "nao_convertido"].includes(outcome)) {
     return { atualizado: false, motivo: "ja_finalizado" };
   }
-  await consolidateAgentLead(db, draftRef, base, {
+  const closure = customerDeferred ? {
+    etapa: "encerrado_sem_reserva",
+    resultado: "nao_convertido",
+    motivo: "cliente_adiou_decisao",
+    proximaAcao: "Aguardar nova iniciativa do cliente; nao realizar retomada automatica",
+    resumo: "Cliente informou que vai decidir e retornar se desejar prosseguir.",
+  } : {
     etapa: "atendimento_concluido",
     resultado: "duvida_resolvida",
     motivo: "duvida_resolvida_pelo_bot",
     proximaAcao: "Nenhuma acao pendente",
     resumo: "Duvida atendida e atendimento encerrado apos confirmacao do cliente.",
-  }, draftSnapshot.exists, true);
+  };
+  await consolidateAgentLead(db, draftRef, base, closure, draftSnapshot.exists, true);
   return { atualizado: true, id: leadRef.id };
 };
 

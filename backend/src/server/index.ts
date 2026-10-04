@@ -622,7 +622,7 @@ app.post('/internal/agente/ferramentas/lead', exigirServicoAgente, async (req, r
 
 app.post('/internal/agente/eventos/atendimento-resolvido', exigirServicoAgente, async (req, res) => {
   try {
-    res.json(await finalizarLeadAgentePorDuvidaResolvida(req.body?.telefone));
+    res.json(await finalizarLeadAgentePorDuvidaResolvida(req.body?.telefone, req.body?.motivo));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
