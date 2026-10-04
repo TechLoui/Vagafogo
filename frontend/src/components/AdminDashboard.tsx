@@ -16213,7 +16213,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Bom dia para quem visita hoje</h3>
                   <p className="text-sm text-slate-500">
-                    A partir do horário configurado, envia uma mensagem personalizada para cada reserva confirmada daquele dia.
+                    A partir do horário configurado, envia uma mensagem personalizada para reservas confirmadas anteriormente. Quem reservar no próprio dia recebe somente a confirmação.
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
@@ -16273,6 +16273,7 @@ const totalParticipantesDoDia = useMemo(() => {
                     <p className="text-xs font-semibold uppercase text-sky-700">Proteções do disparo</p>
                     <ul className="mt-2 space-y-1 text-xs leading-relaxed text-sky-900">
                       <li>• Somente reservas online confirmadas e pagas.</li>
+                      <li>• Reservas criadas ou confirmadas no próprio dia recebem somente a confirmação.</li>
                       <li>• Um único lembrete por reserva e por dia.</li>
                       <li>• Envio sequencial, com intervalo aleatório configurável.</li>
                       <li>• Não envia se o horário da visita já passou.</li>

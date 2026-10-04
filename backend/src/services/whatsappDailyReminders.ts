@@ -51,6 +51,27 @@ const timestampMillis = (value: any) => {
   const parsed = new Date(value ?? 0).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const timestampDateKey = (value: unknown) => {
+  const millis = timestampMillis(value);
+  return millis > 0 ? dateKey(new Date(millis)) : "";
+};
+export const reservaCriadaOuConfirmadaNoDia = (
+  data: FirebaseFirestore.DocumentData,
+  today: string,
+  documentCreatedAt?: unknown,
+) => {
+  const creationTimestamp = data.criadoEm
+    ?? data.CriadoEm
+    ?? data.createdAt
+    ?? data.dataCriacao
+    ?? documentCreatedAt;
+  const paymentTimestamp = data.dataPagamento
+    ?? data.DataPagamento
+    ?? data.pagamentoConfirmadoEm
+    ?? data.confirmadaEm;
+  return timestampDateKey(creationTimestamp) === today
+    || timestampDateKey(paymentTimestamp) === today;
+};
 const hashId = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 40);
 const clamp = (value: unknown, minimum: number, maximum: number, fallback: number) => {
   const parsed = Number(value);
@@ -61,7 +82,11 @@ const randomDelayMs = (config: FirebaseFirestore.DocumentData) => {
   const maximum = Math.max(minimum, clamp(config.intervaloLembreteDiaMaxSegundos, 60, 900, 120));
   return (minimum + Math.floor(Math.random() * (maximum - minimum + 1))) * 1000;
 };
-const eligibleReservation = (data: FirebaseFirestore.DocumentData, today: string) => {
+const eligibleReservation = (
+  data: FirebaseFirestore.DocumentData,
+  today: string,
+  documentCreatedAt?: unknown,
+) => {
   const reservationTime = parseMinutes(data.horario ?? data.Horario, -1);
   const visitHasNotPassed = reservationTime < 0 || localMinutes() < reservationTime;
   return data.origem !== "manual"
@@ -69,6 +94,9 @@ const eligibleReservation = (data: FirebaseFirestore.DocumentData, today: string
     && ["pago", "confirmada", "confirmado"].includes(clean(data.status, 40).toLowerCase())
     && reservationDate(data.data ?? data.Data) === today
     && Boolean(normalizePhone(data.telefone ?? data.Telefone))
+    // Quem reservou ou teve o pagamento confirmado no proprio dia ja recebe a
+    // confirmacao transacional. O lembrete matinal seria uma duplicidade.
+    && !reservaCriadaOuConfirmadaNoDia(data, today, documentCreatedAt)
     && visitHasNotPassed;
 };
 
@@ -117,7 +145,7 @@ const enqueueToday = async () => {
   if (!db) return 0;
   const today = dateKey();
   const snapshot = await db.collection("reservas").where("data", "==", today).limit(500).get();
-  const eligible = snapshot.docs.filter((reservation) => eligibleReservation(reservation.data(), today));
+  const eligible = snapshot.docs.filter((reservation) => eligibleReservation(reservation.data(), today, reservation.createTime));
   if (eligible.length === 0) return 0;
 
   const refs = eligible.map((reservation) =>
@@ -200,11 +228,21 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
 
     const reservationRef = db.collection("reservas").doc(clean(acquired.data.reservaId, 120));
     const reservationSnapshot = await reservationRef.get();
-    if (!reservationSnapshot.exists || !eligibleReservation(reservationSnapshot.data()!, today)) {
-      await document.ref.set({ status: "ignorado", motivo: "reserva_nao_elegivel", atualizadoEm: FieldValue.serverTimestamp() }, { merge: true });
+    const reservationData = reservationSnapshot.data();
+    const sameDayConfirmation = Boolean(
+      reservationSnapshot.exists
+      && reservationData
+      && reservaCriadaOuConfirmadaNoDia(reservationData, today, reservationSnapshot.createTime),
+    );
+    if (!reservationSnapshot.exists || !reservationData || !eligibleReservation(reservationData, today, reservationSnapshot.createTime)) {
+      await document.ref.set({
+        status: "ignorado",
+        motivo: sameDayConfirmation ? "reserva_criada_ou_confirmada_no_dia" : "reserva_nao_elegivel",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      }, { merge: true });
       return;
     }
-    const reservation = reservationSnapshot.data()!;
+    const reservation = reservationData;
     const template = clean(config.mensagemLembreteDia, 4096) || TEMPLATE_LEMBRETE_DIA_PADRAO;
     const message = renderMessage(template, reservation).slice(0, 4096);
     const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
