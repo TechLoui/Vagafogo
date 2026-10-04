@@ -1219,7 +1219,7 @@ function DiagnosticsPanel({ onError }: { onError: (error: unknown) => void }) {
 function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => void; onError: (error: unknown) => void }) {
   const [config, setConfig] = useState<AgentConfig>({
     typingEnabled: true,
-    replyDelayMs: 0,
+    replyDelayMs: 12000,
     typingMsPerChar: 45,
     typingMinMs: 1500,
     typingMaxMs: 9000,
@@ -1230,12 +1230,12 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   useEffect(() => { api("/crm/agente/config").then((data) => setConfig((current) => ({ ...current, ...(data as Partial<AgentConfig>) }))).catch(onError).finally(() => setLoading(false)); }, [onError]);
-  const field = (label: string, key: keyof AgentConfig, divisor = 1) => <label>{label}<input type="number" min="0" step={divisor === 1000 ? .5 : 5} value={Number(config[key]) / divisor} onChange={(event) => setConfig((current) => ({ ...current, [key]: Math.round(Number(event.target.value) * divisor) }))} /></label>;
+  const field = (label: string, key: keyof AgentConfig, divisor = 1, min = 0) => <label>{label}<input type="number" min={min} step={divisor === 1000 ? .5 : 5} value={Number(config[key]) / divisor} onChange={(event) => setConfig((current) => ({ ...current, [key]: Math.round(Number(event.target.value) * divisor) }))} /></label>;
   return <article className="agent-card agent-settings">
-    <div className="agent-card__title"><span><FaCog /></span><div><h2>Comportamento de envio</h2><p>Ritmo das respostas e horário permitido para retomadas automáticas.</p></div></div>
+    <div className="agent-card__title"><span><FaCog /></span><div><h2>Comportamento de envio</h2><p>Agrupamento das mensagens, ritmo das respostas e horário permitido para retomadas automáticas.</p></div></div>
     {loading ? <p>Carregando…</p> : <>
       <label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes de cada resposta.</small></div></label>
-      <div className="agent-settings-grid">{field("Atraso antes de responder (s)", "replyDelayMs", 1000)}{field("Digitação mínima (s)", "typingMinMs", 1000)}{field("Digitação máxima (s)", "typingMaxMs", 1000)}{field("Velocidade (ms por caractere)", "typingMsPerChar")}</div>
+      <div className="agent-settings-grid">{field("Tempo para agrupar mensagens (s)", "replyDelayMs", 1000, 1)}{field("Digitação mínima (s)", "typingMinMs", 1000)}{field("Digitação máxima (s)", "typingMaxMs", 1000)}{field("Velocidade (ms por caractere)", "typingMsPerChar")}</div>
       <div className="agent-card__title"><span><FaComments /></span><div><h2>Janela de retomadas</h2><p>Lembretes por falta de resposta ficam retidos fora deste período e saem na próxima janela.</p></div></div>
       <div className="agent-settings-grid">
         <label>Início permitido<input type="time" value={config.followupStartTime} onChange={(event) => setConfig((current) => ({ ...current, followupStartTime: event.target.value }))} /></label>
