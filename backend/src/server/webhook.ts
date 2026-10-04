@@ -174,6 +174,7 @@ const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<st
       phone,
       text: await mensagemConfirmacaoAgente(reservaId, reserva),
       requestId: `reserva-confirmada:${reservaId}:${phone}${requestSuffix}`,
+      contactName: String(reserva.nome ?? reserva.Nome ?? "").trim().slice(0, 120),
     },
     timeoutMs: 30_000,
   });

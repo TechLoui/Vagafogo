@@ -164,7 +164,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-04.4-pix-link-agent',
+    build: '2026-10-04.5-whatsapp-deduplication',
     timestamp: new Date().toISOString(),
   });
 });
@@ -1040,7 +1040,8 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
       ? await enviarMensagemTransacionalPeloAgente(
         prepared.telefone,
         prepared.mensagem,
-        `boas-vindas:${reservaId}:${prepared.telefone}`,
+        `boas-vindas:${String(reserva.data ?? reserva.Data ?? "sem-data")}:${prepared.telefone}`,
+        reserva.nome ?? reserva.Nome,
       )
       : prepared;
 

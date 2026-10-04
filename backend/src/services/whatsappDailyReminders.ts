@@ -248,7 +248,8 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
     const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
       normalizePhone(reservation.telefone ?? reservation.Telefone),
       message,
-      `lembrete-dia:${today}:${clean(acquired.data.reservaId, 120)}`,
+      `lembrete-dia:${today}:${normalizePhone(reservation.telefone ?? reservation.Telefone)}`,
+      reservation.nome ?? reservation.Nome,
     ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
     const nextGlobalAt = Timestamp.fromMillis(Date.now() + randomDelayMs(config));
     if (result.enviado) {

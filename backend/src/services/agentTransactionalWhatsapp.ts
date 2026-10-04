@@ -13,6 +13,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
   telefoneInformado: unknown,
   mensagemInformada: unknown,
   requestId: string,
+  nomeContato?: unknown,
 ): Promise<ResultadoEnvio> => {
   const telefone = normalizePhone(telefoneInformado);
   const mensagem = String(mensagemInformada ?? "").trim().slice(0, 4096);
@@ -25,6 +26,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
       phone: telefone,
       text: mensagem,
       requestId: String(requestId ?? "").trim().slice(0, 160),
+      contactName: String(nomeContato ?? "").trim().slice(0, 120),
     },
     timeoutMs: 30_000,
   });
