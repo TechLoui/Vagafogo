@@ -1136,7 +1136,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     setParticipantesPorGrupo({ [groupKey]: quantities });
     setIdadesPorGrupoETipo(Object.keys(ages).length > 0 ? { [groupKey]: ages } : {});
 
-    setRespostasPersonalizadas(Object.fromEntries(
+    const respostasCheckout = Object.fromEntries(
       initialAgentCheckout.perguntasPersonalizadas.map((answer) => [
         `${answer.pacoteId}-${answer.perguntaId}`,
         {
@@ -1144,7 +1144,34 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           condicional: answer.perguntaCondicional?.resposta,
         },
       ])
-    ));
+    );
+    setRespostasPersonalizadas(respostasCheckout);
+    const pacotesCheckout = pacotes.filter((pacote) =>
+      Boolean(pacote.id && initialAgentCheckout.pacoteIds.includes(pacote.id))
+    );
+    const indicePerguntaPendente = pacotesCheckout.findIndex((pacote) =>
+      (pacote.perguntasPersonalizadas ?? []).some((pergunta) => {
+        if (!pacote.id) return false;
+        const resposta = respostasCheckout[`${pacote.id}-${pergunta.id}`];
+        const valor = String(resposta?.resposta ?? "").trim();
+        const basePendente = pergunta.obrigatoria && (
+          pergunta.tipo === "sim_nao"
+            ? valor !== "sim" && valor !== "nao"
+            : !valor
+        );
+        if (basePendente) return true;
+        const condicional = pergunta.perguntaCondicional;
+        if (!condicional?.obrigatoria) return false;
+        const condicaoEsperada = ehPerguntaJuntarMesa(pergunta.pergunta)
+          ? "sim"
+          : condicional.condicao;
+        if (valor !== condicaoEsperada) return false;
+        const valorCondicional = String(resposta?.condicional ?? "").trim();
+        return condicional.tipo === "sim_nao"
+          ? valorCondicional !== "sim" && valorCondicional !== "nao"
+          : !valorCondicional;
+      })
+    );
     const existingPix = initialAgentCheckout.tipo === "pix_existente"
       && initialAgentCheckout.formaPagamento === "PIX"
       && Boolean(initialAgentCheckout.pixKey || initialAgentCheckout.qrCodeImage);
@@ -1156,8 +1183,14 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       setExpirationDate(initialAgentCheckout.pixExpirationDate || null);
       setPixCopiado(false);
     }
-    setEtapa(4);
-    setFormErrors({});
+    if (indicePerguntaPendente >= 0) {
+      setIndicePacoteHorario(indicePerguntaPendente);
+      setEtapa(2);
+      setFormErrors({ perguntas: "Confirme as informações adicionais antes de seguir para o pagamento." });
+    } else {
+      setEtapa(4);
+      setFormErrors({});
+    }
     setModalReembolsoAberto(!existingPix);
   }, [initialAgentCheckout, loadingPacotes, pacotes, tiposClientes]);
 
@@ -2677,7 +2710,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       // Perguntas agora estão na etapa 2 (cards por pacote)
       const { erro } = montarRespostasPersonalizadas();
       if (erro) {
-        alert(erro);
+        const errors = { perguntas: erro };
+        setFormErrors((prev) => ({ ...prev, ...errors }));
+        window.setTimeout(() => scrollToErrorField(errors), 120);
         return;
       }
       setSubPassoParticipantes(0);
@@ -2756,8 +2791,10 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
     const { respostas, erro } = montarRespostasPersonalizadas();
     if (erro) {
-      setEtapa(3);
-      alert(erro);
+      const errors = { perguntas: erro };
+      setFormErrors((prev) => ({ ...prev, ...errors }));
+      setEtapa(2);
+      window.setTimeout(() => scrollToErrorField(errors), 120);
       return;
     }
 
