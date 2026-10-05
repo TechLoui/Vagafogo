@@ -7,17 +7,40 @@ const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_CONFIRMATION_WOR
 const MAX_ATTEMPTS = 5;
 const STALE_SENDING_MS = 3 * 60 * 1000;
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000, 3 * 60 * 60_000];
+const TIMEZONE = "America/Sao_Paulo";
 
 let workerTimer: NodeJS.Timeout | null = null;
 let workerRunning = false;
 
 const clean = (value: unknown, maximum = 240) => String(value ?? "").trim().slice(0, maximum);
+const dateKey = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(date);
 const timestampMillis = (value: any) => {
   if (typeof value?.toMillis === "function") return Number(value.toMillis());
   if (typeof value?.toDate === "function") return Number(value.toDate().getTime());
   const parsed = new Date(value ?? 0).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const reservationDateKey = (reserva: FirebaseFirestore.DocumentData) => {
+  const value = reserva.data ?? reserva.Data;
+  if (typeof value === "string") {
+    const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+    return match?.[1] ?? "";
+  }
+  const millis = timestampMillis(value);
+  return millis > 0 ? dateKey(new Date(millis)) : "";
+};
+
+export type ElegibilidadeDataConfirmacaoWhatsapp = "elegivel" | "reserva_passada" | "data_reserva_invalida";
+
+export const classificarDataConfirmacaoWhatsapp = (
+  reserva: FirebaseFirestore.DocumentData,
+  today = dateKey(),
+): ElegibilidadeDataConfirmacaoWhatsapp => {
+  const visitDate = reservationDateKey(reserva);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(visitDate)) return "data_reserva_invalida";
+  return visitDate < today ? "reserva_passada" : "elegivel";
+};
+
 const reservaConfirmada = (reserva: FirebaseFirestore.DocumentData) =>
   reserva.origem !== "manual"
   && reserva.confirmada === true
@@ -32,6 +55,17 @@ export const enfileirarConfirmacaoReservaWhatsapp = async (reservaId: string, re
     if (!snapshot.exists) return false;
     const data = { ...snapshot.data(), ...(reserva ?? {}) };
     if (!reservaConfirmada(data) || data.whatsappConfirmacaoEnviado === true) return false;
+    const dateEligibility = classificarDataConfirmacaoWhatsapp(data);
+    if (dateEligibility !== "elegivel") {
+      transaction.set(ref, {
+        whatsappConfirmacaoPendente: false,
+        whatsappConfirmacaoStatus: "ignorado",
+        whatsappConfirmacaoErro: dateEligibility,
+        whatsappConfirmacaoProximaTentativaEm: FieldValue.delete(),
+        whatsappConfirmacaoAtualizadoEm: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return false;
+    }
     if (
       data.whatsappConfirmacaoPendente === true
       && ["aguardando", "enviando"].includes(clean(data.whatsappConfirmacaoStatus, 40))
@@ -56,6 +90,17 @@ export const processarConfirmacaoReservaWhatsapp = async (reservaId: string, for
     if (!snapshot.exists) return null;
     const data = snapshot.data()!;
     if (!reservaConfirmada(data)) return null;
+    const dateEligibility = classificarDataConfirmacaoWhatsapp(data);
+    if (dateEligibility !== "elegivel") {
+      transaction.set(ref, {
+        whatsappConfirmacaoPendente: false,
+        whatsappConfirmacaoStatus: "ignorado",
+        whatsappConfirmacaoErro: dateEligibility,
+        whatsappConfirmacaoProximaTentativaEm: FieldValue.delete(),
+        whatsappConfirmacaoAtualizadoEm: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return null;
+    }
     if (!force && data.whatsappConfirmacaoEnviado === true) return null;
     if (!force && data.whatsappConfirmacaoPendente !== true) return null;
     const status = clean(data.whatsappConfirmacaoStatus, 40);

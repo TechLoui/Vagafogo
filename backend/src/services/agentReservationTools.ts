@@ -1912,7 +1912,9 @@ export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown, m
   if (!leadPhoneVariants(telefone).length) return { atualizado: false, motivo: "telefone_invalido" };
   const db = obterFirestoreAdmin();
   if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
-  const customerDeferred = canonicalLeadValue(motivoValue) === "cliente_adiou_decisao";
+  const closureReason = canonicalLeadValue(motivoValue);
+  const customerDeferred = closureReason === "cliente_adiou_decisao";
+  const completedVisit = closureReason === "visita_ja_realizada";
   const located = await localizarLeadAgentePorTelefone(db, telefone);
   if (!located) return { atualizado: false, motivo: "lead_nao_encontrado" };
   const { draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
@@ -1926,8 +1928,8 @@ export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown, m
     || ["duvida_resolvida", "nao_convertido"].includes(outcome);
   // Se o gateway trouxe a intencao mais especifica depois do fechamento
   // generico, reclassifique o mesmo lead em vez de criar outro registro.
-  const canRefineDeferred = customerDeferred && outcome === "duvida_resolvida";
-  if (alreadyFinalized && !canRefineDeferred) {
+  const canRefineClosure = (customerDeferred || completedVisit) && outcome === "duvida_resolvida";
+  if (alreadyFinalized && !canRefineClosure) {
     return { atualizado: false, motivo: "ja_finalizado" };
   }
   const closure = customerDeferred ? {
@@ -1939,9 +1941,11 @@ export const finalizarLeadAgentePorDuvidaResolvida = async (telefone: unknown, m
   } : {
     etapa: "atendimento_concluido",
     resultado: "duvida_resolvida",
-    motivo: "duvida_resolvida_pelo_bot",
+    motivo: completedVisit ? "visita_ja_realizada" : "duvida_resolvida_pelo_bot",
     proximaAcao: "Nenhuma acao pendente",
-    resumo: "Duvida atendida e atendimento encerrado apos confirmacao do cliente.",
+    resumo: completedVisit
+      ? "Cliente informou que a visita ja foi realizada; atendimento encerrado sem retomada."
+      : "Duvida atendida e atendimento encerrado apos confirmacao do cliente.",
   };
   await consolidateAgentLead(db, draftRef, base, closure, draftSnapshot.exists, true);
   return { atualizado: true, id: leadRef.id };
