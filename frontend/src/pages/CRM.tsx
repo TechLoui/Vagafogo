@@ -199,6 +199,7 @@ type CampaignRecord = {
   ignored?: number;
   optedOut?: number;
   withoutConsent?: number;
+  unknownIncluded?: number;
   duplicatesRemoved?: number;
   intervalMin?: number;
   intervalMax?: number;
@@ -270,7 +271,7 @@ type AgentLeadRecord = {
   estimatedValue?: number;
   paymentMethod?: string;
   reservationId?: string;
-  marketingOptIn: boolean;
+  marketingOptIn?: boolean;
   nextAction?: string;
   summary?: string;
   updatedAt?: string;
@@ -367,12 +368,12 @@ const segmentMeta: Record<
   abandoned: {
     label: "Checkout abandonado",
     description:
-      "Pessoas que pararam há 30+ minutos e autorizaram ajuda pelo WhatsApp.",
+      "Pessoas que pararam há 30+ minutos sem concluir a reserva.",
   },
   lost: {
     label: "Oportunidades perdidas",
     description:
-      "Checkouts e atendimentos comerciais encerrados sem reserva, com opt-in válido.",
+      "Checkouts e atendimentos comerciais encerrados sem reserva.",
   },
 };
 
@@ -979,7 +980,10 @@ export function CRM() {
                 reservationId: raw.reservaId
                   ? String(raw.reservaId)
                   : undefined,
-                marketingOptIn: raw.marketingOptIn === true,
+                marketingOptIn:
+                  typeof raw.marketingOptIn === "boolean"
+                    ? raw.marketingOptIn
+                    : undefined,
                 nextAction: raw.proximaAcao
                   ? String(raw.proximaAcao)
                   : undefined,
@@ -1046,6 +1050,7 @@ export function CRM() {
               ignored: toNumber(raw.ignoradas),
               optedOut: toNumber(raw.optOut),
               withoutConsent: toNumber(raw.semConsentimento),
+              unknownIncluded: toNumber(raw.semRespostaIncluida),
               duplicatesRemoved: toNumber(raw.duplicidadesEliminadas),
               intervalMin: toNumber(raw.intervaloMinSegundos),
               intervalMax: toNumber(raw.intervaloMaxSegundos),
@@ -1257,16 +1262,12 @@ export function CRM() {
     const phones = new Set<string>();
     journeys.forEach((item) => {
       const phone = item.phone?.replace(/\D/g, "");
-      if (
-        phone &&
-        journeyIsAbandoned(item, journeyClock) &&
-        item.recoveryOptIn
-      )
+      if (phone && journeyIsAbandoned(item, journeyClock))
         phones.add(phone);
     });
     agentLeads.forEach((item) => {
       const phone = item.phone.replace(/\D/g, "");
-      if (phone && !item.isTest && item.marketingOptIn && agentLeadIsLost(item))
+      if (phone && !item.isTest && agentLeadIsLost(item))
         phones.add(phone);
     });
     return phones.size;
@@ -1275,7 +1276,7 @@ export function CRM() {
     if (segment === "pending") return pendingReservations.length;
     if (segment === "abandoned")
       return journeys.filter(
-        (item) => journeyIsAbandoned(item) && item.recoveryOptIn && item.phone,
+        (item) => journeyIsAbandoned(item) && item.phone,
       ).length;
     if (segment === "lost") return lostAudienceCount;
     if (segment === "inactive90")
@@ -1452,7 +1453,12 @@ export function CRM() {
                 dominio: "",
                 nome: item.name ?? "",
                 telefone: item.phone,
-                optInMarketing: item.marketingOptIn ? "Sim" : "Não",
+                optInMarketing:
+                  item.marketingOptIn === true
+                    ? "Sim"
+                    : item.marketingOptIn === false
+                      ? "Não"
+                      : "Sem resposta",
                 interesse: item.activities.join(" + "),
                 dataDesejada: item.desiredDate ?? "",
                 valorEstimado: item.estimatedValue ?? 0,
@@ -1957,9 +1963,7 @@ function OpportunityDashboardSection({
     (item) => isPending(item.status) && item.origin !== "manual" && item.phone,
   );
   const abandonedJourneys = journeys.filter((item) => journeyIsAbandoned(item));
-  const recoverableJourneys = abandonedJourneys.filter(
-    (item) => item.recoveryOptIn && item.phone,
-  );
+  const recoverableJourneys = abandonedJourneys.filter((item) => item.phone);
   const realAgentLeads = agentLeads.filter((item) => !item.isTest);
   const openLeads = realAgentLeads.filter(agentLeadIsOpen);
   const displayedOpenLeads = agentLeads.filter(agentLeadIsOpen);
@@ -2005,7 +2009,7 @@ function OpportunityDashboardSection({
       contactKey(item.phone, `jornada:${item.sessionId}`),
     ),
     ...lostLeads
-      .filter((item) => item.marketingOptIn && item.phone)
+      .filter((item) => item.phone)
       .map((item) =>
         contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
       ),
@@ -2139,7 +2143,8 @@ function OpportunityDashboardSection({
   const radarItems = [
     {
       label: "Recuperar oportunidades perdidas",
-      description: "Checkouts e conversas encerradas sem reserva, com opt-in.",
+      description:
+        "Checkouts e conversas encerradas sem reserva; recusas são excluídas no disparo.",
       count: recoverableLostKeys.size,
       icon: FaExclamationCircle,
       tone: "red",
@@ -2147,7 +2152,8 @@ function OpportunityDashboardSection({
     },
     {
       label: "Recuperar checkout abandonado",
-      description: "Parou no formulário e autorizou contato pelo WhatsApp.",
+      description:
+        "Parou no formulário; recusas e opt-outs são excluídos no disparo.",
       count: recoverableKeys.size,
       icon: FaLink,
       tone: "blue",
@@ -2476,7 +2482,7 @@ function OpportunityDashboardSection({
             <button onClick={() => onNavigate("campanhas")}>Criar campanha <FaArrowRight /></button>
           </div>
           <div className="crm-reactivation__list">
-            <div><span><FaExclamationCircle /></span><p><strong>Oportunidades perdidas</strong><small>{recoverableLostKeys.size} contatos com opt-in</small></p><em className="is-ready">Disponível</em></div>
+            <div><span><FaExclamationCircle /></span><p><strong>Oportunidades perdidas</strong><small>{recoverableLostKeys.size} contatos antes da validação</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaClock /></span><p><strong>Sem visita há 90+ dias</strong><small>{inactive90.length} clientes</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaUsers /></span><p><strong>Sem visita há 180+ dias</strong><small>{inactive180.length} clientes</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaSyncAlt /></span><p><strong>Clientes recorrentes</strong><small>{recurring.length} clientes</small></p><em className="is-ready">Disponível</em></div>
@@ -2845,9 +2851,7 @@ function JourneysSection({
   const abandoned = journeys
     .filter(journeyIsAbandoned)
     .sort((a, b) => (b.lastEventAt ?? "").localeCompare(a.lastEventAt ?? ""));
-  const recoverable = abandoned.filter(
-    (item) => item.recoveryOptIn && item.phone,
-  );
+  const recoverable = abandoned.filter((item) => item.phone);
   const converted = journeys.filter((item) => item.status === "convertida");
   const active = journeys.filter(
     (item) => item.status !== "convertida" && !journeyIsAbandoned(item),
@@ -2925,7 +2929,7 @@ function JourneysSection({
             <FaUserFriends />
           </span>
           <div>
-            <small>Recuperáveis com opt-in</small>
+            <small>Com telefone para validar</small>
             <strong>{recoverable.length}</strong>
           </div>
         </article>
@@ -3223,7 +3227,11 @@ function JourneysSection({
                         <td>
                           {item.recoveryOptIn && item.phone ? (
                             <span className="crm-status crm-status--confirmed">
-                              Opt-in válido
+                              Aceitou campanhas
+                            </span>
+                          ) : item.phone ? (
+                            <span className="crm-status crm-status--pending">
+                              Sem resposta
                             </span>
                           ) : (
                             <span className="crm-status crm-status--pending">
@@ -3664,7 +3672,7 @@ function CampaignsSection({
         CAMPAIGN_SENDING_DISABLED:
           "O envio real permanece bloqueado até a ativação segura do provedor de campanhas.",
         CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS:
-          "Nenhum contato desse público possui consentimento de marketing válido.",
+          "Nenhum contato elegível restou após excluir recusas e opt-outs.",
         CRM_AUTH_POLICY_NOT_CONFIGURED:
           "Configure os administradores autorizados antes de operar campanhas.",
       };
@@ -3741,7 +3749,7 @@ function CampaignsSection({
       setModalOpen(false);
       setMediaFile(null);
       onToast(
-        `Rascunho criado: ${result.publicoElegivel} contato(s) com consentimento; ${result.semConsentimento} excluído(s) sem opt-in.`,
+        `Rascunho criado: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s) ou opt-out(s) excluído(s).`,
       );
     } catch (error) {
       if (uploadedMedia) {
@@ -3940,10 +3948,10 @@ function CampaignsSection({
         <div>
           <strong>Proteções aplicadas</strong>
           <p>
-            Telefone deduplicado, opt-in obrigatório, opt-out automático por
-            “SAIR”, horário permitido, limite diário, intervalo aleatório
-            configurável, tentativas controladas, pausa, foto com legenda e
-            auditoria por destinatário.
+            Telefone deduplicado, recusas e opt-outs excluídos, descadastro
+            automático por “SAIR”, horário permitido, limite diário, intervalo
+            aleatório configurável, tentativas controladas, pausa, foto com
+            legenda e auditoria por destinatário.
           </p>
         </div>
         <span
@@ -3964,8 +3972,8 @@ function CampaignsSection({
               <h3>{segmentMeta[segment].label}</h3>
               <p>{segmentMeta[segment].description}</p>
               <strong>
-                {audienceFor(segment)} contatos na base · opt-in verificado ao
-                criar
+                {audienceFor(segment)} contatos na base · recusas e opt-outs
+                excluídos ao criar
               </strong>
             </div>
             <button onClick={() => openBuilder(segment)}>
@@ -4087,8 +4095,10 @@ function CampaignsSection({
                         {item.quietStart || "08:00"}–{item.quietEnd || "18:00"}
                       </span>
                       <span>
-                        <FaUsers /> {item.withoutConsent ?? 0} sem opt-in ·{" "}
-                        {item.duplicatesRemoved ?? 0} duplicados removidos
+                        <FaUsers /> {item.unknownIncluded ?? 0} sem resposta
+                        incluídos · {item.optedOut ?? 0} recusas/opt-outs
+                        removidos · {item.duplicatesRemoved ?? 0} duplicados
+                        removidos
                       </span>
                       {item.media ? (
                         <span>
@@ -4113,11 +4123,12 @@ function CampaignsSection({
                         <button
                           className="is-primary"
                           disabled={
-                            !eligible || actionId === `${item.id}:iniciar`
+                            actionId === `${item.id}:iniciar` ||
+                            capability?.envioHabilitado === false
                           }
                           onClick={() => runAction(item, "iniciar")}
                         >
-                          Iniciar
+                          {eligible ? "Iniciar" : "Recalcular e iniciar"}
                         </button>
                       ) : null}
                       {["agendada", "enviando"].includes(item.status) ? (
@@ -4157,7 +4168,7 @@ function CampaignsSection({
           <EmptyState
             icon={FaBullhorn}
             title="Nenhuma campanha registrada no período"
-            text="Mude o período ou crie um rascunho usando um segmento real e somente contatos com opt-in."
+            text="Mude o período ou crie um rascunho usando um segmento real. Recusas e opt-outs serão excluídos."
             action={
               <button
                 className="crm-primary-button crm-empty-action"
@@ -4174,10 +4185,10 @@ function CampaignsSection({
         <div>
           <strong>Variações não garantem proteção contra bloqueios</strong>
           <p>
-            No WhatsApp Web, a proteção depende principalmente de enviar só para
-            quem aceitou receber contato, manter conteúdo relevante, limites
-            moderados, pausas e interromper imediatamente ao detectar rejeição
-            ou bloqueio.
+            A política atual inclui quem aceitou e quem ainda não respondeu,
+            excluindo quem recusou ou pediu descadastro. No WhatsApp Web,
+            mantenha conteúdo relevante, limites moderados, pausas e interrompa
+            imediatamente ao detectar rejeição ou bloqueio.
           </p>
         </div>
       </div>
@@ -4194,7 +4205,7 @@ function CampaignsSection({
           >
             <div className="crm-modal__head">
               <div>
-                <span>Campanha com opt-in</span>
+                <span>Campanha com controle de recusas</span>
                 <h2>Planejar campanha</h2>
               </div>
               <button type="button" onClick={() => setModalOpen(false)}>
@@ -4397,8 +4408,9 @@ function CampaignsSection({
                     validação
                   </strong>
                   <small>
-                    Ao salvar, o backend deduplica telefones e exclui quem não
-                    possui opt-in ou solicitou descadastro.
+                    Ao salvar, o backend deduplica telefones, inclui quem aceitou
+                    ou ainda não respondeu e exclui somente quem recusou
+                    campanhas ou pediu descadastro.
                   </small>
                 </span>
               </div>
@@ -4893,7 +4905,7 @@ function DataSourcesSection({
     (item) => item.sourceAttribution === "historical_inference",
   );
   const recoverableJourneys = journeys.filter(
-    (item) => journeyIsAbandoned(item) && item.recoveryOptIn && item.phone,
+    (item) => journeyIsAbandoned(item) && item.phone,
   );
   return (
     <section className="crm-section">
@@ -4947,8 +4959,8 @@ function DataSourcesSection({
             {recoverableJourneys.length} abandono(s) recuperável(is)
           </strong>
           <p>
-            Etapas, interesse e conversão são medidos por sessão. Contato fica
-            disponível somente com opt-in explícito.
+            Etapas, interesse e conversão são medidos por sessão. Antes de cada
+            campanha, recusas e opt-outs são excluídos.
           </p>
         </article>
         <article className="crm-card crm-source-card is-connected">

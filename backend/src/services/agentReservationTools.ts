@@ -920,7 +920,22 @@ export const atualizarPreferenciasPosReservaAgente = async (input: {
     patch.whatsappMarketingOptInAtualizadoEm = FieldValue.serverTimestamp();
   }
   patch.preferenciasPosReserva = preferences;
-  await reservationRef.set(patch, { merge: true });
+  const batch = db.batch();
+  batch.set(reservationRef, patch, { merge: true });
+  if (hasMarketingPreference) {
+    const optIn = input.whatsappMarketingOptIn === true;
+    batch.set(db.collection("crm_whatsapp_contatos").doc(phone), {
+      telefone: phone,
+      marketingOptIn: optIn,
+      marketingOptInOrigem: "agente_pos_reserva",
+      marketingOptInEm: FieldValue.serverTimestamp(),
+      ...(optIn
+        ? { optOutAt: FieldValue.delete(), optOutOrigem: FieldValue.delete() }
+        : { optOutAt: FieldValue.serverTimestamp(), optOutOrigem: "recusa_explicita_pos_reserva" }),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+  await batch.commit();
   return {
     atualizado: true,
     reservaId: reservationId,

@@ -42,7 +42,8 @@ type CampaignCustomer = {
   lastVisit?: string;
   activities: Set<string>;
   hasPending: boolean;
-  optIn: boolean;
+  marketingPreference?: boolean;
+  marketingPreferenceAt?: number;
   reservationIds: string[];
   abandoned?: boolean;
   lastInteractionMs?: number;
@@ -62,8 +63,8 @@ const SEGMENT_LABELS: Record<CampaignSegment, string> = {
   brunch: "Experiência Brunch",
   trail: "Experiência Trilha",
   pending: "Pagamento não concluído",
-  abandoned: "Checkout abandonado com opt-in",
-  lost: "Oportunidades perdidas com opt-in",
+  abandoned: "Checkout abandonado",
+  lost: "Oportunidades perdidas",
 };
 const OPT_OUT_WORDS = /^(sair|pare|parar|cancelar|descadastrar|nao quero|não quero|stop)$/i;
 const CAMPAIGN_MEDIA_MAX_BYTES = 5 * 1024 * 1024;
@@ -87,6 +88,43 @@ const normalizePhone = (value: unknown) => {
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits;
 };
+
+const phoneVariants = (value: unknown) => {
+  const phone = normalizePhone(value);
+  const variants = [phone];
+  if (phone.length === 13 && phone[4] === "9") {
+    variants.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
+  } else if (phone.length === 12 && /^[6-9]$/.test(phone[4] ?? "")) {
+    variants.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
+  }
+  return Array.from(new Set(variants.filter(Boolean)));
+};
+
+const timestampMillis = (value: unknown) => {
+  if (value && typeof value === "object" && "toMillis" in value && typeof value.toMillis === "function") {
+    return Number(value.toMillis()) || 0;
+  }
+  if (value && typeof value === "object" && "toDate" in value && typeof value.toDate === "function") {
+    return value.toDate().getTime() || 0;
+  }
+  const parsed = Date.parse(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const explicitReservationMarketingPreference = (raw: FirebaseFirestore.DocumentData) => {
+  if (raw.whatsappMarketingOptIn === true) return true;
+  const postBooking = raw.preferenciasPosReserva && typeof raw.preferenciasPosReserva === "object"
+    ? raw.preferenciasPosReserva as Record<string, unknown>
+    : {};
+  if (
+    raw.whatsappMarketingOptIn === false
+    && (raw.whatsappMarketingOptInAtualizadoEm || typeof postBooking.whatsappMarketingOptIn === "boolean")
+  ) return false;
+  return undefined;
+};
+
+const contactExplicitlyOptedOut = (contact: FirebaseFirestore.DocumentData | undefined) =>
+  Boolean(contact?.optOutAt) || contact?.marketingOptIn === false;
 
 const hashId = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 40);
 const clamp = (value: unknown, minimum: number, maximum: number, fallback: number) => {
@@ -199,7 +237,11 @@ const loadAudience = async (segment: CampaignSegment) => {
     db.collection("crm_jornadas").get(),
     db.collection("crm_leads_agente").get(),
   ]);
-  const contacts = new Map(contactsSnapshot.docs.map((document) => [document.id, document.data()]));
+  const contacts = new Map<string, FirebaseFirestore.DocumentData>();
+  contactsSnapshot.docs.forEach((document) => {
+    const data = document.data();
+    phoneVariants(data.telefone ?? document.id).forEach((phone) => contacts.set(phone, data));
+  });
   const customers = new Map<string, CampaignCustomer>();
   const today = dateKey(new Date());
   let recordsWithPhone = 0;
@@ -221,7 +263,6 @@ const loadAudience = async (segment: CampaignSegment) => {
       bookings: 0,
       activities: new Set<string>(),
       hasPending: false,
-      optIn: false,
       reservationIds: [],
     };
     existing.reservationIds.push(document.id);
@@ -231,11 +272,20 @@ const loadAudience = async (segment: CampaignSegment) => {
       if (activity) existing.activities.add(activity);
     }
     if (isPending(status)) existing.hasPending = true;
-    if (
-      raw.whatsappMarketingOptIn === true ||
-      raw.consentimentoWhatsappMarketing === true ||
-      raw.aceiteMarketingWhatsapp === true
-    ) existing.optIn = true;
+    const legacyOptIn = raw.consentimentoWhatsappMarketing === true || raw.aceiteMarketingWhatsapp === true;
+    const preference = legacyOptIn ? true : explicitReservationMarketingPreference(raw);
+    if (typeof preference === "boolean") {
+      const preferenceAt = timestampMillis(
+        raw.whatsappMarketingOptInAtualizadoEm
+          ?? raw.dataWhatsappMarketingOptIn
+          ?? raw.atualizadoEm
+          ?? raw.criadoEm,
+      );
+      if (!existing.marketingPreferenceAt || preferenceAt >= existing.marketingPreferenceAt) {
+        existing.marketingPreference = preference;
+        existing.marketingPreferenceAt = preferenceAt;
+      }
+    }
     customers.set(phone, existing);
   });
 
@@ -261,7 +311,7 @@ const loadAudience = async (segment: CampaignSegment) => {
         bookings: 0,
         activities: new Set(Array.isArray(raw.interesseAtividades) ? raw.interesseAtividades.map((item: unknown) => clean(item, 160)).filter(Boolean) : []),
         hasPending: false,
-        optIn: raw.recuperacaoWhatsappOptIn === true,
+        ...(raw.recuperacaoWhatsappOptIn === true ? { marketingPreference: true } : {}),
         reservationIds: [],
         abandoned: true,
         lastInteractionMs,
@@ -294,7 +344,11 @@ const loadAudience = async (segment: CampaignSegment) => {
           bookings: 0,
           activities,
           hasPending: /pagamento|pix|cobranca/.test(signal),
-          optIn: raw.marketingOptIn === true || previous?.optIn === true,
+          marketingPreference:
+            raw.marketingOptIn === true
+              ? true
+              : previous?.marketingPreference,
+          marketingPreferenceAt: lastInteractionMs || previous?.marketingPreferenceAt,
           reservationIds: Array.from(
             new Set([
               ...(previous?.reservationIds ?? []),
@@ -308,24 +362,22 @@ const loadAudience = async (segment: CampaignSegment) => {
     }
     const segmentCustomers = Array.from(abandonedCustomers.values());
     const eligible: CampaignCustomer[] = [];
-    let withoutConsent = 0;
+    let unknownIncluded = 0;
     let optedOut = 0;
     segmentCustomers.forEach((customer) => {
       const contact = contacts.get(customer.phone);
-      if (contact?.optOutAt || contact?.marketingOptIn === false) {
+      if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
         optedOut += 1;
         return;
       }
-      if (!customer.optIn) {
-        withoutConsent += 1;
-        return;
-      }
+      if (contact?.marketingOptIn === true) customer.marketingPreference = true;
+      if (customer.marketingPreference !== true) unknownIncluded += 1;
       eligible.push(customer);
     });
     return {
       eligible,
       totalSegment: segmentCustomers.length,
-      withoutConsent,
+      unknownIncluded,
       optedOut,
       duplicateRecords: Math.max(0, journeyRecordsWithPhone - abandonedCustomers.size),
     };
@@ -333,26 +385,23 @@ const loadAudience = async (segment: CampaignSegment) => {
 
   const segmentCustomers = Array.from(customers.values()).filter((customer) => segmentMatches(customer, segment));
   const eligible: CampaignCustomer[] = [];
-  let withoutConsent = 0;
+  let unknownIncluded = 0;
   let optedOut = 0;
   segmentCustomers.forEach((customer) => {
     const contact = contacts.get(customer.phone);
-    if (contact?.optOutAt || contact?.marketingOptIn === false) {
+    if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
       optedOut += 1;
       return;
     }
-    const hasConsent = contact?.marketingOptIn === true || customer.optIn;
-    if (!hasConsent) {
-      withoutConsent += 1;
-      return;
-    }
+    if (contact?.marketingOptIn === true) customer.marketingPreference = true;
+    if (customer.marketingPreference !== true) unknownIncluded += 1;
     eligible.push(customer);
   });
 
   return {
     eligible,
     totalSegment: segmentCustomers.length,
-    withoutConsent,
+    unknownIncluded,
     optedOut,
     duplicateRecords: Math.max(0, recordsWithPhone - customers.size),
   };
@@ -390,6 +439,62 @@ const validateInput = (input: CriarCampanhaInput) => {
   };
 };
 
+type CampaignAudience = Awaited<ReturnType<typeof loadAudience>>;
+
+const writeCampaignRecipients = async (
+  campaignRef: FirebaseFirestore.DocumentReference,
+  audience: CampaignAudience,
+  resetDraft = false,
+  hasMedia = false,
+) => {
+  const now = FieldValue.serverTimestamp();
+  const eligibleIds = new Set(audience.eligible.map((customer) => hashId(customer.phone)));
+
+  if (resetDraft) {
+    const existing = await campaignRef.collection("destinatarios").get();
+    for (let index = 0; index < existing.docs.length; index += 400) {
+      const batch = campaignRef.firestore.batch();
+      let mutations = 0;
+      existing.docs.slice(index, index + 400).forEach((document) => {
+        if (!eligibleIds.has(document.id)) {
+          batch.set(document.ref, {
+            status: "opt_out",
+            ultimoErro: "recusa_ou_opt_out_identificado_antes_do_inicio",
+            atualizadoEm: now,
+          }, { merge: true });
+          mutations += 1;
+        }
+      });
+      if (mutations) await batch.commit();
+    }
+  }
+
+  for (let index = 0; index < audience.eligible.length; index += 400) {
+    const batch = campaignRef.firestore.batch();
+    audience.eligible.slice(index, index + 400).forEach((customer) => {
+      const recipientRef = campaignRef.collection("destinatarios").doc(hashId(customer.phone));
+      batch.set(recipientRef, {
+        campanhaId: campaignRef.id,
+        nome: customer.name,
+        telefone: customer.phone,
+        email: customer.email ?? null,
+        status: "aguardando",
+        tentativas: 0,
+        reservas: customer.bookings,
+        ultimaVisita: customer.lastVisit ?? null,
+        atividades: Array.from(customer.activities).slice(0, 10),
+        reservaIds: customer.reservationIds.slice(-20),
+        consentimentoStatus: customer.marketingPreference === true ? "sim" : "nao_respondido",
+        consentimento: customer.marketingPreference === true ? true : null,
+        temMidia: hasMedia,
+        criadoEm: now,
+        atualizadoEm: now,
+      });
+    });
+    await batch.commit();
+  }
+};
+
 export const criarCampanhaWhatsapp = async (
   input: CriarCampanhaInput,
   actor: { uid: string; email?: string },
@@ -419,7 +524,8 @@ export const criarCampanhaWhatsapp = async (
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
     publicoEstimado: audience.eligible.length,
-    semConsentimento: audience.withoutConsent,
+    semConsentimento: 0,
+    semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
     duplicidadesEliminadas: audience.duplicateRecords,
     aguardando: audience.eligible.length,
@@ -439,35 +545,14 @@ export const criarCampanhaWhatsapp = async (
     criadoPor: actor.email ?? null,
   });
 
-  for (let index = 0; index < audience.eligible.length; index += 400) {
-    const batch = db.batch();
-    audience.eligible.slice(index, index + 400).forEach((customer) => {
-      const recipientRef = campaignRef.collection("destinatarios").doc(hashId(customer.phone));
-      batch.set(recipientRef, {
-        campanhaId: campaignRef.id,
-        nome: customer.name,
-        telefone: customer.phone,
-        email: customer.email ?? null,
-        status: "aguardando",
-        tentativas: 0,
-        reservas: customer.bookings,
-        ultimaVisita: customer.lastVisit ?? null,
-        atividades: Array.from(customer.activities).slice(0, 10),
-        reservaIds: customer.reservationIds.slice(-20),
-        consentimento: true,
-        temMidia: Boolean(media),
-        criadoEm: now,
-        atualizadoEm: now,
-      });
-    });
-    await batch.commit();
-  }
+  await writeCampaignRecipients(campaignRef, audience, false, Boolean(media));
 
   return {
     id: campaignRef.id,
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
-    semConsentimento: audience.withoutConsent,
+    semConsentimento: 0,
+    semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
     duplicidadesEliminadas: audience.duplicateRecords,
   };
@@ -485,8 +570,27 @@ const getCampaign = async (campaignId: string) => {
 export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
   if (!CAMPAIGN_SENDING_ENABLED) throw new Error("CAMPAIGN_SENDING_DISABLED");
   const { ref, data } = await getCampaign(campaignId);
-  if (Number(data.publicoElegivel ?? 0) <= 0) throw new Error("CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS");
   if (!["rascunho", "pausada"].includes(String(data.status))) throw new Error("CAMPAIGN_CANNOT_START");
+  let eligible = Number(data.publicoElegivel ?? 0);
+  if (String(data.status) === "rascunho") {
+    const segment = String(data.segmento ?? "") as CampaignSegment;
+    if (!SEGMENTS.includes(segment)) throw new Error("INVALID_CAMPAIGN_SEGMENT");
+    const audience = await loadAudience(segment);
+    await writeCampaignRecipients(ref, audience, true, Boolean(data.midia));
+    eligible = audience.eligible.length;
+    await ref.update({
+      publicoSegmento: audience.totalSegment,
+      publicoElegivel: eligible,
+      publicoEstimado: eligible,
+      aguardando: eligible,
+      semConsentimento: 0,
+      semRespostaIncluida: audience.unknownIncluded,
+      optOut: audience.optedOut,
+      duplicidadesEliminadas: audience.duplicateRecords,
+      atualizadoEm: FieldValue.serverTimestamp(),
+    });
+  }
+  if (eligible <= 0) throw new Error("CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS");
   await ref.update({ status: "agendada", proximoDisparoEm: Timestamp.now(), iniciadoEm: data.iniciadoEm ?? FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
 };
 
@@ -664,6 +768,13 @@ const randomIntervalMs = (campaign: FirebaseFirestore.DocumentData) => {
   return (minimum + Math.floor(Math.random() * (maximum - minimum + 1))) * 1000;
 };
 
+const hasCurrentOptOut = async (db: FirebaseFirestore.Firestore, phone: unknown) => {
+  const snapshots = await Promise.all(
+    phoneVariants(phone).map((variant) => db.collection("crm_whatsapp_contatos").doc(variant).get()),
+  );
+  return snapshots.some((snapshot) => snapshot.exists && contactExplicitlyOptedOut(snapshot.data()));
+};
+
 const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference) => {
   const lease = await acquireCampaignLease(campaignRef);
   if (!lease) return;
@@ -704,6 +815,27 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     }
 
     const recipientData = due.data();
+    if (await hasCurrentOptOut(campaignRef.firestore, recipientData.telefone)) {
+      const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
+      const batch = campaignRef.firestore.batch();
+      batch.update(due.ref, {
+        status: "opt_out",
+        ultimoErro: "recusa_ou_opt_out_identificado_antes_do_disparo",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      batch.update(campaignRef, {
+        status: "enviando",
+        aguardando: FieldValue.increment(-1),
+        ignoradas: FieldValue.increment(1),
+        optOut: FieldValue.increment(1),
+        proximoDisparoEm: nextDispatchAt,
+        lockOwner: FieldValue.delete(),
+        lockAte: FieldValue.delete(),
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      await batch.commit();
+      return;
+    }
     const attempts = Number(recipientData.tentativas ?? 0) + 1;
     activeRecipientRef = due.ref;
     activeAttempts = attempts;
@@ -747,7 +879,7 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
       batch.set(contactRef, {
         telefone: recipientData.telefone,
         nome: recipientData.nome,
-        marketingOptIn: true,
+        ...(recipientData.consentimentoStatus === "sim" ? { marketingOptIn: true } : {}),
         ultimaCampanhaId: campaignRef.id,
         ultimoDestinatarioId: due.id,
         ultimaMensagemEnviadaEm: FieldValue.serverTimestamp(),

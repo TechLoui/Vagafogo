@@ -202,7 +202,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     confirmouCarteirinhaBariatrica,
     perguntasPersonalizadas,
     atribuicao,
-    whatsappMarketingOptIn = false,
+    whatsappMarketingOptIn,
   } = payload;
 
   const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
@@ -269,9 +269,12 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     canalOrigem,
     ...(dominioOrigem ? { dominioOrigem } : {}),
     ...(atribuicaoNormalizada ? { atribuicao: atribuicaoNormalizada } : {}),
-    whatsappMarketingOptIn: whatsappMarketingOptIn === true,
     ...(whatsappMarketingOptIn === true
-      ? { dataWhatsappMarketingOptIn: new Date(), origemWhatsappMarketingOptIn: "checkout" }
+      ? {
+          whatsappMarketingOptIn: true,
+          dataWhatsappMarketingOptIn: new Date(),
+          origemWhatsappMarketingOptIn: "checkout",
+        }
       : {}),
     confirmada: reservaEstaConfirmada({ status }),
     observacao,
