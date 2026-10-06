@@ -82,6 +82,16 @@ type AgentConfig = {
   followupStartTime: string;
   followupEndTime: string;
   followupTimezone: string;
+  inactivityEnabled: boolean;
+  inactivityFirstMinutes: number;
+  inactivitySecondMinutes: number;
+  inactivitySuspendMinutes: number;
+  inactivityFirstMessage: string;
+  inactivitySecondMessage: string;
+  inactivitySuspendMessage: string;
+  audioNoticeEnabled: boolean;
+  audioNoticeCooldownMinutes: number;
+  audioNoticeText: string;
 };
 
 type AgentLead = {
@@ -1226,23 +1236,73 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
     followupStartTime: "07:45",
     followupEndTime: "18:00",
     followupTimezone: "America/Sao_Paulo",
+    inactivityEnabled: true,
+    inactivityFirstMinutes: 30,
+    inactivitySecondMinutes: 75,
+    inactivitySuspendMinutes: 120,
+    inactivityFirstMessage: "Oi! Só passando para saber se você gostaria de continuar. Posso seguir de onde paramos e ajudar com sua dúvida ou reserva. 🌿",
+    inactivitySecondMessage: "Ainda estou por aqui. Se quiser prosseguir, é só me responder; as informações que você já enviou continuam neste atendimento.",
+    inactivitySuspendMessage: "Como não tive retorno, vou pausar este atendimento por agora. Se você voltar dentro dos próximos dias, é só mandar uma mensagem e retomamos de onde paramos, sem precisar repetir o que já informou.",
+    audioNoticeEnabled: true,
+    audioNoticeCooldownMinutes: 10,
+    audioNoticeText: "Para manter seus dados de reserva corretos, este atendimento automático recebe as informações por texto. Por favor, escreva sua dúvida ou continue pela página oficial:\n\nhttps://vagafogo.com.br/reservar",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   useEffect(() => { api("/crm/agente/config").then((data) => setConfig((current) => ({ ...current, ...(data as Partial<AgentConfig>) }))).catch(onError).finally(() => setLoading(false)); }, [onError]);
-  const field = (label: string, key: keyof AgentConfig, divisor = 1, min = 0) => <label>{label}<input type="number" min={min} step={divisor === 1000 ? .5 : 5} value={Number(config[key]) / divisor} onChange={(event) => setConfig((current) => ({ ...current, [key]: Math.round(Number(event.target.value) * divisor) }))} /></label>;
+  const field = (label: string, key: keyof AgentConfig, divisor = 1, min = 0, step = divisor === 1000 ? .5 : 5) => <label>{label}<input type="number" min={min} step={step} value={Number(config[key]) / divisor} onChange={(event) => setConfig((current) => ({ ...current, [key]: Math.round(Number(event.target.value) * divisor) }))} /></label>;
+  const textarea = (label: string, key: keyof AgentConfig, maxLength: number) => <label className="agent-settings-message">{label}<textarea maxLength={maxLength} value={String(config[key])} onChange={(event) => setConfig((current) => ({ ...current, [key]: event.target.value }))} /><small>{String(config[key]).length}/{maxLength} caracteres</small></label>;
+  const configuredMinSeconds = Math.round((config.replyDelayMs + (config.typingEnabled ? config.typingMinMs : 0)) / 1000);
+  const configuredMaxSeconds = Math.round((config.replyDelayMs + (config.typingEnabled ? config.typingMaxMs : 0)) / 1000);
+  const validationError = config.typingMinMs > config.typingMaxMs
+    ? "A digitação mínima não pode ser maior que a máxima."
+    : config.inactivityEnabled && config.inactivitySecondMinutes < config.inactivityFirstMinutes + 5
+      ? "A segunda retomada deve ocorrer pelo menos 5 minutos depois da primeira."
+      : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
+        ? "A suspensão deve ocorrer pelo menos 5 minutos depois da segunda retomada."
+        : config.inactivityEnabled && (!config.inactivityFirstMessage.trim() || !config.inactivitySecondMessage.trim() || !config.inactivitySuspendMessage.trim())
+          ? "Preencha as três mensagens de retomada."
+          : config.audioNoticeEnabled && !config.audioNoticeText.trim()
+            ? "Preencha a orientação enviada para áudios."
+            : "";
   return <article className="agent-card agent-settings">
-    <div className="agent-card__title"><span><FaCog /></span><div><h2>Comportamento de envio</h2><p>Agrupamento das mensagens, ritmo das respostas e horário permitido para retomadas automáticas.</p></div></div>
+    <div className="agent-card__title"><span><FaCog /></span><div><h2>Comportamento do agente</h2><p>Controle o ritmo das respostas, as retomadas automáticas e a orientação para áudios.</p></div></div>
     {loading ? <p>Carregando…</p> : <>
-      <label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes de cada resposta.</small></div></label>
-      <div className="agent-settings-grid">{field("Tempo para agrupar mensagens (s)", "replyDelayMs", 1000, 1)}{field("Digitação mínima (s)", "typingMinMs", 1000)}{field("Digitação máxima (s)", "typingMaxMs", 1000)}{field("Velocidade (ms por caractere)", "typingMsPerChar")}</div>
-      <div className="agent-card__title"><span><FaComments /></span><div><h2>Janela de retomadas</h2><p>Lembretes por falta de resposta ficam retidos fora deste período e saem na próxima janela.</p></div></div>
-      <div className="agent-settings-grid">
-        <label>Início permitido<input type="time" value={config.followupStartTime} onChange={(event) => setConfig((current) => ({ ...current, followupStartTime: event.target.value }))} /></label>
-        <label>Fim permitido<input type="time" value={config.followupEndTime} onChange={(event) => setConfig((current) => ({ ...current, followupEndTime: event.target.value }))} /></label>
-        <label>Fuso horário<select value={config.followupTimezone} onChange={(event) => setConfig((current) => ({ ...current, followupTimezone: event.target.value }))}><option value="America/Sao_Paulo">Brasília — America/Sao_Paulo</option></select></label>
+      <section className="agent-settings-section">
+        <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Tempo de resposta</h3><p>O agrupamento começa novamente sempre que o cliente envia outra mensagem.</p></div></div>
+        <div className="agent-response-estimate"><strong>{configuredMinSeconds}–{configuredMaxSeconds} segundos configurados</strong><span>mais o tempo necessário para a IA consultar e montar a resposta.</span></div>
+        <label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes da resposta e evita um envio instantâneo artificial.</small></div></label>
+        <div className="agent-settings-grid">{field("Tempo para agrupar mensagens (s)", "replyDelayMs", 1000, 1, .5)}{field("Digitação mínima (s)", "typingMinMs", 1000, 0, .5)}{field("Digitação máxima (s)", "typingMaxMs", 1000, 0, .5)}{field("Velocidade (ms por caractere)", "typingMsPerChar", 1, 0, 5)}</div>
+      </section>
+
+      <section className="agent-settings-section">
+        <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Retomadas por inatividade</h3><p>Faça até duas tentativas educadas e depois suspenda o atendimento sem apagar o contexto.</p></div></div>
+        <label className="agent-toggle"><input type="checkbox" checked={config.inactivityEnabled} onChange={(event) => setConfig((current) => ({ ...current, inactivityEnabled: event.target.checked }))} /><span /><div><strong>Ativar retomadas automáticas</strong><small>Não envia retomadas quando o cliente disser que vai decidir e voltar depois.</small></div></label>
+        {config.inactivityEnabled ? <>
+          <div className="agent-settings-grid">{field("Primeira retomada após (min)", "inactivityFirstMinutes", 1, 5, 5)}{field("Segunda retomada após (min)", "inactivitySecondMinutes", 1, 10, 5)}{field("Suspender atendimento após (min)", "inactivitySuspendMinutes", 1, 15, 5)}</div>
+          <div className="agent-settings-copy-grid">{textarea("Mensagem da primeira retomada", "inactivityFirstMessage", 1000)}{textarea("Mensagem da segunda retomada", "inactivitySecondMessage", 1000)}{textarea("Mensagem de suspensão", "inactivitySuspendMessage", 1200)}</div>
+        </> : null}
+      </section>
+
+      <section className="agent-settings-section">
+        <div className="agent-settings-section__head"><span><FaWhatsapp /></span><div><h3>Mensagens de áudio</h3><p>Defina se o agente orienta o cliente a enviar as informações da reserva por texto.</p></div></div>
+        <label className="agent-toggle"><input type="checkbox" checked={config.audioNoticeEnabled} onChange={(event) => setConfig((current) => ({ ...current, audioNoticeEnabled: event.target.checked }))} /><span /><div><strong>Responder automaticamente a áudios</strong><small>O áudio continua sem ser armazenado ou transcrito.</small></div></label>
+        {config.audioNoticeEnabled ? <><div className="agent-settings-grid">{field("Intervalo mínimo entre avisos (min)", "audioNoticeCooldownMinutes", 1, 1, 1)}</div>{textarea("Orientação enviada ao receber áudio", "audioNoticeText", 2000)}</> : null}
+      </section>
+
+      <section className="agent-settings-section">
+        <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Janela de retomadas</h3><p>Lembretes ficam retidos fora deste período e saem somente na próxima janela permitida.</p></div></div>
+        <div className="agent-settings-grid">
+          <label>Início permitido<input type="time" value={config.followupStartTime} onChange={(event) => setConfig((current) => ({ ...current, followupStartTime: event.target.value }))} /></label>
+          <label>Fim permitido<input type="time" value={config.followupEndTime} onChange={(event) => setConfig((current) => ({ ...current, followupEndTime: event.target.value }))} /></label>
+          <label>Fuso horário<select value={config.followupTimezone} onChange={(event) => setConfig((current) => ({ ...current, followupTimezone: event.target.value }))}><option value="America/Sao_Paulo">Brasília — America/Sao_Paulo</option></select></label>
+        </div>
+      </section>
+      {validationError ? <p className="agent-inline-error agent-settings-error">{validationError}</p> : null}
+      <div className="agent-settings-save">
+        <small>As alterações passam a valer no gateway em até 60 segundos.</small>
+        <button className="agent-primary" disabled={saving || Boolean(validationError) || !config.followupStartTime || !config.followupEndTime} onClick={async () => { setSaving(true); try { await api("/crm/agente/config", { method: "POST", body: JSON.stringify(config) }); onMessage("Configuração salva. O gateway aplicará os novos valores em até 60 segundos."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar comportamento"}</button>
       </div>
-      <button className="agent-primary" disabled={saving || !config.followupStartTime || !config.followupEndTime} onClick={async () => { setSaving(true); try { await api("/crm/agente/config", { method: "POST", body: JSON.stringify(config) }); onMessage("Configuração salva."); } catch (caught) { onError(caught); } finally { setSaving(false); } }}><FaSave />{saving ? "Salvando…" : "Salvar configurações"}</button>
     </>}
   </article>;
 }
