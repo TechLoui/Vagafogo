@@ -199,6 +199,8 @@ type CampaignRecord = {
   errors?: number;
   ignored?: number;
   optedOut?: number;
+  recentlyExcluded?: number;
+  exclusionDays?: number;
   withoutConsent?: number;
   unknownIncluded?: number;
   duplicatesRemoved?: number;
@@ -243,6 +245,8 @@ type CampaignRecipient = {
   clickedAt?: string;
   convertedAt?: string;
   reservationId?: string;
+  lastCampaignAt?: string;
+  lastCampaignId?: string;
 };
 
 type JourneyRecord = {
@@ -1058,6 +1062,11 @@ export function CRM() {
               errors: toNumber(raw.erros),
               ignored: toNumber(raw.ignoradas),
               optedOut: toNumber(raw.optOut),
+              recentlyExcluded: toNumber(raw.excluidosCampanhaRecente),
+              exclusionDays:
+                raw.excluirRecebidosUltimosDias === undefined
+                  ? 30
+                  : toNumber(raw.excluirRecebidosUltimosDias),
               withoutConsent: toNumber(raw.semConsentimento),
               unknownIncluded: toNumber(raw.semRespostaIncluida),
               duplicatesRemoved: toNumber(raw.duplicidadesEliminadas),
@@ -3571,6 +3580,8 @@ function CampaignsSection({
   const [editingCampaign, setEditingCampaign] =
     useState<CampaignRecord | null>(null);
   const [removeExistingMedia, setRemoveExistingMedia] = useState(false);
+  const [excludeRecentRecipients, setExcludeRecentRecipients] = useState(true);
+  const [recentExclusionDays, setRecentExclusionDays] = useState(30);
   const [saving, setSaving] = useState(false);
   const [testingInternal, setTestingInternal] = useState(false);
   const [actionId, setActionId] = useState("");
@@ -3651,6 +3662,12 @@ function CampaignsSection({
               reservationId: raw.reservaIdGerada
                 ? String(raw.reservaIdGerada)
                 : undefined,
+              lastCampaignAt: normalizeTimestamp(
+                raw.ultimaCampanhaRecebidaEm,
+              ),
+              lastCampaignId: raw.ultimaCampanhaId
+                ? String(raw.ultimaCampanhaId)
+                : undefined,
             };
           }),
         );
@@ -3669,6 +3686,8 @@ function CampaignsSection({
     );
     setMediaFile(null);
     setRemoveExistingMedia(false);
+    setExcludeRecentRecipients(true);
+    setRecentExclusionDays(30);
     setModalOpen(true);
   };
 
@@ -3678,6 +3697,8 @@ function CampaignsSection({
     setVariants(campaign.variants?.length ? campaign.variants : defaultVariants);
     setMediaFile(null);
     setRemoveExistingMedia(false);
+    setExcludeRecentRecipients((campaign.exclusionDays ?? 30) > 0);
+    setRecentExclusionDays(campaign.exclusionDays || 30);
     setModalOpen(true);
   };
 
@@ -3777,6 +3798,9 @@ function CampaignsSection({
         horarioInicio: String(data.get("quietStart") ?? "08:00"),
         horarioFim: String(data.get("quietEnd") ?? "18:00"),
         maxTentativas: Number(data.get("maxAttempts") ?? 3),
+        excluirRecebidosUltimosDias: excludeRecentRecipients
+          ? recentExclusionDays
+          : 0,
         ...(uploadedMedia ? { midia: uploadedMedia } : {}),
         ...(editingCampaign && removeExistingMedia && !uploadedMedia
           ? { removerMidia: true }
@@ -3794,7 +3818,7 @@ function CampaignsSection({
       setEditingCampaign(null);
       setRemoveExistingMedia(false);
       onToast(
-        `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s) ou opt-out(s) excluído(s).`,
+        `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`,
       );
     } catch (error) {
       if (uploadedMedia) {
@@ -3941,6 +3965,7 @@ function CampaignsSection({
       respondido: "Respondido",
       erro: "Erro final",
       opt_out: "Recusa/descadastro",
+      ignorado: "Já recebeu no período",
     };
     return labels[status] ?? status;
   };
@@ -4185,6 +4210,10 @@ function CampaignsSection({
                         incluídos · {item.optedOut ?? 0} recusas/opt-outs
                         removidos · {item.duplicatesRemoved ?? 0} duplicados
                         removidos
+                      </span>
+                      <span>
+                        <FaClock /> Janela entre campanhas: {item.exclusionDays ?? 30} dia(s)
+                        · {item.recentlyExcluded ?? 0} contato(s) recente(s) fora do envio
                       </span>
                       {item.media ? (
                         <span>
@@ -4510,6 +4539,46 @@ function CampaignsSection({
                   />
                 </label>
               </div>
+              <div className="crm-campaign-exclusion">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={excludeRecentRecipients}
+                    onChange={(event) =>
+                      setExcludeRecentRecipients(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>
+                      Não incluir quem recebeu campanha recentemente
+                    </strong>
+                    <small>
+                      Evita repetir disparos para contatos alcançados por outras
+                      campanhas dentro do período definido.
+                    </small>
+                  </span>
+                </label>
+                {excludeRecentRecipients ? (
+                  <label className="crm-campaign-exclusion__days">
+                    Últimos
+                    <input
+                      type="number"
+                      min="1"
+                      max="3650"
+                      value={recentExclusionDays}
+                      onChange={(event) =>
+                        setRecentExclusionDays(
+                          Math.min(
+                            3650,
+                            Math.max(1, Number(event.target.value) || 1),
+                          ),
+                        )
+                      }
+                    />
+                    dias
+                  </label>
+                ) : null}
+              </div>
               <div className="crm-modal-audience">
                 <FaUsers />
                 <span>
@@ -4520,7 +4589,8 @@ function CampaignsSection({
                   <small>
                     Ao salvar, o backend deduplica telefones, inclui quem aceitou
                     ou ainda não respondeu e exclui somente quem recusou
-                    campanhas ou pediu descadastro.
+                    campanhas, pediu descadastro ou recebeu outra campanha dentro
+                    da janela configurada.
                   </small>
                 </span>
               </div>
@@ -4646,13 +4716,14 @@ function CampaignsSection({
                 "respondido",
                 "erro",
                 "opt_out",
+                "ignorado",
               ].map((status) => (
                 <button
                   className={recipientFilter === status ? "is-active" : ""}
                   onClick={() => setRecipientFilter(status)}
                   key={status}
                 >
-                  {status} (
+                  {status === "todos" ? "Todos" : recipientStatusLabel(status)} (
                   {status === "todos"
                     ? recipients.length
                     : recipients.filter((item) => item.status === status)
@@ -4682,26 +4753,36 @@ function CampaignsSection({
                       </td>
                       <td>
                         <span
-                          className={`crm-status crm-status--${item.status === "erro" || item.status === "opt_out" ? "cancelled" : ["lido", "respondido", "entregue"].includes(item.status) ? "confirmed" : "pending"}`}
+                          className={`crm-status crm-status--${item.status === "erro" || item.status === "opt_out" || item.status === "ignorado" ? "cancelled" : ["lido", "respondido", "entregue"].includes(item.status) ? "confirmed" : "pending"}`}
                         >
                           {recipientStatusLabel(item.status)}
                         </span>
+                        {(liveDetailsCampaign?.exclusionDays ?? 30) > 0 ? (
+                          <small>
+                            {item.status === "ignorado"
+                              ? `Recebeu nos últimos ${liveDetailsCampaign?.exclusionDays ?? 30} dias`
+                              : `Sem campanha anterior nos últimos ${liveDetailsCampaign?.exclusionDays ?? 30} dias`}
+                          </small>
+                        ) : null}
                       </td>
                       <td>{item.attempts}</td>
                       <td>{item.variant ? `#${item.variant}` : "—"}</td>
                       <td>
-                        {item.repliedAt || item.readAt || item.deliveredAt || item.errorAt || item.sentAt
+                        {item.repliedAt || item.readAt || item.deliveredAt || item.errorAt || item.sentAt || item.lastCampaignAt
                           ? dayjs(
                               item.repliedAt ??
                                 item.readAt ??
                                 item.deliveredAt ??
                                 item.errorAt ??
-                                item.sentAt,
+                                item.sentAt ??
+                                item.lastCampaignAt,
                             ).format("DD/MM HH:mm:ss")
                           : "—"}
                       </td>
                       <td className={item.error ? "has-error" : ""}>
-                        {item.error ||
+                        {item.status === "ignorado" && item.lastCampaignAt
+                          ? `Recebeu outra campanha em ${dayjs(item.lastCampaignAt).format("DD/MM/YYYY [às] HH:mm")}`
+                          : item.error ||
                           (item.convertedAt
                             ? `Pagamento convertido · ${item.reservationId ?? "reserva"}`
                             : item.reservationId

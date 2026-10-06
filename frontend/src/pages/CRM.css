@@ -764,6 +764,14 @@
 .crm-campaign-media__existing button { border: 0; background: transparent; color: #b84551; font-size: .52rem; font-weight: 800; }
 .crm-add-variant { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed #9ec8d8; border-radius: 9px; background: #f2fafc; color: #087da8; font-size: .58rem; font-weight: 800; }
 .crm-campaign-settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.crm-campaign-exclusion { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #d7e7ed; border-radius: 11px; padding: 11px 12px; background: #f7fbfc; }
+.crm-campaign-exclusion > label:first-child { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.crm-modal__fields .crm-campaign-exclusion input[type="checkbox"] { width: 17px; height: 17px; flex: 0 0 auto; margin: 1px 0 0; padding: 0; accent-color: #079bd2; }
+.crm-campaign-exclusion span strong, .crm-campaign-exclusion span small { display: block; }
+.crm-campaign-exclusion span strong { color: #3d596b; font-size: .62rem; }
+.crm-campaign-exclusion span small { margin-top: 3px; color: #738b99; font-size: .52rem; line-height: 1.45; }
+.crm-campaign-exclusion__days { display: grid; grid-template-columns: auto 70px auto; align-items: center; gap: 7px; white-space: nowrap; }
+.crm-modal__fields .crm-campaign-exclusion__days input { width: 70px; margin: 0; text-align: center; }
 .crm-recipient-filters { display: flex; gap: 6px; margin-top: 17px; overflow-x: auto; padding-bottom: 5px; }
 .crm-campaign-live-summary { margin-top: 14px; border: 1px solid #dce8ed; border-radius: 12px; padding: 12px; background: #f8fbfc; }
 .crm-campaign-live-summary__head { display: flex; align-items: center; gap: 9px; }
@@ -912,6 +920,8 @@
   .crm-campaign-live-summary__head > strong { margin-left: 0; }
   .crm-campaign-media__existing { grid-template-columns: auto 1fr; }
   .crm-campaign-media__existing button { grid-column: 2; justify-self: start; }
+  .crm-campaign-exclusion { align-items: stretch; flex-direction: column; }
+  .crm-campaign-exclusion__days { justify-content: start; }
   .crm-campaign-operation__actions { justify-content: stretch; }
   .crm-campaign-operation__actions button { flex: 1; justify-content: center; }
   .crm-whatsapp-connection__head { align-items: flex-start; flex-direction: column; padding: 14px; }

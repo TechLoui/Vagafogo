@@ -31,6 +31,7 @@ export type CriarCampanhaInput = {
   horarioFim?: string;
   diasSemana?: number[];
   maxTentativas?: number;
+  excluirRecebidosUltimosDias?: number;
   midia?: WhatsappMediaPayload;
   removerMidia?: boolean;
 };
@@ -48,6 +49,8 @@ type CampaignCustomer = {
   reservationIds: string[];
   abandoned?: boolean;
   lastInteractionMs?: number;
+  lastCampaignAt?: number;
+  lastCampaignId?: string;
 };
 
 const CAMPAIGN_SENDING_ENABLED =
@@ -126,6 +129,35 @@ const explicitReservationMarketingPreference = (raw: FirebaseFirestore.DocumentD
 
 const contactExplicitlyOptedOut = (contact: FirebaseFirestore.DocumentData | undefined) =>
   Boolean(contact?.optOutAt) || contact?.marketingOptIn === false;
+
+const contactReceivedCampaignRecently = (
+  contact: FirebaseFirestore.DocumentData | undefined,
+  exclusionDays: number,
+) => {
+  if (!contact || exclusionDays <= 0) return false;
+  const lastSentAt = timestampMillis(contact.ultimaMensagemEnviadaEm);
+  return lastSentAt > 0 && lastSentAt >= Date.now() - exclusionDays * 86400000;
+};
+
+const mergeContactRecords = (
+  previous: FirebaseFirestore.DocumentData | undefined,
+  current: FirebaseFirestore.DocumentData,
+) => {
+  if (!previous) return current;
+  const previousSentAt = timestampMillis(previous.ultimaMensagemEnviadaEm);
+  const currentSentAt = timestampMillis(current.ultimaMensagemEnviadaEm);
+  const merged = { ...previous, ...current };
+  if (previousSentAt > currentSentAt) {
+    merged.ultimaMensagemEnviadaEm = previous.ultimaMensagemEnviadaEm;
+    merged.ultimaCampanhaId = previous.ultimaCampanhaId;
+    merged.ultimoDestinatarioId = previous.ultimoDestinatarioId;
+  }
+  if (contactExplicitlyOptedOut(previous) || contactExplicitlyOptedOut(current)) {
+    merged.marketingOptIn = false;
+    merged.optOutAt = current.optOutAt ?? previous.optOutAt ?? true;
+  }
+  return merged;
+};
 
 const hashId = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 40);
 const clamp = (value: unknown, minimum: number, maximum: number, fallback: number) => {
@@ -229,7 +261,7 @@ const segmentMatches = (customer: CampaignCustomer, segment: CampaignSegment) =>
   return segment === "brunch" ? normalizeText(activities).includes("brunch") : normalizeText(activities).includes("trilha");
 };
 
-const loadAudience = async (segment: CampaignSegment) => {
+const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const [reservationsSnapshot, contactsSnapshot, journeysSnapshot, agentLeadsSnapshot] = await Promise.all([
@@ -241,7 +273,9 @@ const loadAudience = async (segment: CampaignSegment) => {
   const contacts = new Map<string, FirebaseFirestore.DocumentData>();
   contactsSnapshot.docs.forEach((document) => {
     const data = document.data();
-    phoneVariants(data.telefone ?? document.id).forEach((phone) => contacts.set(phone, data));
+    phoneVariants(data.telefone ?? document.id).forEach((phone) => {
+      contacts.set(phone, mergeContactRecords(contacts.get(phone), data));
+    });
   });
   const customers = new Map<string, CampaignCustomer>();
   const today = dateKey(new Date());
@@ -365,10 +399,21 @@ const loadAudience = async (segment: CampaignSegment) => {
     const eligible: CampaignCustomer[] = [];
     let unknownIncluded = 0;
     let optedOut = 0;
+    let recentlyContacted = 0;
+    const recentlyExcluded: CampaignCustomer[] = [];
     segmentCustomers.forEach((customer) => {
       const contact = contacts.get(customer.phone);
       if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
         optedOut += 1;
+        return;
+      }
+      if (contactReceivedCampaignRecently(contact, exclusionDays)) {
+        recentlyContacted += 1;
+        recentlyExcluded.push({
+          ...customer,
+          lastCampaignAt: timestampMillis(contact?.ultimaMensagemEnviadaEm),
+          lastCampaignId: clean(contact?.ultimaCampanhaId, 160) || undefined,
+        });
         return;
       }
       if (contact?.marketingOptIn === true) customer.marketingPreference = true;
@@ -380,6 +425,8 @@ const loadAudience = async (segment: CampaignSegment) => {
       totalSegment: segmentCustomers.length,
       unknownIncluded,
       optedOut,
+      recentlyContacted,
+      recentlyExcluded,
       duplicateRecords: Math.max(0, journeyRecordsWithPhone - abandonedCustomers.size),
     };
   }
@@ -388,10 +435,21 @@ const loadAudience = async (segment: CampaignSegment) => {
   const eligible: CampaignCustomer[] = [];
   let unknownIncluded = 0;
   let optedOut = 0;
+  let recentlyContacted = 0;
+  const recentlyExcluded: CampaignCustomer[] = [];
   segmentCustomers.forEach((customer) => {
     const contact = contacts.get(customer.phone);
     if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
       optedOut += 1;
+      return;
+    }
+    if (contactReceivedCampaignRecently(contact, exclusionDays)) {
+      recentlyContacted += 1;
+      recentlyExcluded.push({
+        ...customer,
+        lastCampaignAt: timestampMillis(contact?.ultimaMensagemEnviadaEm),
+        lastCampaignId: clean(contact?.ultimaCampanhaId, 160) || undefined,
+      });
       return;
     }
     if (contact?.marketingOptIn === true) customer.marketingPreference = true;
@@ -404,6 +462,8 @@ const loadAudience = async (segment: CampaignSegment) => {
     totalSegment: segmentCustomers.length,
     unknownIncluded,
     optedOut,
+    recentlyContacted,
+    recentlyExcluded,
     duplicateRecords: Math.max(0, recordsWithPhone - customers.size),
   };
 };
@@ -437,6 +497,7 @@ const validateInput = (input: CriarCampanhaInput) => {
     horarioFim,
     diasSemana: diasSemana.length ? diasSemana : [1, 2, 3, 4, 5, 6],
     maxTentativas: clamp(input.maxTentativas, 1, 5, 3),
+    excluirRecebidosUltimosDias: clamp(input.excluirRecebidosUltimosDias, 0, 3650, 30),
   };
 };
 
@@ -449,7 +510,9 @@ const writeCampaignRecipients = async (
   hasMedia = false,
 ) => {
   const now = FieldValue.serverTimestamp();
-  const eligibleIds = new Set(audience.eligible.map((customer) => hashId(customer.phone)));
+  const retainedIds = new Set(
+    [...audience.eligible, ...audience.recentlyExcluded].map((customer) => hashId(customer.phone)),
+  );
 
   if (resetDraft) {
     const existing = await campaignRef.collection("destinatarios").get();
@@ -457,7 +520,7 @@ const writeCampaignRecipients = async (
       const batch = campaignRef.firestore.batch();
       let mutations = 0;
       existing.docs.slice(index, index + 400).forEach((document) => {
-        if (!eligibleIds.has(document.id)) {
+        if (!retainedIds.has(document.id)) {
           batch.delete(document.ref);
           mutations += 1;
         }
@@ -490,6 +553,36 @@ const writeCampaignRecipients = async (
     });
     await batch.commit();
   }
+
+  for (let index = 0; index < audience.recentlyExcluded.length; index += 400) {
+    const batch = campaignRef.firestore.batch();
+    audience.recentlyExcluded.slice(index, index + 400).forEach((customer) => {
+      const recipientRef = campaignRef.collection("destinatarios").doc(hashId(customer.phone));
+      batch.set(recipientRef, {
+        campanhaId: campaignRef.id,
+        nome: customer.name,
+        telefone: customer.phone,
+        email: customer.email ?? null,
+        status: "ignorado",
+        tentativas: 0,
+        reservas: customer.bookings,
+        ultimaVisita: customer.lastVisit ?? null,
+        atividades: Array.from(customer.activities).slice(0, 10),
+        reservaIds: customer.reservationIds.slice(-20),
+        consentimentoStatus: customer.marketingPreference === true ? "sim" : "nao_respondido",
+        consentimento: customer.marketingPreference === true ? true : null,
+        temMidia: hasMedia,
+        ultimoErro: "campanha_recebida_dentro_da_janela_configurada",
+        ultimaCampanhaId: customer.lastCampaignId ?? null,
+        ultimaCampanhaRecebidaEm: customer.lastCampaignAt
+          ? Timestamp.fromMillis(customer.lastCampaignAt)
+          : null,
+        criadoEm: now,
+        atualizadoEm: now,
+      });
+    });
+    await batch.commit();
+  }
 };
 
 export const criarCampanhaWhatsapp = async (
@@ -500,7 +593,7 @@ export const criarCampanhaWhatsapp = async (
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const config = validateInput(input);
   const media = await validateStoredMedia(input.midia, actor);
-  const audience = await loadAudience(config.segmento);
+  const audience = await loadAudience(config.segmento, config.excluirRecebidosUltimosDias);
   const campaignRef = db.collection("crm_campanhas").doc();
   const now = FieldValue.serverTimestamp();
   await campaignRef.set({
@@ -518,12 +611,14 @@ export const criarCampanhaWhatsapp = async (
     horarioFim: config.horarioFim,
     diasSemana: config.diasSemana,
     maxTentativas: config.maxTentativas,
+    excluirRecebidosUltimosDias: config.excluirRecebidosUltimosDias,
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
     publicoEstimado: audience.eligible.length,
     semConsentimento: 0,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
+    excluidosCampanhaRecente: audience.recentlyContacted,
     duplicidadesEliminadas: audience.duplicateRecords,
     aguardando: audience.eligible.length,
     enviadas: 0,
@@ -535,7 +630,7 @@ export const criarCampanhaWhatsapp = async (
     conversoes: 0,
     receitaAtribuida: 0,
     erros: 0,
-    ignoradas: 0,
+    ignoradas: audience.recentlyContacted,
     criadoEm: now,
     atualizadoEm: now,
     criadoPorUid: actor.uid,
@@ -551,6 +646,7 @@ export const criarCampanhaWhatsapp = async (
     semConsentimento: 0,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
+    excluidosCampanhaRecente: audience.recentlyContacted,
     duplicidadesEliminadas: audience.duplicateRecords,
   };
 };
@@ -581,7 +677,7 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     : input.midia
       ? await validateStoredMedia(input.midia, actor)
       : previousMedia;
-  const audience = await loadAudience(config.segmento);
+  const audience = await loadAudience(config.segmento, config.excluirRecebidosUltimosDias);
 
   await writeCampaignRecipients(ref, audience, true, Boolean(nextMedia));
   await ref.update({
@@ -597,6 +693,7 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     horarioFim: config.horarioFim,
     diasSemana: config.diasSemana,
     maxTentativas: config.maxTentativas,
+    excluirRecebidosUltimosDias: config.excluirRecebidosUltimosDias,
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
     publicoEstimado: audience.eligible.length,
@@ -604,6 +701,7 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     semConsentimento: 0,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
+    excluidosCampanhaRecente: audience.recentlyContacted,
     duplicidadesEliminadas: audience.duplicateRecords,
     enviadas: 0,
     entregues: 0,
@@ -614,7 +712,7 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     conversoes: 0,
     receitaAtribuida: 0,
     erros: 0,
-    ignoradas: 0,
+    ignoradas: audience.recentlyContacted,
     editadoEm: FieldValue.serverTimestamp(),
     editadoPorUid: actor.uid,
     editadoPor: actor.email ?? null,
@@ -632,6 +730,7 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     publicoElegivel: audience.eligible.length,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
+    excluidosCampanhaRecente: audience.recentlyContacted,
     duplicidadesEliminadas: audience.duplicateRecords,
   };
 };
@@ -644,7 +743,8 @@ export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
   if (String(data.status) === "rascunho") {
     const segment = String(data.segmento ?? "") as CampaignSegment;
     if (!SEGMENTS.includes(segment)) throw new Error("INVALID_CAMPAIGN_SEGMENT");
-    const audience = await loadAudience(segment);
+    const exclusionDays = clamp(data.excluirRecebidosUltimosDias, 0, 3650, 30);
+    const audience = await loadAudience(segment, exclusionDays);
     await writeCampaignRecipients(ref, audience, true, Boolean(data.midia));
     eligible = audience.eligible.length;
     await ref.update({
@@ -655,6 +755,9 @@ export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
       semConsentimento: 0,
       semRespostaIncluida: audience.unknownIncluded,
       optOut: audience.optedOut,
+      excluirRecebidosUltimosDias: exclusionDays,
+      excluidosCampanhaRecente: audience.recentlyContacted,
+      ignoradas: audience.recentlyContacted,
       duplicidadesEliminadas: audience.duplicateRecords,
       atualizadoEm: FieldValue.serverTimestamp(),
     });
@@ -833,11 +936,31 @@ const randomIntervalMs = (campaign: FirebaseFirestore.DocumentData) => {
   return (minimum + Math.floor(Math.random() * (maximum - minimum + 1))) * 1000;
 };
 
-const hasCurrentOptOut = async (db: FirebaseFirestore.Firestore, phone: unknown) => {
+const currentCampaignExclusionReason = async (
+  db: FirebaseFirestore.Firestore,
+  phone: unknown,
+  exclusionDays: number,
+) => {
   const snapshots = await Promise.all(
     phoneVariants(phone).map((variant) => db.collection("crm_whatsapp_contatos").doc(variant).get()),
   );
-  return snapshots.some((snapshot) => snapshot.exists && contactExplicitlyOptedOut(snapshot.data()));
+  const contacts = snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => snapshot.data());
+  if (contacts.some(contactExplicitlyOptedOut)) return { reason: "opt_out" as const };
+  const recentContact = contacts
+    .map((contact) => ({
+      contact,
+      lastCampaignAt: timestampMillis(contact?.ultimaMensagemEnviadaEm),
+    }))
+    .filter(({ contact }) => contactReceivedCampaignRecently(contact, exclusionDays))
+    .sort((left, right) => right.lastCampaignAt - left.lastCampaignAt)[0];
+  if (recentContact) {
+    return {
+      reason: "recent_campaign" as const,
+      lastCampaignAt: recentContact.lastCampaignAt,
+      lastCampaignId: clean(recentContact.contact?.ultimaCampanhaId, 160) || undefined,
+    };
+  }
+  return null;
 };
 
 const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference) => {
@@ -880,19 +1003,37 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     }
 
     const recipientData = due.data();
-    if (await hasCurrentOptOut(campaignRef.firestore, recipientData.telefone)) {
+    const exclusionDays = clamp(campaign.excluirRecebidosUltimosDias, 0, 3650, 30);
+    const exclusion = await currentCampaignExclusionReason(
+      campaignRef.firestore,
+      recipientData.telefone,
+      exclusionDays,
+    );
+    if (exclusion) {
       const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
       const batch = campaignRef.firestore.batch();
       batch.update(due.ref, {
-        status: "opt_out",
-        ultimoErro: "recusa_ou_opt_out_identificado_antes_do_disparo",
+        status: exclusion.reason === "opt_out" ? "opt_out" : "ignorado",
+        ultimoErro: exclusion.reason === "opt_out"
+          ? "recusa_ou_opt_out_identificado_antes_do_disparo"
+          : `campanha_recebida_nos_ultimos_${exclusionDays}_dias`,
+        ...(exclusion.reason === "recent_campaign"
+          ? {
+              ultimaCampanhaId: exclusion.lastCampaignId ?? null,
+              ultimaCampanhaRecebidaEm: exclusion.lastCampaignAt
+                ? Timestamp.fromMillis(exclusion.lastCampaignAt)
+                : null,
+            }
+          : {}),
         atualizadoEm: FieldValue.serverTimestamp(),
       });
       batch.update(campaignRef, {
         status: "enviando",
         aguardando: FieldValue.increment(-1),
         ignoradas: FieldValue.increment(1),
-        optOut: FieldValue.increment(1),
+        ...(exclusion.reason === "opt_out"
+          ? { optOut: FieldValue.increment(1) }
+          : { excluidosCampanhaRecente: FieldValue.increment(1) }),
         proximoDisparoEm: nextDispatchAt,
         lockOwner: FieldValue.delete(),
         lockAte: FieldValue.delete(),
