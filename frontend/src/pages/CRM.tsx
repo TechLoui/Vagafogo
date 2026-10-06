@@ -4401,9 +4401,8 @@ function CampaignsSection({
                       : "Variações A/B da mensagem"}
                   </strong>
                   <small>
-                    Até cinco textos. Use {"{link}"} para escolher a posição; se
-                    não usar, o link individual de rastreamento será anexado
-                    automaticamente.
+                    Até cinco textos. A campanha envia exatamente o conteúdo
+                    configurado, sem acrescentar links automaticamente.
                   </small>
                 </div>
                 {variants.map((value, index) => (

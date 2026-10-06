@@ -728,7 +728,7 @@ const inSendingWindow = (campaign: FirebaseFirestore.DocumentData, now: Date) =>
   return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
 };
 
-const renderMessage = (template: string, recipient: FirebaseFirestore.DocumentData, trackingUrl = "") => {
+const renderMessage = (template: string, recipient: FirebaseFirestore.DocumentData) => {
   const firstName = clean(recipient.nome, 160).split(/\s+/)[0] || "cliente";
   const replacements: Record<string, string> = {
     nome: firstName,
@@ -736,17 +736,13 @@ const renderMessage = (template: string, recipient: FirebaseFirestore.DocumentDa
     ultimavisita: recipient.ultimaVisita ? normalizeDate(recipient.ultimaVisita) : "",
     reservas: String(recipient.reservas ?? 0),
     atividade: Array.isArray(recipient.atividades) ? recipient.atividades[0] ?? "" : "",
-    link: trackingUrl,
+    link: "",
   };
-  const rendered = template.replace(/\{([a-z]+)\}/gi, (match, key) => replacements[normalizeText(key)] ?? match).trim();
-  return trackingUrl && !template.toLowerCase().includes("{link}")
-    ? `${rendered}\n\nReserve aqui: ${trackingUrl}`
-    : rendered;
-};
-
-const trackingUrlFor = (campaignId: string, recipientId: string) => {
-  const base = (process.env.PUBLIC_API_BASE_URL ?? "https://vagafogo-production.up.railway.app").trim().replace(/\/+$/, "");
-  return `${base}/r/${encodeURIComponent(campaignId)}/${encodeURIComponent(recipientId)}`;
+  return template
+    .replace(/\{([a-z]+)\}/gi, (match, key) => replacements[normalizeText(key)] ?? match)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 };
 
 const enviarViaDisparadorCampanhas = async (
@@ -912,7 +908,7 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     const variants = Array.isArray(campaign.variacoes) ? campaign.variacoes.map((value: unknown) => clean(value, 1500)).filter(Boolean) : [];
     if (!variants.length) throw new Error("CAMPAIGN_WITHOUT_VARIANTS");
     const variantIndex = Math.floor(Math.random() * variants.length);
-    const message = renderMessage(variants[variantIndex], recipientData, trackingUrlFor(campaignRef.id, due.id));
+    const message = renderMessage(variants[variantIndex], recipientData);
     const media = campaign.midia && typeof campaign.midia === "object"
       ? campaign.midia as WhatsappMediaPayload
       : undefined;
