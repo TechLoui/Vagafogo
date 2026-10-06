@@ -67,6 +67,7 @@ import {
   obterFotosGaleriaParaAgente,
 } from "../services/agentMediaGallery";
 import {
+  atualizarPreferenciasPosReservaAgente,
   atualizarLeadAgente,
   criarLinkCartaoAgente,
   criarLinkPixExistenteAgente,
@@ -381,6 +382,14 @@ app.post('/crm/agente/contatos/:jid/modo', exigirAdminCrm, async (req, res) => {
   ));
 });
 
+app.post('/crm/agente/contatos/:jid/reprocessar', exigirAdminCrm, async (req, res) => {
+  responderProxyAgente(res, await requestAgentService(
+    "gateway",
+    `/api/contacts/${encodeURIComponent(req.params.jid)}/reprocess`,
+    { method: "POST", body: { limit: Math.max(1, Math.min(10, Number(req.body?.limit || 2))) } },
+  ));
+});
+
 app.post('/crm/agente/contatos/:jid/enviar', exigirAdminCrm, async (req, res) => {
   const text = String(req.body?.text ?? "").trim().slice(0, 4096);
   const requestId = String(req.body?.requestId ?? "").trim().slice(0, 160);
@@ -610,6 +619,16 @@ app.post('/internal/agente/ferramentas/disponibilidade', exigirServicoAgente, as
   }
 });
 
+app.post('/internal/agente/ferramentas/preferencias-pos-reserva', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await atualizarPreferenciasPosReservaAgente(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message.includes('PHONE_MISMATCH') ? 403 : message.includes('NOT_FOUND') ? 404 : 400;
+    res.status(status).json({ error: message });
+  }
+});
+
 app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async (req, res) => {
   try {
     const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
@@ -787,7 +806,9 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
         capturedAt: new Date().toISOString(),
         ...campaignAttribution,
       },
-      whatsappMarketingOptIn: req.body?.whatsappMarketingOptIn === true,
+      ...(typeof req.body?.whatsappMarketingOptIn === "boolean"
+        ? { whatsappMarketingOptIn: req.body.whatsappMarketingOptIn === true }
+        : {}),
     };
     await criarCobrancaHandler(req, res);
   } catch (error) {

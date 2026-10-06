@@ -103,6 +103,17 @@ const AGENT_CHECKOUT_HANDOFF_TTL_MS = 2 * 60 * 60 * 1000;
 const clean = (value: unknown, maximum: number) => String(value ?? "").trim().slice(0, maximum);
 const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const normalizeText = (value: unknown) => clean(value, 300).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const isOtherReservationOwnerQuestion = (value: unknown) => {
+  const question = normalizeText(value);
+  return question.includes("outra reserva")
+    && ["titular", "nome", "quem", "responsavel"].some((term) => question.includes(term));
+};
+const isPostBookingTableQuestion = (value: unknown) => {
+  const question = normalizeText(value);
+  return (question.includes("juntar") && question.includes("mesa"))
+    || (question.includes("outra reserva")
+      && ["mesa", "sentar", "titular", "nome", "quem"].some((term) => question.includes(term)));
+};
 const canonicalLeadValue = (value: unknown) => normalizeText(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const canonicalLeadStage = (value: unknown) => {
   const stage = canonicalLeadValue(value);
@@ -596,7 +607,10 @@ const validateRequiredQuestions = (packages: PackageRecord[], input: AgentAvaila
     rawQuestions.forEach((rawQuestion) => {
       const question = serializeQuestion(rawQuestion, id, packageName);
       questions.push(question);
-      if (!question.obrigatoria) return;
+      // No atendimento assistido, a preferencia de mesa e operacional e deve
+      // ser coletada somente depois que a reserva ja estiver confirmada. Ela
+      // nunca pode impedir disponibilidade, PIX ou checkout de cartao.
+      if (!question.obrigatoria || isPostBookingTableQuestion(question.pergunta)) return;
       const answer = answers.find((item) => clean(item.pacoteId, 100) === id && clean(item.perguntaId ?? item.id, 100) === question.id);
       const value = clean(answer?.resposta, 1000).toLowerCase();
       const valid = question.tipo === "sim_nao" ? value === "sim" || value === "nao" : Boolean(value);
@@ -790,6 +804,132 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
   };
 };
 
+export const atualizarPreferenciasPosReservaAgente = async (input: {
+  reservaId?: unknown;
+  telefone?: unknown;
+  juntarMesa?: unknown;
+  titularOutraReserva?: unknown;
+  whatsappMarketingOptIn?: unknown;
+}) => {
+  const reservationId = clean(input.reservaId, 100);
+  const phone = normalizePhone(input.telefone);
+  const hasTablePreference = typeof input.juntarMesa === "boolean";
+  const hasMarketingPreference = typeof input.whatsappMarketingOptIn === "boolean";
+  if (!reservationId || !phone || (!hasTablePreference && !hasMarketingPreference)) {
+    throw new Error("AGENT_POST_BOOKING_PREFERENCES_INVALID");
+  }
+
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const reservationRef = db.collection("reservas").doc(reservationId);
+  const snapshot = await reservationRef.get();
+  if (!snapshot.exists) throw new Error("AGENT_RESERVATION_NOT_FOUND");
+  const reservation = snapshot.data() as Record<string, any>;
+  const attribution = reservation.atribuicao && typeof reservation.atribuicao === "object"
+    ? reservation.atribuicao as Record<string, unknown>
+    : {};
+  const sessionPhone = /^whatsapp_(\d{10,15})$/i.exec(clean(
+    attribution.sessionId ?? attribution.agentSessionId ?? reservation.agentSessionId,
+    120,
+  ))?.[1] ?? "";
+  const allowedPhones = new Set([
+    ...leadPhoneVariants(reservation.telefone ?? reservation.Telefone),
+    ...leadPhoneVariants(sessionPhone),
+  ]);
+  const suppliedVariants = leadPhoneVariants(phone);
+  if (!suppliedVariants.some((candidate) => allowedPhones.has(candidate))) {
+    throw new Error("AGENT_RESERVATION_PHONE_MISMATCH");
+  }
+  if (reservation.confirmada !== true || normalizeText(reservation.status) !== "pago") {
+    throw new Error("AGENT_RESERVATION_NOT_CONFIRMED");
+  }
+
+  const patch: Record<string, unknown> = {
+    preferenciasPosReservaAtualizadasEm: FieldValue.serverTimestamp(),
+  };
+  const currentPreferences = reservation.preferenciasPosReserva && typeof reservation.preferenciasPosReserva === "object"
+    ? reservation.preferenciasPosReserva as Record<string, unknown>
+    : {};
+  const preferences: Record<string, unknown> = { ...currentPreferences };
+
+  if (hasTablePreference) {
+    const joinTable = input.juntarMesa === true;
+    const otherOwner = clean(input.titularOutraReserva, 120);
+    if (joinTable && !otherOwner) throw new Error("AGENT_OTHER_RESERVATION_OWNER_REQUIRED");
+    preferences.juntarMesa = joinTable;
+    preferences.titularOutraReserva = joinTable ? otherOwner : null;
+
+    const packageIds = Array.from(new Set<string>([
+      ...(Array.isArray(reservation.pacoteIds) ? reservation.pacoteIds.map(String) : []),
+      ...(Array.isArray(reservation.gruposParticipacao)
+        ? reservation.gruposParticipacao.flatMap((group: Record<string, unknown>) => Array.isArray(group.pacoteIds) ? group.pacoteIds.map(String) : [])
+        : []),
+    ])).slice(0, 10);
+    const packageSnapshots = await Promise.all(packageIds.map((id) => db.collection("pacotes").doc(id).get()));
+    const tableQuestions = packageSnapshots.flatMap((packageSnapshot, index) => {
+      if (!packageSnapshot.exists) return [];
+      const raw = packageSnapshot.data()!;
+      const packageName = clean(raw.nome, 160);
+      const questions = Array.isArray(raw.perguntasPersonalizadas) ? raw.perguntasPersonalizadas as Array<Record<string, unknown>> : [];
+      return questions
+        .map((question) => serializeQuestion(question, packageIds[index], packageName))
+        .filter((question) => isPostBookingTableQuestion(question.pergunta));
+    });
+    const existingAnswers = Array.isArray(reservation.perguntasPersonalizadas)
+      ? reservation.perguntasPersonalizadas.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, unknown>>
+      : [];
+    const tableKeys = new Set(tableQuestions.map((question) => `${question.pacoteId}:${question.id}`));
+    const preservedAnswers = existingAnswers.filter((answer) => !tableKeys.has(`${clean(answer.pacoteId, 100)}:${clean(answer.perguntaId ?? answer.id, 100)}`));
+    const updatedAnswers = tableQuestions.flatMap((question) => {
+      if (isOtherReservationOwnerQuestion(question.pergunta)) {
+        return joinTable ? [{
+          pacoteId: question.pacoteId,
+          pacoteNome: question.pacoteNome,
+          perguntaId: question.id,
+          pergunta: question.pergunta,
+          tipo: question.tipo,
+          obrigatoria: question.obrigatoria,
+          resposta: otherOwner,
+        }] : [];
+      }
+      return [{
+        pacoteId: question.pacoteId,
+        pacoteNome: question.pacoteNome,
+        perguntaId: question.id,
+        pergunta: question.pergunta,
+        tipo: question.tipo,
+        obrigatoria: question.obrigatoria,
+        resposta: joinTable ? "sim" : "nao",
+        ...(joinTable ? {
+          perguntaCondicional: {
+            pergunta: question.perguntaCondicional?.pergunta || "Nome do titular da outra reserva",
+            tipo: question.perguntaCondicional?.tipo || "texto",
+            obrigatoria: true,
+            resposta: otherOwner,
+          },
+        } : {}),
+      }];
+    });
+    patch.perguntasPersonalizadas = [...preservedAnswers, ...updatedAnswers];
+  }
+
+  if (hasMarketingPreference) {
+    const optIn = input.whatsappMarketingOptIn === true;
+    preferences.whatsappMarketingOptIn = optIn;
+    patch.whatsappMarketingOptIn = optIn;
+    patch.whatsappMarketingOptInAtualizadoEm = FieldValue.serverTimestamp();
+  }
+  patch.preferenciasPosReserva = preferences;
+  await reservationRef.set(patch, { merge: true });
+  return {
+    atualizado: true,
+    reservaId: reservationId,
+    juntarMesa: preferences.juntarMesa,
+    titularOutraReserva: preferences.titularOutraReserva ?? null,
+    whatsappMarketingOptIn: preferences.whatsappMarketingOptIn,
+  };
+};
+
 const checkoutTokenHash = (token: string) => createHash("sha256")
   .update(`agente-checkout:v1\0${token}`)
   .digest("hex");
@@ -863,7 +1003,9 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
     cpf,
     telefone,
     temPet: input.temPet,
-    whatsappMarketingOptIn: input.whatsappMarketingOptIn === true,
+    ...(typeof input.whatsappMarketingOptIn === "boolean"
+      ? { whatsappMarketingOptIn: input.whatsappMarketingOptIn === true }
+      : {}),
     formaPagamento: "CREDIT_CARD" as const,
     valorValidado: availability.valor,
     sessionId: sessionId || null,
@@ -964,7 +1106,9 @@ export const criarLinkPixExistenteAgente = async (input: {
     cpf: String(reservation.cpf ?? "").replace(/\D/g, ""),
     telefone: reservationPhone,
     temPet: reservation.temPet === true,
-    whatsappMarketingOptIn: reservation.whatsappMarketingOptIn === true,
+    ...(typeof reservation.whatsappMarketingOptIn === "boolean"
+      ? { whatsappMarketingOptIn: reservation.whatsappMarketingOptIn === true }
+      : {}),
     formaPagamento: "PIX",
     valorValidado: Number(reservation.valor ?? 0),
     reservaId,

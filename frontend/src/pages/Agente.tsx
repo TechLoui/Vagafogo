@@ -491,6 +491,22 @@ export function Agente() {
                   showMessage(mode === "blocked" ? "Contato bloqueado para qualquer envio." : mode === "human" ? "Atendimento assumido." : "Contato devolvido ao bot.");
                 } catch (caught) { showError(caught); }
               }}
+              onReprocess={async (contact) => {
+                try {
+                  if (contactMode(contact) !== "bot") {
+                    await api(`/crm/agente/contatos/${encodeURIComponent(contact.jid)}/modo`, {
+                      method: "POST",
+                      body: JSON.stringify({ mode: "bot", phone: contactPhone(contact), name: contactName(contact) }),
+                    });
+                  }
+                  await api(`/crm/agente/contatos/${encodeURIComponent(contact.jid)}/reprocessar`, {
+                    method: "POST",
+                    body: JSON.stringify({ limit: 2 }),
+                  });
+                  await loadContacts(true);
+                  showMessage("As duas últimas mensagens foram reunidas e encaminhadas ao bot.");
+                } catch (caught) { showError(caught); }
+              }}
               onBlockNumber={async ({ phone, name, reason }) => {
                 const digits = phone.replace(/\D/g, "");
                 const jid = `${digits}@s.whatsapp.net`;
@@ -908,6 +924,7 @@ type SessionsProps = {
   onClearSelection: () => void;
   onRefreshMessages: () => void;
   onMode: (contact: Contact, mode: ContactMode, reason?: string) => void;
+  onReprocess: (contact: Contact) => void;
   onBlockNumber: (data: { phone: string; name: string; reason: string }) => void;
   onSend: (jid: string, text: string) => Promise<void>;
   onCloseSession: (contact: Contact) => void;
@@ -992,6 +1009,7 @@ function Sessions(props: SessionsProps) {
     <div className={`agent-thread ${props.selected ? "has-selection" : ""}`}>
       {!props.selected ? <div className="agent-thread-empty"><FaComments /><strong>Selecione um atendimento</strong><span>As mensagens aparecem somente enquanto a sessão estiver ativa.</span></div> : <>
         <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>{formatPhone(contactPhone(props.selected))}</small></div><div className="agent-thread-actions">
+          {props.selected.lastFrom === "client" && contactMode(props.selected) !== "blocked" ? <button className="is-bot" title="Reunir as duas últimas mensagens sem resposta e pedir uma única resposta ao bot" onClick={() => props.onReprocess(props.selected!)}><FaSyncAlt /> Responder últimas</button> : null}
           {contactMode(props.selected) === "blocked" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Desbloquear e devolver ao bot</button> : <>
             {contactMode(props.selected) === "human" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Devolver ao bot</button> : <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button>}
             <button className="is-block" onClick={() => props.onMode(props.selected!, "blocked", "Bloqueado pelo painel do agente")}><FaBan /> Bloquear</button>

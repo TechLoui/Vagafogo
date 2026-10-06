@@ -1116,7 +1116,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     const phoneDigits = onlyNumbers(initialAgentCheckout.telefone);
     setTelefone(formatPhone(phoneDigits.startsWith("55") && phoneDigits.length > 11 ? phoneDigits.slice(2) : phoneDigits));
     setCpf(formatCpf(initialAgentCheckout.cpf));
-    setWhatsappMarketingOptIn(initialAgentCheckout.whatsappMarketingOptIn);
+    setWhatsappMarketingOptIn(initialAgentCheckout.whatsappMarketingOptIn === true);
     setTemPet(initialAgentCheckout.temPet);
 
     const groupKey = initialAgentCheckout.tipoOferta === "combo"
@@ -1152,6 +1152,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     const indicePerguntaPendente = pacotesCheckout.findIndex((pacote) =>
       (pacote.perguntasPersonalizadas ?? []).some((pergunta) => {
         if (!pacote.id) return false;
+        if (ehPerguntaJuntarMesa(pergunta.pergunta) || ehCampoTitularOutraReserva(pergunta.pergunta)) {
+          return false;
+        }
         const resposta = respostasCheckout[`${pacote.id}-${pergunta.id}`];
         const valor = String(resposta?.resposta ?? "").trim();
         const basePendente = pergunta.obrigatoria && (
@@ -2186,7 +2189,10 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     const respostas: PerguntaPersonalizadaRespostaPayload[] = [];
     for (const pacote of pacotesAlvo) {
       if (!pacote.id) continue;
-      const perguntas = pacote.perguntasPersonalizadas ?? [];
+      const perguntas = (pacote.perguntasPersonalizadas ?? []).filter((pergunta) =>
+        !initialAgentCheckout
+        || (!ehPerguntaJuntarMesa(pergunta.pergunta) && !ehCampoTitularOutraReserva(pergunta.pergunta))
+      );
       const perguntaJuntarMesa = perguntas.find((pergunta) =>
         ehPerguntaJuntarMesa(pergunta.pergunta)
       );
@@ -2871,7 +2877,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         pacoteIds: selectedPackages,
         comboId: grupoComboPrincipal?.refId || null,
         atribuicao: obterAtribuicaoReserva(),
-        whatsappMarketingOptIn,
+        ...(!initialAgentCheckout ? { whatsappMarketingOptIn } : {}),
       };
 
       if (formaPagamento === "CREDIT_CARD" && cartaoExpiracao) {
@@ -3297,7 +3303,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           )}
         </div>
       </div>
-      <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-slate-600 sm:mt-4 sm:px-4 sm:py-3">
+      {!initialAgentCheckout && <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-slate-600 sm:mt-4 sm:px-4 sm:py-3">
         <input
           type="checkbox"
           checked={whatsappMarketingOptIn}
@@ -3307,7 +3313,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         <span className="min-w-0 text-[11px] leading-4 sm:text-xs sm:leading-5">
           Quero receber ajuda para concluir a reserva e novidades pelo WhatsApp. É opcional; cancelo respondendo <strong>SAIR</strong>.
         </span>
-      </label>
+      </label>}
     </div>
   );
 

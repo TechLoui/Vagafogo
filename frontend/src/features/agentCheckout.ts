@@ -24,7 +24,7 @@ export type AgentCheckoutHandoff = {
   cpf: string;
   telefone: string;
   temPet: boolean;
-  whatsappMarketingOptIn: boolean;
+  whatsappMarketingOptIn?: boolean;
   formaPagamento: "CREDIT_CARD" | "PIX";
   valorValidado: number;
   reservaId?: string;

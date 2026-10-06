@@ -146,6 +146,23 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
       ? `• Mesa: solicitada acomodação com a reserva de ${otherReservationOwner}; a junção depende da organização e disponibilidade das mesas.`
       : "• Mesa: foi solicitada acomodação com outra reserva; a junção depende da organização e disponibilidade das mesas.");
   }
+  const hasTablePreference = customAnswers.some((item) => {
+    const question = normalizeQuestion(item.pergunta);
+    const answer = normalizeQuestion(item.resposta).trim();
+    return question.includes("juntar") && question.includes("mesa")
+      && ["sim", "s", "nao", "n"].includes(answer);
+  });
+  const postConfirmationQuestion = !hasTablePreference
+    ? [
+        "Para organizarmos sua chegada, falta apenas uma preferência opcional:",
+        "",
+        "Você quer sentar junto com alguém que fez outra reserva e outro pagamento? Se sim, informe o nome do titular da outra reserva.",
+        "",
+        "Isso é diferente de apenas aceitar dividir uma mesa grande ou redonda com outros visitantes — nesse caso, pode responder “não”.",
+      ]
+    : typeof reserva.whatsappMarketingOptIn !== "boolean"
+      ? ["Agora que sua reserva está confirmada: você aceita receber campanhas e novidades da Fazenda Vagafogo pelo WhatsApp?"]
+      : [];
 
   return [
     `Pagamento confirmado, ${name}! ✅`,
@@ -162,6 +179,7 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
     "https://vagafogo.com.br/minha-reserva",
     "",
     "Esperamos você na Vagafogo! 🌿",
+    ...(postConfirmationQuestion.length ? ["", ...postConfirmationQuestion] : []),
   ].join("\n").slice(0, 4096);
 };
 
