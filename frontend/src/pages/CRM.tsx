@@ -3846,12 +3846,11 @@ function CampaignsSection({
               <FaWhatsapp />
             </span>
             <div>
-              <small>Sessão exclusiva para disparos</small>
-              <h3>Central WhatsApp do Admin</h3>
+              <small>Conexão compartilhada e econômica</small>
+              <h3>WhatsApp da Jatobá</h3>
               <p>
-                Campanhas, avisos internos e automações usam esta sessão. O
-                número do Agente permanece separado e exclusivo para
-                atendimento.
+                Campanhas, atendimento e automações reutilizam a mesma conexão
+                Baileys do Agente, sem abrir um segundo navegador no servidor.
               </p>
             </div>
           </div>
@@ -3860,7 +3859,7 @@ function CampaignsSection({
             className="crm-primary-button"
             onClick={() => window.location.assign("/admin?aba=whatsapp")}
           >
-            <FaWhatsapp /> Abrir Central WhatsApp
+            <FaWhatsapp /> Gerenciar conexão
           </button>
         </div>
       </div>
@@ -4926,11 +4925,11 @@ function DataSourcesSection({
             <em>Duas sessões independentes</em>
           </div>
           <h3>WhatsApp</h3>
-          <strong>Agente para atendimento; Admin para campanhas</strong>
+          <strong>Uma conexão para atendimento, campanhas e automações</strong>
           <p>
-            O QR Code do bot fica em /agente. Campanhas e automações usam a
-            Central WhatsApp do Admin e registram envio, erro, resposta, clique,
-            reserva e receita atribuída.
+            O QR Code fica em /agente. Campanhas, atendimento e automações usam
+            a mesma conexão e registram envio, erro, resposta, clique, reserva e
+            receita atribuída.
           </p>
         </article>
       </div>

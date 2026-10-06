@@ -19,14 +19,7 @@ import {
   processarEmailsConfirmacaoPendentes,
   tentarReenviarEmailConfirmacaoReserva,
 } from "../services/emailReservas";
-import {
-  desconectarWhatsApp,
-  iniciarWhatsApp,
-  obterStatusWhatsApp,
-  encerrarWhatsAppSeMemoriaAlta,
-  logarConfigWhatsapp,
-  prepararBoasVindasWhatsapp,
-} from "../services/whatsapp";
+import { prepararBoasVindasWhatsapp } from "../services/whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
 import {
   cancelarCampanhaWhatsapp,
@@ -213,6 +206,31 @@ const responderProxyAgente = (res: Response, response: AgentResponse) => {
     return;
   }
   res.status(response.status).type(response.contentType).send(response.body);
+};
+
+const mapearStatusWhatsappAgente = (response: AgentResponse) => {
+  const body = response.body && typeof response.body === "object" && !Array.isArray(response.body)
+    ? response.body as Record<string, unknown>
+    : {};
+  if (response.status >= 300) {
+    return {
+      status: "disconnected",
+      qr: null,
+      lastError: String(body.error ?? `AGENT_GATEWAY_HTTP_${response.status}`),
+    };
+  }
+  const ready = body.ready === true;
+  const connected = body.connected === true;
+  return {
+    status: ready ? "ready" : connected ? "initializing" : "disconnected",
+    qr: null,
+    lastError: body.lastError ? String(body.lastError) : null,
+    authStrategy: "remote",
+    info: {
+      wid: String(body.connectedWid ?? body.connectedNumber ?? "") || undefined,
+      pushname: "Jatobá — Fazenda Vagafogo",
+    },
+  };
 };
 
 // O painel /agente conversa somente com o backend principal. O segredo entre
@@ -935,12 +953,13 @@ app.post('/emails/:reservaId/excluir', async (req, res) => {
 });
 
 // Boas-vindas via WhatsApp ao marcar chegada do cliente
-app.get('/whatsapp/status', exigirAdminCrm, (_req, res) => {
-  res.json(obterStatusWhatsApp());
+app.get('/whatsapp/status', exigirAdminCrm, async (_req, res) => {
+  const response = await requestAgentService("gateway", "/api/whatsapp/status", { timeoutMs: 15_000 });
+  res.status(response.status >= 500 ? response.status : 200).json(mapearStatusWhatsappAgente(response));
 });
 
-app.get('/crm/campanhas/capacidade', exigirAdminCrm, (_req, res) => {
-  res.json(obterCapacidadeCampanhasWhatsapp());
+app.get('/crm/campanhas/capacidade', exigirAdminCrm, async (_req, res) => {
+  res.json(await obterCapacidadeCampanhasWhatsapp());
 });
 
 app.delete('/crm/campanhas/midia', exigirAdminCrm, async (req, res) => {
@@ -1011,19 +1030,36 @@ app.post('/whatsapp/avisos-reserva/:reservaId/reenviar', exigirAdminCrm, async (
   }
 });
 
-app.post('/whatsapp/start', exigirAdminCrm, (_req, res) => {
-  iniciarWhatsApp();
-  res.json(obterStatusWhatsApp());
+app.post('/whatsapp/start', exigirAdminCrm, async (_req, res) => {
+  const current = await requestAgentService("gateway", "/api/whatsapp/status", { timeoutMs: 15_000 });
+  const mapped = mapearStatusWhatsappAgente(current);
+  if (mapped.status === "ready") {
+    res.json(mapped);
+    return;
+  }
+  const response = await requestAgentService("gateway", "/api/whatsapp/qrcode", { timeoutMs: 15_000 });
+  const body = response.body && typeof response.body === "object" && !Array.isArray(response.body)
+    ? response.body as Record<string, unknown>
+    : {};
+  if (response.status >= 400) {
+    res.status(response.status).json({ status: "disconnected", qr: null, lastError: String(body.error ?? body.message ?? "QR_CODE_UNAVAILABLE") });
+    return;
+  }
+  res.status(200).json({
+    status: body.qrCode ? "qr" : "initializing",
+    qr: body.qrCode ? String(body.qrCode) : null,
+    lastError: null,
+    authStrategy: "remote",
+  });
 });
 
 app.post('/whatsapp/logout', exigirAdminCrm, async (_req, res) => {
-  try {
-    await desconectarWhatsApp();
-    res.json(obterStatusWhatsApp());
-  } catch (error: any) {
-    console.error('Erro ao desconectar WhatsApp:', error);
-    res.status(500).json({ error: error?.message || 'Erro ao desconectar WhatsApp' });
+  const response = await requestAgentService("gateway", "/api/whatsapp/logout", { method: "POST", timeoutMs: 30_000 });
+  if (response.status >= 300) {
+    responderProxyAgente(res, response);
+    return;
   }
+  res.json({ status: "disconnected", qr: null, lastError: null, authStrategy: "remote" });
 });
 
 app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) => {
@@ -1167,7 +1203,6 @@ const jsonBodyErrorHandler: ErrorRequestHandler = (error: any, _req, res, next) 
 app.use(jsonBodyErrorHandler);
 
 const port = process.env.PORT || 3001;
-const WHATSAPP_AUTO_START = (process.env.WHATSAPP_AUTO_START ?? "false").toLowerCase() === "true";
 
 app.listen(port, async () => {
   console.log(`Servidor rodando na porta ${port}`);
@@ -1185,24 +1220,7 @@ app.listen(port, async () => {
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
   iniciarProcessadorConfirmacoesReservaAgente();
-  logarConfigWhatsapp();
-
-  // Monitor de memoria — encerra WhatsApp se RSS passar do limite (default 700MB)
-  const limiteMemoriaMB = Number(process.env.MEMORY_GUARD_MB ?? 700);
-  setInterval(() => {
-    const rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
-    if (rssMB > limiteMemoriaMB) {
-      console.warn(`[memory-guard] RSS=${rssMB}MB > ${limiteMemoriaMB}MB — encerrando WhatsApp`);
-      void encerrarWhatsAppSeMemoriaAlta(rssMB);
-    }
-  }, 60000);
-
-  if (WHATSAPP_AUTO_START) {
-    console.log("[whatsapp] Inicializacao automatica habilitada.");
-    iniciarWhatsApp();
-  } else {
-    console.log("[whatsapp] Inicializacao automatica desabilitada por WHATSAPP_AUTO_START=false.");
-  }
+  console.log("[whatsapp] Campanhas e automações usam o gateway Baileys já ativo no Agente; Chromium local removido.");
 
   const asaasKey = (process.env.ASAAS_API_KEY ?? "").trim();
   const splitWalletId = (process.env.ASAAS_SPLIT_WALLET_ID ?? "").trim();

@@ -4,8 +4,6 @@ import { obterFirestoreAdmin, obterStorageBucketAdmin } from "./firebaseAdmin";
 import {
   enviarMensagemWhatsappGerenciada,
   obterStatusWhatsApp,
-  registrarObservadorAckWhatsapp,
-  registrarObservadorMensagemWhatsapp,
   type WhatsappAckEvent,
   type WhatsappInboundEvent,
   type WhatsappMediaPayload,
@@ -74,7 +72,6 @@ const INTERNAL_TEST_DESTINATION = "5562991150376";
 
 let workerTimer: NodeJS.Timeout | null = null;
 let workerRunning = false;
-let observersRegistered = false;
 
 const normalizeText = (value: unknown) =>
   String(value ?? "")
@@ -844,7 +841,7 @@ const handleAck = async (event: WhatsappAckEvent) => {
       transaction.update(campaignRef, { erros: FieldValue.increment(1), atualizadoEm: FieldValue.serverTimestamp() });
       return;
     }
-    // whatsapp-web.js: 1/2 = enviado/servidor, 3 = aparelho, 4+ = lido/tocado.
+    // Baileys/WhatsApp: 1/2 = pendente/servidor, 3 = aparelho, 4+ = lido/tocado.
     const nextStatus = event.ack >= 4 ? "lido" : event.ack >= 3 ? "entregue" : "enviado";
     if ((ranks[current] ?? 0) >= ranks[nextStatus]) return;
     const campaignPatch: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = { atualizadoEm: FieldValue.serverTimestamp() };
@@ -888,15 +885,15 @@ const handleInbound = async (event: WhatsappInboundEvent) => {
   });
 };
 
-export const obterCapacidadeCampanhasWhatsapp = () => {
-  const whatsapp = obterStatusWhatsApp();
+export const obterCapacidadeCampanhasWhatsapp = async () => {
+  const whatsapp = await obterStatusWhatsApp();
   return {
   envioHabilitado: CAMPAIGN_SENDING_ENABLED,
   conectado: whatsapp.status === "ready",
   intervaloMinimoSegundos: 60,
   limiteDiarioMaximo: 500,
-  provedor: "Central WhatsApp Vagafogo / whatsapp-web.js",
-  recomendacao: "Conecte a Central WhatsApp no Admin, homologue com o teste interno e mantenha consentimento, limites, pausas e monitoramento de bloqueios.",
+  provedor: "Jatobá / Baileys compartilhado",
+  recomendacao: "As campanhas reutilizam a conexão ativa da Jatobá, com consentimento, bloqueios, limites, pausas e monitoramento por destinatário.",
   };
 };
 
@@ -991,11 +988,6 @@ export const processarFilaCampanhasWhatsapp = async () => {
 };
 
 export const iniciarProcessadorCampanhasWhatsapp = () => {
-  if (!observersRegistered) {
-    registrarObservadorAckWhatsapp(handleAck);
-    registrarObservadorMensagemWhatsapp(handleInbound);
-    observersRegistered = true;
-  }
   if (workerTimer) return;
   workerTimer = setInterval(() => void processarFilaCampanhasWhatsapp(), WORKER_INTERVAL_MS);
   workerTimer.unref?.();
