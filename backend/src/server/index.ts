@@ -168,7 +168,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-05.3-human-handoff-alerts',
+    build: '2026-10-05.4-crm-analytics',
     timestamp: new Date().toISOString(),
   });
 });

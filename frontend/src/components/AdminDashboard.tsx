@@ -1577,7 +1577,7 @@ export default function AdminDashboard() {
     if (typeof window === 'undefined') return 'reservas';
     const requestedTab = new URLSearchParams(window.location.search).get('aba');
     const validTabs: AdminAba[] = [
-      'dashboard', 'reservas', 'pacotes', 'pesquisa', 'tipos_clientes',
+      'reservas', 'pacotes', 'pesquisa', 'tipos_clientes',
       'email', 'whatsapp', 'formularios', 'configuracoes',
     ];
     return validTabs.includes(requestedTab as AdminAba) ? requestedTab as AdminAba : 'reservas';
@@ -3306,8 +3306,6 @@ const totalParticipantesDoDia = useMemo(() => {
   const abasDisponiveis: Array<{ id: AdminAba; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
 
     { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
-
-    { id: 'dashboard', label: 'Dashboard', description: 'Relatórios e indicadores', icon: FaChartBar },
 
     { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
 

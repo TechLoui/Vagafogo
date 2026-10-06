@@ -19,7 +19,8 @@ export type CampaignSegment =
   | "brunch"
   | "trail"
   | "pending"
-  | "abandoned";
+  | "abandoned"
+  | "lost";
 
 export type CriarCampanhaInput = {
   nome: string;
@@ -54,7 +55,7 @@ const CAMPAIGN_SENDING_ENABLED =
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_CAMPAIGN_WORKER_MS ?? 15000), 5000);
 const TIMEZONE = "America/Sao_Paulo";
 const ACTIVE_STATUSES = ["agendada", "enviando"];
-const SEGMENTS: CampaignSegment[] = ["inactive90", "inactive180", "inactive365", "recurring", "brunch", "trail", "pending", "abandoned"];
+const SEGMENTS: CampaignSegment[] = ["inactive90", "inactive180", "inactive365", "recurring", "brunch", "trail", "pending", "abandoned", "lost"];
 const SEGMENT_LABELS: Record<CampaignSegment, string> = {
   inactive90: "Sem visita há 90+ dias",
   inactive180: "Sem visita há 180+ dias",
@@ -64,6 +65,7 @@ const SEGMENT_LABELS: Record<CampaignSegment, string> = {
   trail: "Experiência Trilha",
   pending: "Pagamento não concluído",
   abandoned: "Checkout abandonado com opt-in",
+  lost: "Oportunidades perdidas com opt-in",
 };
 const OPT_OUT_WORDS = /^(sair|pare|parar|cancelar|descadastrar|nao quero|não quero|stop)$/i;
 const CAMPAIGN_MEDIA_MAX_BYTES = 5 * 1024 * 1024;
@@ -186,7 +188,7 @@ const segmentMatches = (customer: CampaignCustomer, segment: CampaignSegment) =>
   if (segment === "inactive365") return Boolean(customer.lastVisit && inactiveDays >= 365);
   if (segment === "recurring") return customer.bookings >= 2;
   if (segment === "pending") return customer.hasPending;
-  if (segment === "abandoned") return customer.abandoned === true;
+  if (segment === "abandoned" || segment === "lost") return customer.abandoned === true;
   const activities = Array.from(customer.activities).join(" ");
   return segment === "brunch" ? normalizeText(activities).includes("brunch") : normalizeText(activities).includes("trilha");
 };
@@ -194,10 +196,11 @@ const segmentMatches = (customer: CampaignCustomer, segment: CampaignSegment) =>
 const loadAudience = async (segment: CampaignSegment) => {
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const [reservationsSnapshot, contactsSnapshot, journeysSnapshot] = await Promise.all([
+  const [reservationsSnapshot, contactsSnapshot, journeysSnapshot, agentLeadsSnapshot] = await Promise.all([
     db.collection("reservas").get(),
     db.collection("crm_whatsapp_contatos").get(),
     db.collection("crm_jornadas").get(),
+    db.collection("crm_leads_agente").get(),
   ]);
   const contacts = new Map(contactsSnapshot.docs.map((document) => [document.id, document.data()]));
   const customers = new Map<string, CampaignCustomer>();
@@ -239,7 +242,7 @@ const loadAudience = async (segment: CampaignSegment) => {
     customers.set(phone, existing);
   });
 
-  if (segment === "abandoned") {
+  if (segment === "abandoned" || segment === "lost") {
     const cutoff = Date.now() - 30 * 60 * 1000;
     const abandonedCustomers = new Map<string, CampaignCustomer>();
     let journeyRecordsWithPhone = 0;
@@ -267,6 +270,45 @@ const loadAudience = async (segment: CampaignSegment) => {
         lastInteractionMs,
       });
     });
+    if (segment === "lost") {
+      agentLeadsSnapshot.docs.forEach((document) => {
+        const raw = document.data();
+        if (raw.teste === true) return;
+        const signal = normalizeText(`${raw.etapa ?? ""} ${raw.resultado ?? ""} ${raw.motivo ?? ""}`);
+        if (!/nao convert|encerrado sem reserva|pagamento (nao identificado|expirado|nao concluido)|abandono|desistencia|desistiu|oportunidade perdida/.test(signal)) return;
+        const phone = normalizePhone(raw.telefone ?? String(raw.sessionId ?? "").match(/^whatsapp_(\d{10,15})$/)?.[1]);
+        if (!phone) return;
+        journeyRecordsWithPhone += 1;
+        const updatedAt = raw.atualizadoEm?.toDate?.() as Date | undefined;
+        const createdAt = raw.criadoEm?.toDate?.() as Date | undefined;
+        const lastInteractionMs = updatedAt?.getTime?.() ?? createdAt?.getTime?.() ?? 0;
+        const previous = abandonedCustomers.get(phone);
+        if (previous?.lastInteractionMs && previous.lastInteractionMs >= lastInteractionMs) return;
+        const activities = new Set(previous?.activities ?? []);
+        if (Array.isArray(raw.atividades))
+          raw.atividades
+            .map((item: unknown) => clean(item, 160))
+            .filter(Boolean)
+            .forEach((item: string) => activities.add(item));
+        abandonedCustomers.set(phone, {
+          phone,
+          name: clean(raw.nome ?? "Cliente", 160) || "Cliente",
+          email: clean(raw.email, 240) || undefined,
+          bookings: 0,
+          activities,
+          hasPending: /pagamento|pix|cobranca/.test(signal),
+          optIn: raw.marketingOptIn === true || previous?.optIn === true,
+          reservationIds: Array.from(
+            new Set([
+              ...(previous?.reservationIds ?? []),
+              ...(raw.reservaId ? [String(raw.reservaId)] : []),
+            ]),
+          ),
+          abandoned: true,
+          lastInteractionMs,
+        });
+      });
+    }
     const segmentCustomers = Array.from(abandonedCustomers.values());
     const eligible: CampaignCustomer[] = [];
     let withoutConsent = 0;

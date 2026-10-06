@@ -75,7 +75,15 @@ type CampaignSegment =
   | "brunch"
   | "trail"
   | "pending"
-  | "abandoned";
+  | "abandoned"
+  | "lost";
+type ReservationFlow =
+  | "site_organic"
+  | "agent_card"
+  | "agent_pix"
+  | "whatsapp"
+  | "manual"
+  | "unknown";
 
 type RawReservation = Record<string, unknown> & {
   nome?: unknown;
@@ -121,6 +129,7 @@ type RawReservation = Record<string, unknown> & {
   atribuicao?: unknown;
   canalOrigem?: unknown;
   dominioOrigem?: unknown;
+  agentSessionId?: unknown;
 };
 
 type CRMReservation = {
@@ -135,6 +144,7 @@ type CRMReservation = {
   value: number;
   status: string;
   origin: "manual" | "checkout" | "whatsapp" | "unknown";
+  flow: ReservationFlow;
   sourceDomain?: string;
   sourceChannel?: "site" | "whatsapp" | "unknown";
   sourceAttribution: "captured" | "historical_inference" | "none";
@@ -359,6 +369,11 @@ const segmentMeta: Record<
     description:
       "Pessoas que pararam há 30+ minutos e autorizaram ajuda pelo WhatsApp.",
   },
+  lost: {
+    label: "Oportunidades perdidas",
+    description:
+      "Checkouts e atendimentos comerciais encerrados sem reserva, com opt-in válido.",
+  },
 };
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -500,12 +515,19 @@ const agentLeadIsConfirmed = (lead: AgentLeadRecord) =>
   /reserva confirm|pagamento (aprovado|confirmado)|\bpago\b|concluida/.test(
     agentLeadSignal(lead),
   );
+const agentLeadIsLost = (lead: AgentLeadRecord) =>
+  /nao convert|encerrado sem reserva|pagamento (nao identificado|expirado|nao concluido)|abandono|desistencia|desistiu|oportunidade perdida/.test(
+    agentLeadSignal(lead),
+  );
 const agentLeadIsClosedWithoutOpportunity = (lead: AgentLeadRecord) =>
+  !agentLeadIsLost(lead) &&
   /duvida resolvida|atendimento concluido|sem oportunidade|descart|irrelevante|assunto nao comercial|bloqueado/.test(
     agentLeadSignal(lead),
   );
 const agentLeadIsOpen = (lead: AgentLeadRecord) =>
-  !agentLeadIsConfirmed(lead) && !agentLeadIsClosedWithoutOpportunity(lead);
+  !agentLeadIsConfirmed(lead) &&
+  !agentLeadIsLost(lead) &&
+  !agentLeadIsClosedWithoutOpportunity(lead);
 const initials = (name: string) =>
   name
     .split(/\s+/)
@@ -524,6 +546,18 @@ const originLabel = (origin: CRMReservation["origin"]) =>
       : origin === "checkout"
         ? "Checkout do site"
         : "Não identificada";
+const reservationFlowLabel = (flow: ReservationFlow) =>
+  flow === "site_organic"
+    ? "Site direto"
+    : flow === "agent_card"
+      ? "Bot → site · Cartão"
+      : flow === "agent_pix"
+        ? "Bot · PIX"
+        : flow === "whatsapp"
+          ? "WhatsApp"
+          : flow === "manual"
+            ? "Manual"
+            : "Não identificada";
 const percent = (value: number, total: number) =>
   total > 0 ? Math.round((value / total) * 100) : 0;
 const ABANDONMENT_MINUTES = 30;
@@ -741,6 +775,37 @@ export function CRM() {
                 isPending(storedStatus)
                   ? "verificacao_pagamento"
                   : storedStatus;
+              const paymentMethod = raw.formaPagamento
+                ? String(raw.formaPagamento)
+                : undefined;
+              const normalizedPaymentMethod = normalizeText(paymentMethod);
+              const attributedSessionId = String(
+                attribution.agentSessionId ?? raw.agentSessionId ?? "",
+              ).trim();
+              const journeySessionId = String(attribution.sessionId ?? "").trim();
+              const attributionFromAgent =
+                normalizeText(attribution.utmMedium) === "agente" ||
+                normalizeText(attribution.utmCampaign) === "reserva_assistida";
+              const agentSessionId =
+                attributedSessionId ||
+                (attributionFromAgent && /^whatsapp_\d{10,15}$/i.test(journeySessionId)
+                  ? journeySessionId
+                  : undefined);
+              const flow: ReservationFlow =
+                origin === "manual"
+                  ? "manual"
+                  : agentSessionId && normalizedPaymentMethod.includes("pix")
+                    ? "agent_pix"
+                    : agentSessionId &&
+                        (normalizedPaymentMethod.includes("card") ||
+                          normalizedPaymentMethod.includes("cartao") ||
+                          normalizedPaymentMethod.includes("credit"))
+                      ? "agent_card"
+                      : origin === "checkout" && !agentSessionId
+                        ? "site_organic"
+                        : origin === "whatsapp" || agentSessionId
+                          ? "whatsapp"
+                          : "unknown";
               return {
                 id: document.id,
                 name: String(rawValue(raw, "nome", "Nome") ?? "").trim(),
@@ -763,6 +828,7 @@ export function CRM() {
                 value: toNumber(rawValue(raw, "valor", "Valor")),
                 status: displayStatus,
                 origin,
+                flow,
                 sourceDomain: sourceDomain || undefined,
                 sourceChannel:
                   channelRaw === "whatsapp"
@@ -779,9 +845,7 @@ export function CRM() {
                 paidAt: normalizeTimestamp(raw.dataPagamento),
                 arrived:
                   typeof raw.chegou === "boolean" ? raw.chegou : undefined,
-                paymentMethod: raw.formaPagamento
-                  ? String(raw.formaPagamento)
-                  : undefined,
+                paymentMethod,
                 whatsappSent:
                   raw.whatsappEnviado === true ||
                   raw.whatsappBoasVindasEnviado === true ||
@@ -792,9 +856,7 @@ export function CRM() {
                 paymentId: String(
                   raw.asaasPaymentId ?? raw.pagamentoId ?? "",
                 ).trim() || undefined,
-                agentSessionId: attribution.agentSessionId
-                  ? String(attribution.agentSessionId)
-                  : undefined,
+                agentSessionId,
                 confirmed: raw.confirmada === true,
               } satisfies CRMReservation;
             })
@@ -1178,12 +1240,31 @@ export function CRM() {
       ).length,
     [journeyClock, journeys],
   );
+  const lostAudienceCount = useMemo(() => {
+    const phones = new Set<string>();
+    journeys.forEach((item) => {
+      const phone = item.phone?.replace(/\D/g, "");
+      if (
+        phone &&
+        journeyIsAbandoned(item, journeyClock) &&
+        item.recoveryOptIn
+      )
+        phones.add(phone);
+    });
+    agentLeads.forEach((item) => {
+      const phone = item.phone.replace(/\D/g, "");
+      if (phone && !item.isTest && item.marketingOptIn && agentLeadIsLost(item))
+        phones.add(phone);
+    });
+    return phones.size;
+  }, [agentLeads, journeyClock, journeys]);
   const audienceFor = (segment: CampaignSegment) => {
     if (segment === "pending") return pendingReservations.length;
     if (segment === "abandoned")
       return journeys.filter(
         (item) => journeyIsAbandoned(item) && item.recoveryOptIn && item.phone,
       ).length;
+    if (segment === "lost") return lostAudienceCount;
     if (segment === "inactive90")
       return customers.filter((item) => item.daysInactive >= 90).length;
     if (segment === "inactive180")
@@ -1774,6 +1855,10 @@ export function CRM() {
               campaigns={filteredCampaigns}
               journeys={filteredJourneys}
               agentLeads={filteredAgentLeads}
+              financialValuesVisible={financialValuesVisible}
+              onToggleFinancialValues={() =>
+                setFinancialValuesVisible((visible) => !visible)
+              }
               onNavigate={selectSection}
             />
           ) : activeSection === "reservas" ? (
@@ -1781,6 +1866,10 @@ export function CRM() {
               reservations={filteredReservations}
               loading={reservationsLoading}
               periodLabel={periodLabel}
+              valuesVisible={financialValuesVisible}
+              onToggleValues={() =>
+                setFinancialValuesVisible((visible) => !visible)
+              }
             />
           ) : activeSection === "jornadas" ? (
             <JourneysSection
@@ -1836,6 +1925,8 @@ function OpportunityDashboardSection({
   campaigns,
   journeys,
   agentLeads,
+  financialValuesVisible,
+  onToggleFinancialValues,
   onNavigate,
 }: {
   reservations: CRMReservation[];
@@ -1843,17 +1934,21 @@ function OpportunityDashboardSection({
   campaigns: CampaignRecord[];
   journeys: JourneyRecord[];
   agentLeads: AgentLeadRecord[];
+  financialValuesVisible: boolean;
+  onToggleFinancialValues: () => void;
   onNavigate: (section: SectionKey) => void;
 }) {
   const pending = reservations.filter(
     (item) => isPending(item.status) && item.origin !== "manual" && item.phone,
   );
-  const recoverableJourneys = journeys.filter(
-    (item) => journeyIsAbandoned(item) && item.recoveryOptIn && item.phone,
+  const abandonedJourneys = journeys.filter((item) => journeyIsAbandoned(item));
+  const recoverableJourneys = abandonedJourneys.filter(
+    (item) => item.recoveryOptIn && item.phone,
   );
   const realAgentLeads = agentLeads.filter((item) => !item.isTest);
   const openLeads = realAgentLeads.filter(agentLeadIsOpen);
   const displayedOpenLeads = agentLeads.filter(agentLeadIsOpen);
+  const lostLeads = realAgentLeads.filter(agentLeadIsLost);
   const isPaymentLead = (lead: AgentLeadRecord) =>
     /pagamento|pix|cobranca/.test(agentLeadSignal(lead));
   const isWaitingLead = (lead: AgentLeadRecord) =>
@@ -1882,6 +1977,24 @@ function OpportunityDashboardSection({
       contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
     ),
   ]);
+  const lostKeys = new Set([
+    ...abandonedJourneys.map((item) =>
+      contactKey(item.phone, `jornada:${item.sessionId}`),
+    ),
+    ...lostLeads.map((item) =>
+      contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
+    ),
+  ]);
+  const recoverableLostKeys = new Set([
+    ...recoverableJourneys.map((item) =>
+      contactKey(item.phone, `jornada:${item.sessionId}`),
+    ),
+    ...lostLeads
+      .filter((item) => item.marketingOptIn && item.phone)
+      .map((item) =>
+        contactKey(item.phone, `agente:${item.sessionId ?? item.id}`),
+      ),
+  ]);
   const opportunityKeys = new Set([
     ...recoverableKeys,
     ...openLeads.map((item) =>
@@ -1902,9 +2015,68 @@ function OpportunityDashboardSection({
       sent: totals.sent + (campaign.sent ?? 0),
       replies: totals.replies + (campaign.replies ?? 0),
       conversions: totals.conversions + (campaign.conversions ?? 0),
+      revenue: totals.revenue + (campaign.revenue ?? 0),
     }),
-    { eligible: 0, sent: 0, replies: 0, conversions: 0 },
+    { eligible: 0, sent: 0, replies: 0, conversions: 0, revenue: 0 },
   );
+  const confirmedReservations = reservations.filter((item) => isPaid(item.status));
+  const cancelledReservations = reservations.filter((item) => isCancelled(item.status));
+  const confirmedRevenue = confirmedReservations.reduce(
+    (sum, item) => sum + item.value,
+    0,
+  );
+  const pendingRevenue = pending.reduce((sum, item) => sum + item.value, 0);
+  const averageTicket = confirmedReservations.length
+    ? confirmedRevenue / confirmedReservations.length
+    : 0;
+  const reservationConversion = percent(
+    confirmedReservations.length,
+    confirmedReservations.length + pending.length + cancelledReservations.length,
+  );
+  const displayMoney = (value: number) =>
+    financialValuesVisible ? currency.format(value) : "R$ •••••";
+  const flowColors: Record<ReservationFlow, string> = {
+    site_organic: "#159fd5",
+    agent_card: "#6758c7",
+    agent_pix: "#21aa70",
+    whatsapp: "#45b9c1",
+    manual: "#f0a238",
+    unknown: "#a7b4bd",
+  };
+  const reservationFlows = (
+    [
+      "site_organic",
+      "agent_card",
+      "agent_pix",
+      "whatsapp",
+      "manual",
+      "unknown",
+    ] as ReservationFlow[]
+  )
+    .map((flow) => {
+      const items = reservations.filter((item) => item.flow === flow);
+      return {
+        flow,
+        label: reservationFlowLabel(flow),
+        count: items.length,
+        confirmed: items.filter((item) => isPaid(item.status)).length,
+        color: flowColors[flow],
+      };
+    })
+    .filter((item) => item.count > 0);
+  const maxFlowCount = Math.max(1, ...reservationFlows.map((item) => item.count));
+  const revenueByDayMap = new Map<string, number>();
+  confirmedReservations.forEach((item) =>
+    revenueByDayMap.set(
+      item.date,
+      (revenueByDayMap.get(item.date) ?? 0) + item.value,
+    ),
+  );
+  const revenueByDay = Array.from(revenueByDayMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([date, value]) => ({ date, value }));
+  const maxDailyRevenue = Math.max(1, ...revenueByDay.map((item) => item.value));
   const metrics = [
     {
       label: "Oportunidades abertas",
@@ -1914,32 +2086,32 @@ function OpportunityDashboardSection({
       tone: "blue",
     },
     {
-      label: "Checkouts recuperáveis",
-      value: recoverableKeys.size,
-      hint: "com telefone e consentimento",
-      icon: FaLink,
-      tone: "orange",
-    },
-    {
-      label: "Conversas em andamento",
-      value: openLeads.length,
-      hint: "leads ainda não finalizados",
-      icon: FaWhatsapp,
-      tone: "green",
-    },
-    {
-      label: "Pagamento pendente",
-      value: paymentKeys.size,
-      hint: "sem duplicar o mesmo contato",
-      icon: FaClock,
+      label: "Oportunidades perdidas",
+      value: lostKeys.size,
+      hint: `${recoverableLostKeys.size} aptas para recuperação`,
+      icon: FaExclamationCircle,
       tone: "red",
     },
     {
-      label: "Público 90+ dias",
-      value: inactive90.length,
-      hint: "base atual de reativação",
-      icon: FaSyncAlt,
+      label: "Reservas confirmadas",
+      value: confirmedReservations.length,
+      hint: `${reservationConversion}% de conversão`,
+      icon: FaCheckCircle,
+      tone: "green",
+    },
+    {
+      label: "Receita confirmada",
+      value: displayMoney(confirmedRevenue),
+      hint: `${confirmedReservations.length} pagamentos no período`,
+      icon: FaMoneyBillWave,
       tone: "orange",
+    },
+    {
+      label: "Conversão de reservas",
+      value: `${reservationConversion}%`,
+      hint: "confirmadas sobre decisões registradas",
+      icon: FaChartLine,
+      tone: "green",
     },
     {
       label: "Campanhas ativas",
@@ -1950,6 +2122,14 @@ function OpportunityDashboardSection({
     },
   ];
   const radarItems = [
+    {
+      label: "Recuperar oportunidades perdidas",
+      description: "Checkouts e conversas encerradas sem reserva, com opt-in.",
+      count: recoverableLostKeys.size,
+      icon: FaExclamationCircle,
+      tone: "red",
+      section: "campanhas" as SectionKey,
+    },
     {
       label: "Recuperar checkout abandonado",
       description: "Parou no formulário e autorizou contato pelo WhatsApp.",
@@ -1974,19 +2154,12 @@ function OpportunityDashboardSection({
       tone: "orange",
       section: "jornadas" as SectionKey,
     },
-    {
-      label: "Reativar cliente antigo",
-      description: "Cliente confirmado sem retornar há pelo menos 90 dias.",
-      count: inactive90.length,
-      icon: FaSyncAlt,
-      tone: "red",
-      section: "campanhas" as SectionKey,
-    },
   ];
   const funnel = [
     { label: "Novos / em atendimento", value: activeLeads.length, tone: "#169fd2" },
     { label: "Aguardando cliente", value: waitingLeads.length, tone: "#75c7e6" },
     { label: "Pagamento pendente", value: paymentLeads.length, tone: "#f3a33b" },
+    { label: "Oportunidade perdida", value: lostLeads.length, tone: "#df5360" },
     { label: "Reserva confirmada", value: confirmedLeads.length, tone: "#23ae75" },
     { label: "Sem oportunidade", value: closedLeads.length, tone: "#a8b6c0" },
   ];
@@ -2113,6 +2286,125 @@ function OpportunityDashboardSection({
         </article>
       </div>
 
+      <div className="crm-dashboard-grid crm-dashboard-grid--analytics">
+        <article className="crm-card crm-dashboard-finance">
+          <div className="crm-card__head">
+            <div><span><FaMoneyBillWave /></span><h3>Resumo financeiro</h3></div>
+            <button
+              type="button"
+              onClick={onToggleFinancialValues}
+              aria-label={
+                financialValuesVisible
+                  ? "Ocultar valores financeiros"
+                  : "Mostrar valores financeiros"
+              }
+            >
+              {financialValuesVisible ? <FaEyeSlash /> : <FaEye />}
+              {financialValuesVisible ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+          <div className="crm-dashboard-finance__grid">
+            <div>
+              <span>Confirmado</span>
+              <strong className={!financialValuesVisible ? "is-private" : ""}>
+                {displayMoney(confirmedRevenue)}
+              </strong>
+              <small>{confirmedReservations.length} reservas pagas</small>
+            </div>
+            <div>
+              <span>Pendente</span>
+              <strong className={!financialValuesVisible ? "is-private" : ""}>
+                {displayMoney(pendingRevenue)}
+              </strong>
+              <small>{pending.length} pagamentos</small>
+            </div>
+            <div>
+              <span>Ticket médio</span>
+              <strong className={!financialValuesVisible ? "is-private" : ""}>
+                {displayMoney(averageTicket)}
+              </strong>
+              <small>por reserva confirmada</small>
+            </div>
+            <div>
+              <span>Receita de campanhas</span>
+              <strong className={!financialValuesVisible ? "is-private" : ""}>
+                {displayMoney(campaignTotals.revenue)}
+              </strong>
+              <small>{campaignTotals.conversions} conversões atribuídas</small>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="crm-dashboard-finance__link"
+            onClick={() => onNavigate("financeiro")}
+          >
+            Abrir análise financeira <FaArrowRight />
+          </button>
+        </article>
+
+        <article className="crm-card crm-flow-analysis">
+          <div className="crm-card__head">
+            <div><span><FaGlobe /></span><h3>Reservas por fluxo</h3></div>
+            <button onClick={() => onNavigate("reservas")}>Filtrar <FaArrowRight /></button>
+          </div>
+          {reservationFlows.length ? (
+            <div className="crm-flow-analysis__list">
+              {reservationFlows.map((item) => (
+                <div key={item.flow}>
+                  <p>
+                    <span>{item.label}</span>
+                    <strong>{item.count}</strong>
+                    <small>{percent(item.confirmed, item.count)}% confirmadas</small>
+                  </p>
+                  <i>
+                    <span
+                      style={{
+                        width: `${Math.max(4, (item.count / maxFlowCount) * 100)}%`,
+                        background: item.color,
+                      }}
+                    />
+                  </i>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="crm-dashboard-empty">
+              <FaGlobe /><p><strong>Sem reservas no período</strong><span>Altere o filtro de datas para comparar os canais.</span></p>
+            </div>
+          )}
+        </article>
+
+        <article className="crm-card crm-revenue-trend">
+          <div className="crm-card__head">
+            <div><span><FaChartBar /></span><h3>Receita confirmada por dia</h3></div>
+            <small>Últimos {revenueByDay.length || 0} dias com vendas</small>
+          </div>
+          {revenueByDay.length ? (
+            <div className={`crm-revenue-trend__chart${financialValuesVisible ? "" : " is-hidden"}`}>
+              {revenueByDay.map((item) => (
+                <div key={item.date}>
+                  <span
+                    style={{
+                      height: financialValuesVisible
+                        ? `${Math.max(6, (item.value / maxDailyRevenue) * 100)}%`
+                        : "18%",
+                    }}
+                  />
+                  <small>{dayjs(item.date).format("DD/MM")}</small>
+                  <em>
+                    {financialValuesVisible ? currency.format(item.value) : "oculto"}
+                  </em>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="crm-dashboard-empty">
+              <FaChartBar /><p><strong>Sem receita confirmada</strong><span>Os pagamentos aprovados aparecerão neste gráfico.</span></p>
+            </div>
+          )}
+        </article>
+      </div>
+
       <div className="crm-dashboard-grid crm-dashboard-grid--strategy">
         <article className="crm-card crm-latest-leads crm-opportunity-table">
           <div className="crm-card__head">
@@ -2169,6 +2461,7 @@ function OpportunityDashboardSection({
             <button onClick={() => onNavigate("campanhas")}>Criar campanha <FaArrowRight /></button>
           </div>
           <div className="crm-reactivation__list">
+            <div><span><FaExclamationCircle /></span><p><strong>Oportunidades perdidas</strong><small>{recoverableLostKeys.size} contatos com opt-in</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaClock /></span><p><strong>Sem visita há 90+ dias</strong><small>{inactive90.length} clientes</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaUsers /></span><p><strong>Sem visita há 180+ dias</strong><small>{inactive180.length} clientes</small></p><em className="is-ready">Disponível</em></div>
             <div><span><FaSyncAlt /></span><p><strong>Clientes recorrentes</strong><small>{recurring.length} clientes</small></p><em className="is-ready">Disponível</em></div>
@@ -2184,13 +2477,18 @@ function ReservationsSection({
   reservations,
   loading,
   periodLabel,
+  valuesVisible,
+  onToggleValues,
 }: {
   reservations: CRMReservation[];
   loading: boolean;
   periodLabel: string;
+  valuesVisible: boolean;
+  onToggleValues: () => void;
 }) {
   const [filter, setFilter] = useState("todas");
   const [source, setSource] = useState("todas");
+  const [flow, setFlow] = useState<ReservationFlow | "todas">("todas");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const sourceOptions = Array.from(
@@ -2203,7 +2501,7 @@ function ReservationsSection({
   const visible = reservations
     .filter((item) => {
       const search = normalizeText(
-        `${item.name} ${item.activity} ${item.phone} ${item.sourceDomain ?? ""}`,
+        `${item.name} ${item.activity} ${item.phone} ${item.sourceDomain ?? ""} ${reservationFlowLabel(item.flow)} ${item.paymentMethod ?? ""}`,
       );
       const matches =
         filter === "todas" ||
@@ -2216,7 +2514,13 @@ function ReservationsSection({
         (source === "sem-dominio"
           ? !item.sourceDomain
           : item.sourceDomain === source);
-      return matches && matchesSource && search.includes(normalizeText(query));
+      const matchesFlow = flow === "todas" || item.flow === flow;
+      return (
+        matches &&
+        matchesSource &&
+        matchesFlow &&
+        search.includes(normalizeText(query))
+      );
     })
     .sort((a, b) => b.date.localeCompare(a.date));
   const pageSize = 25;
@@ -2226,7 +2530,7 @@ function ReservationsSection({
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
-  useEffect(() => setPage(1), [filter, query, source]);
+  useEffect(() => setPage(1), [filter, flow, query, source]);
   const download = () =>
     exportCsv(
       `reservas-${dayjs().format("YYYY-MM-DD")}.csv`,
@@ -2241,6 +2545,8 @@ function ReservationsSection({
         valor: item.value,
         status: statusLabel(item.status),
         origem: originLabel(item.origin),
+        fluxo: reservationFlowLabel(item.flow),
+        formaPagamento: item.paymentMethod ?? "",
         dominioOrigem: item.sourceDomain ?? "",
         campanhaId: item.campaignId ?? "",
         tipoAtribuicao:
@@ -2257,9 +2563,20 @@ function ReservationsSection({
         title="Histórico de reservas"
         subtitle={`Consulta no período: ${periodLabel}. Esta área não cria ou altera reservas.`}
         actions={
-          <button className="crm-secondary-button" onClick={download}>
-            <FaDownload /> Exportar CSV
-          </button>
+          <>
+            <button
+              type="button"
+              className="crm-privacy-toggle"
+              onClick={onToggleValues}
+              aria-pressed={valuesVisible}
+            >
+              {valuesVisible ? <FaEyeSlash /> : <FaEye />}
+              {valuesVisible ? "Ocultar valores" : "Mostrar valores"}
+            </button>
+            <button className="crm-secondary-button" onClick={download}>
+              <FaDownload /> Exportar CSV
+            </button>
+          </>
         }
       />
       <div className="crm-summary-strip">
@@ -2300,12 +2617,14 @@ function ReservationsSection({
           </span>
           <div>
             <small>Receita confirmada</small>
-            <strong>
-              {currency.format(
-                reservations
-                  .filter((item) => isPaid(item.status))
-                  .reduce((sum, item) => sum + item.value, 0),
-              )}
+            <strong className={!valuesVisible ? "is-private" : ""}>
+              {valuesVisible
+                ? currency.format(
+                    reservations
+                      .filter((item) => isPaid(item.status))
+                      .reduce((sum, item) => sum + item.value, 0),
+                  )
+                : "R$ •••••"}
             </strong>
           </div>
         </article>
@@ -2338,6 +2657,21 @@ function ReservationsSection({
               </button>
             ))}
           </div>
+          <select
+            aria-label="Filtrar fluxo da reserva"
+            value={flow}
+            onChange={(event) =>
+              setFlow(event.target.value as ReservationFlow | "todas")
+            }
+          >
+            <option value="todas">Todos os fluxos</option>
+            <option value="site_organic">Site direto</option>
+            <option value="agent_card">Bot → site · Cartão</option>
+            <option value="agent_pix">Bot · PIX</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="manual">Manual</option>
+            <option value="unknown">Não identificada</option>
+          </select>
           <select
             aria-label="Filtrar domínio de origem"
             value={source}
@@ -2398,12 +2732,19 @@ function ReservationsSection({
                         <small className="crm-cell-subtitle">{item.time}</small>
                       </td>
                       <td>
-                        <strong>{currency.format(item.value)}</strong>
+                        <strong className={!valuesVisible ? "is-private" : ""}>
+                          {valuesVisible ? currency.format(item.value) : "R$ •••••"}
+                        </strong>
                       </td>
                       <td>
                         <span className="crm-origin-badge">
-                          {originLabel(item.origin)}
+                          {reservationFlowLabel(item.flow)}
                         </span>
+                        {item.paymentMethod ? (
+                          <small className="crm-cell-subtitle">
+                            {humanizeCrmLabel(item.paymentMethod)}
+                          </small>
+                        ) : null}
                       </td>
                       <td>
                         <strong>{item.sourceDomain ?? "—"}</strong>
@@ -2459,6 +2800,9 @@ function JourneysSection({
   onCreateCampaign: () => void;
 }) {
   const [view, setView] = useState<"abandoned" | "reactivation">("abandoned");
+  const [agentFilter, setAgentFilter] = useState<
+    "all" | "open" | "lost" | "confirmed" | "closed"
+  >("all");
   const [segment, setSegment] = useState<"90" | "180" | "365">("180");
   const threshold = Number(segment);
   const inactive = customers
@@ -2474,6 +2818,16 @@ function JourneysSection({
   const active = journeys.filter(
     (item) => item.status !== "convertida" && !journeyIsAbandoned(item),
   );
+  const realAgentLeads = agentLeads.filter((item) => !item.isTest);
+  const lostAgentLeads = realAgentLeads.filter(agentLeadIsLost);
+  const visibleAgentLeads = agentLeads.filter((item) => {
+    if (agentFilter === "open") return agentLeadIsOpen(item);
+    if (agentFilter === "lost") return agentLeadIsLost(item);
+    if (agentFilter === "confirmed") return agentLeadIsConfirmed(item);
+    if (agentFilter === "closed")
+      return agentLeadIsClosedWithoutOpportunity(item);
+    return true;
+  });
   const domainStats = ["vagafogopiri.com.br", "vagafogo.com.br"].map(
     (domain) => ({
       domain,
@@ -2504,7 +2858,7 @@ function JourneysSection({
           <span>{journeysError}</span>
         </div>
       ) : null}
-      <div className="crm-summary-strip">
+      <div className="crm-summary-strip crm-summary-strip--five">
         <article>
           <span className="is-blue">
             <FaGlobe />
@@ -2539,6 +2893,15 @@ function JourneysSection({
           <div>
             <small>Recuperáveis com opt-in</small>
             <strong>{recoverable.length}</strong>
+          </div>
+        </article>
+        <article>
+          <span className="is-red">
+            <FaExclamationCircle />
+          </span>
+          <div>
+            <small>Perdidas pelo Agente</small>
+            <strong>{lostAgentLeads.length}</strong>
           </div>
         </article>
       </div>
@@ -2581,8 +2944,21 @@ function JourneysSection({
               armazenada
             </small>
           </div>
+          <select
+            aria-label="Filtrar resultado dos leads do Agente"
+            value={agentFilter}
+            onChange={(event) =>
+              setAgentFilter(event.target.value as typeof agentFilter)
+            }
+          >
+            <option value="all">Todos os resultados</option>
+            <option value="open">Em andamento</option>
+            <option value="lost">Oportunidades perdidas</option>
+            <option value="confirmed">Reservas confirmadas</option>
+            <option value="closed">Encerrados sem oportunidade</option>
+          </select>
         </div>
-        {agentLeads.length ? (
+        {visibleAgentLeads.length ? (
           <>
             <div className="crm-table-wrap">
               <table className="crm-data-table">
@@ -2598,7 +2974,7 @@ function JourneysSection({
                   </tr>
                 </thead>
                 <tbody>
-                  {agentLeads
+                  {visibleAgentLeads
                     .slice()
                     .sort((a, b) =>
                       (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
@@ -3223,7 +3599,11 @@ function CampaignsSection({
 
   const openBuilder = (segment: CampaignSegment) => {
     setSelectedSegment(segment);
-    setVariants(segment === "abandoned" ? abandonedVariants : defaultVariants);
+    setVariants(
+      segment === "abandoned" || segment === "lost"
+        ? abandonedVariants
+        : defaultVariants,
+    );
     setMediaFile(null);
     setModalOpen(true);
   };
