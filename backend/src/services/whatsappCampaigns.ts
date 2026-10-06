@@ -32,6 +32,7 @@ export type CriarCampanhaInput = {
   diasSemana?: number[];
   maxTentativas?: number;
   midia?: WhatsappMediaPayload;
+  removerMidia?: boolean;
 };
 
 type CampaignCustomer = {
@@ -415,10 +416,10 @@ const validateInput = (input: CriarCampanhaInput) => {
     .map((value) => clean(value, 1500))
     .filter(Boolean))).slice(0, 5);
   if (!variacoes.length) throw new Error("CAMPAIGN_VARIANT_REQUIRED");
-  const intervaloMinSegundos = clamp(input.intervaloMinSegundos, 60, 3600, 120);
+  const intervaloMinSegundos = clamp(input.intervaloMinSegundos, 30, 3600, 120);
   const intervaloMaxSegundos = Math.max(
     intervaloMinSegundos,
-    clamp(input.intervaloMaxSegundos, 60, 7200, 240),
+    clamp(input.intervaloMaxSegundos, 30, 7200, 240),
   );
   const horarioInicio = /^\d{2}:\d{2}$/.test(input.horarioInicio ?? "") ? input.horarioInicio! : "08:00";
   const horarioFim = /^\d{2}:\d{2}$/.test(input.horarioFim ?? "") ? input.horarioFim! : "18:00";
@@ -457,11 +458,7 @@ const writeCampaignRecipients = async (
       let mutations = 0;
       existing.docs.slice(index, index + 400).forEach((document) => {
         if (!eligibleIds.has(document.id)) {
-          batch.set(document.ref, {
-            status: "opt_out",
-            ultimoErro: "recusa_ou_opt_out_identificado_antes_do_inicio",
-            atualizadoEm: now,
-          }, { merge: true });
+          batch.delete(document.ref);
           mutations += 1;
         }
       });
@@ -565,6 +562,78 @@ const getCampaign = async (campaignId: string) => {
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new Error("CAMPAIGN_NOT_FOUND");
   return { db, ref, data: snapshot.data()! };
+};
+
+export const atualizarRascunhoCampanhaWhatsapp = async (
+  campaignId: string,
+  input: CriarCampanhaInput,
+  actor: { uid: string; email?: string },
+) => {
+  const { ref, data } = await getCampaign(campaignId);
+  if (String(data.status) !== "rascunho") throw new Error("CAMPAIGN_DRAFT_ONLY");
+
+  const config = validateInput(input);
+  const previousMedia = data.midia && typeof data.midia === "object"
+    ? data.midia as WhatsappMediaPayload
+    : undefined;
+  const nextMedia = input.removerMidia === true
+    ? undefined
+    : input.midia
+      ? await validateStoredMedia(input.midia, actor)
+      : previousMedia;
+  const audience = await loadAudience(config.segmento);
+
+  await writeCampaignRecipients(ref, audience, true, Boolean(nextMedia));
+  await ref.update({
+    nome: config.nome,
+    segmento: config.segmento,
+    segmentoLabel: SEGMENT_LABELS[config.segmento],
+    variacoes: config.variacoes,
+    ...(nextMedia ? { midia: nextMedia } : { midia: FieldValue.delete() }),
+    intervaloMinSegundos: config.intervaloMinSegundos,
+    intervaloMaxSegundos: config.intervaloMaxSegundos,
+    limiteDiario: config.limiteDiario,
+    horarioInicio: config.horarioInicio,
+    horarioFim: config.horarioFim,
+    diasSemana: config.diasSemana,
+    maxTentativas: config.maxTentativas,
+    publicoSegmento: audience.totalSegment,
+    publicoElegivel: audience.eligible.length,
+    publicoEstimado: audience.eligible.length,
+    aguardando: audience.eligible.length,
+    semConsentimento: 0,
+    semRespostaIncluida: audience.unknownIncluded,
+    optOut: audience.optedOut,
+    duplicidadesEliminadas: audience.duplicateRecords,
+    enviadas: 0,
+    entregues: 0,
+    lidas: 0,
+    respostas: 0,
+    cliques: 0,
+    reservasGeradas: 0,
+    conversoes: 0,
+    receitaAtribuida: 0,
+    erros: 0,
+    ignoradas: 0,
+    editadoEm: FieldValue.serverTimestamp(),
+    editadoPorUid: actor.uid,
+    editadoPor: actor.email ?? null,
+    atualizadoEm: FieldValue.serverTimestamp(),
+  });
+
+  if (previousMedia?.storagePath && previousMedia.storagePath !== nextMedia?.storagePath) {
+    const bucket = obterStorageBucketAdmin();
+    await bucket?.file(previousMedia.storagePath).delete({ ignoreNotFound: true }).catch(() => undefined);
+  }
+
+  return {
+    id: campaignId,
+    publicoSegmento: audience.totalSegment,
+    publicoElegivel: audience.eligible.length,
+    semRespostaIncluida: audience.unknownIncluded,
+    optOut: audience.optedOut,
+    duplicidadesEliminadas: audience.duplicateRecords,
+  };
 };
 
 export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
@@ -763,8 +832,8 @@ const releaseCampaignLease = async (campaignRef: FirebaseFirestore.DocumentRefer
 };
 
 const randomIntervalMs = (campaign: FirebaseFirestore.DocumentData) => {
-  const minimum = clamp(campaign.intervaloMinSegundos, 60, 3600, 120);
-  const maximum = Math.max(minimum, clamp(campaign.intervaloMaxSegundos, 60, 7200, 240));
+  const minimum = clamp(campaign.intervaloMinSegundos, 30, 3600, 120);
+  const maximum = Math.max(minimum, clamp(campaign.intervaloMaxSegundos, 30, 7200, 240));
   return (minimum + Math.floor(Math.random() * (maximum - minimum + 1))) * 1000;
 };
 
@@ -1022,10 +1091,10 @@ export const obterCapacidadeCampanhasWhatsapp = async () => {
   return {
   envioHabilitado: CAMPAIGN_SENDING_ENABLED,
   conectado: whatsapp.status === "ready",
-  intervaloMinimoSegundos: 60,
+  intervaloMinimoSegundos: 30,
   limiteDiarioMaximo: 500,
   provedor: "Jatobá / Baileys compartilhado",
-  recomendacao: "As campanhas reutilizam a conexão ativa da Jatobá, com consentimento, bloqueios, limites, pausas e monitoramento por destinatário.",
+  recomendacao: "As campanhas reutilizam a conexão ativa da Jatobá, com controle de recusas, limites, pausas e monitoramento por destinatário.",
   };
 };
 

@@ -26,6 +26,7 @@ import {
   FaCog,
   FaDollarSign,
   FaDownload,
+  FaEdit,
   FaEye,
   FaEyeSlash,
   FaExclamationCircle,
@@ -206,6 +207,10 @@ type CampaignRecord = {
   dailyLimit?: number;
   quietStart?: string;
   quietEnd?: string;
+  maxAttempts?: number;
+  updatedAt?: string;
+  nextDispatchAt?: string;
+  lastDispatchAt?: string;
   variants?: string[];
   media?: CampaignMedia;
   clicks?: number;
@@ -229,6 +234,10 @@ type CampaignRecipient = {
   attempts: number;
   variant?: number;
   sentAt?: string;
+  deliveredAt?: string;
+  readAt?: string;
+  repliedAt?: string;
+  errorAt?: string;
   error?: string;
   responseType?: string;
   clickedAt?: string;
@@ -1057,6 +1066,10 @@ export function CRM() {
               dailyLimit: toNumber(raw.limiteDiario),
               quietStart: String(raw.horarioInicio ?? ""),
               quietEnd: String(raw.horarioFim ?? ""),
+              maxAttempts: toNumber(raw.maxTentativas),
+              updatedAt: normalizeTimestamp(raw.atualizadoEm),
+              nextDispatchAt: normalizeTimestamp(raw.proximoDisparoEm),
+              lastDispatchAt: normalizeTimestamp(raw.ultimoDisparoEm),
               variants: Array.isArray(raw.variacoes)
                 ? raw.variacoes.map(String)
                 : raw.mensagem
@@ -3555,6 +3568,9 @@ function CampaignsSection({
   const [variants, setVariants] = useState(defaultVariants);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState("");
+  const [editingCampaign, setEditingCampaign] =
+    useState<CampaignRecord | null>(null);
+  const [removeExistingMedia, setRemoveExistingMedia] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingInternal, setTestingInternal] = useState(false);
   const [actionId, setActionId] = useState("");
@@ -3618,6 +3634,10 @@ function CampaignsSection({
                   ? undefined
                   : toNumber(raw.variacaoIndice) + 1,
               sentAt: normalizeTimestamp(raw.enviadoEm),
+              deliveredAt: normalizeTimestamp(raw.entregueEm),
+              readAt: normalizeTimestamp(raw.lidoEm),
+              repliedAt: normalizeTimestamp(raw.respondidoEm),
+              errorAt: normalizeTimestamp(raw.erroEm),
               error: raw.ultimoErro
                 ? String(raw.ultimoErro)
                 : raw.erroAposEnvio
@@ -3640,6 +3660,7 @@ function CampaignsSection({
   }, [detailsCampaign, onToast]);
 
   const openBuilder = (segment: CampaignSegment) => {
+    setEditingCampaign(null);
     setSelectedSegment(segment);
     setVariants(
       segment === "abandoned" || segment === "lost"
@@ -3647,6 +3668,16 @@ function CampaignsSection({
         : defaultVariants,
     );
     setMediaFile(null);
+    setRemoveExistingMedia(false);
+    setModalOpen(true);
+  };
+
+  const openEditor = (campaign: CampaignRecord) => {
+    setEditingCampaign(campaign);
+    setSelectedSegment(campaign.segment);
+    setVariants(campaign.variants?.length ? campaign.variants : defaultVariants);
+    setMediaFile(null);
+    setRemoveExistingMedia(false);
     setModalOpen(true);
   };
 
@@ -3673,6 +3704,8 @@ function CampaignsSection({
           "O envio real permanece bloqueado até a ativação segura do provedor de campanhas.",
         CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS:
           "Nenhum contato elegível restou após excluir recusas e opt-outs.",
+        CAMPAIGN_DRAFT_ONLY:
+          "Somente campanhas ainda em rascunho podem ser editadas.",
         CRM_AUTH_POLICY_NOT_CONFIGURED:
           "Configure os administradores autorizados antes de operar campanhas.",
       };
@@ -3734,7 +3767,7 @@ function CampaignsSection({
     let uploadedMedia: CampaignMedia | undefined;
     try {
       if (mediaFile) uploadedMedia = await uploadCampaignMedia(mediaFile);
-      const result = await authenticatedRequest("/crm/campanhas", {
+      const payload = {
         nome: String(data.get("name") ?? "").trim(),
         segmento: selectedSegment,
         variacoes: validVariants,
@@ -3745,11 +3778,23 @@ function CampaignsSection({
         horarioFim: String(data.get("quietEnd") ?? "18:00"),
         maxTentativas: Number(data.get("maxAttempts") ?? 3),
         ...(uploadedMedia ? { midia: uploadedMedia } : {}),
-      });
+        ...(editingCampaign && removeExistingMedia && !uploadedMedia
+          ? { removerMidia: true }
+          : {}),
+      };
+      const result = await authenticatedRequest(
+        editingCampaign
+          ? `/crm/campanhas/${editingCampaign.id}`
+          : "/crm/campanhas",
+        payload,
+        editingCampaign ? "PUT" : "POST",
+      );
       setModalOpen(false);
       setMediaFile(null);
+      setEditingCampaign(null);
+      setRemoveExistingMedia(false);
       onToast(
-        `Rascunho criado: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s) ou opt-out(s) excluído(s).`,
+        `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s) ou opt-out(s) excluído(s).`,
       );
     } catch (error) {
       if (uploadedMedia) {
@@ -3785,11 +3830,16 @@ function CampaignsSection({
     let uploadedMedia: CampaignMedia | undefined;
     try {
       if (mediaFile) uploadedMedia = await uploadCampaignMedia(mediaFile);
+      const testMedia = uploadedMedia ?? (
+        editingCampaign && !removeExistingMedia
+          ? editingCampaign.media
+          : undefined
+      );
       const result = await authenticatedRequest(
         "/crm/campanhas/teste-interno",
         {
           variacoes: validVariants,
-          ...(uploadedMedia ? { midia: uploadedMedia } : {}),
+          ...(testMedia ? { midia: testMedia } : {}),
         },
       );
       uploadedMedia = undefined;
@@ -3858,6 +3908,42 @@ function CampaignsSection({
       : status === "cancelada"
         ? "cancelled"
         : "pending";
+  const hasCampaignMedia = Boolean(
+    mediaFile || (editingCampaign?.media && !removeExistingMedia),
+  );
+  const liveDetailsCampaign = detailsCampaign
+    ? campaigns.find((item) => item.id === detailsCampaign.id) ?? detailsCampaign
+    : null;
+  const detailsEligible = liveDetailsCampaign
+    ? liveDetailsCampaign.eligible ?? liveDetailsCampaign.audienceSize
+    : 0;
+  const detailsRemaining = liveDetailsCampaign
+    ? liveDetailsCampaign.queued ??
+      Math.max(
+        0,
+        detailsEligible -
+          (liveDetailsCampaign.sent ?? 0) -
+          (liveDetailsCampaign.errors ?? 0) -
+          (liveDetailsCampaign.ignored ?? 0),
+      )
+    : 0;
+  const detailsProgress = percent(
+    Math.max(0, detailsEligible - detailsRemaining),
+    detailsEligible,
+  );
+  const recipientStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      aguardando: "Aguardando",
+      enviando: "Enviando agora",
+      enviado: "Enviado",
+      entregue: "Entregue",
+      lido: "Lido",
+      respondido: "Respondido",
+      erro: "Erro final",
+      opt_out: "Recusa/descadastro",
+    };
+    return labels[status] ?? status;
+  };
 
   return (
     <section className="crm-section">
@@ -4117,19 +4203,24 @@ function CampaignsSection({
                           setRecipientFilter("todos");
                         }}
                       >
-                        Ver destinatários
+                        Ver progresso
                       </button>
                       {item.status === "rascunho" ? (
-                        <button
-                          className="is-primary"
-                          disabled={
-                            actionId === `${item.id}:iniciar` ||
-                            capability?.envioHabilitado === false
-                          }
-                          onClick={() => runAction(item, "iniciar")}
-                        >
-                          {eligible ? "Iniciar" : "Recalcular e iniciar"}
-                        </button>
+                        <>
+                          <button onClick={() => openEditor(item)}>
+                            <FaEdit /> Editar rascunho
+                          </button>
+                          <button
+                            className="is-primary"
+                            disabled={
+                              actionId === `${item.id}:iniciar` ||
+                              capability?.envioHabilitado === false
+                            }
+                            onClick={() => runAction(item, "iniciar")}
+                          >
+                            {eligible ? "Iniciar" : "Recalcular e iniciar"}
+                          </button>
+                        </>
                       ) : null}
                       {["agendada", "enviando"].includes(item.status) ? (
                         <button onClick={() => runAction(item, "pausar")}>
@@ -4199,6 +4290,7 @@ function CampaignsSection({
           onMouseDown={() => setModalOpen(false)}
         >
           <form
+            key={editingCampaign?.id ?? "new-campaign"}
             className="crm-modal crm-modal--campaign"
             onSubmit={saveDraft}
             onMouseDown={(event) => event.stopPropagation()}
@@ -4206,7 +4298,9 @@ function CampaignsSection({
             <div className="crm-modal__head">
               <div>
                 <span>Campanha com controle de recusas</span>
-                <h2>Planejar campanha</h2>
+                <h2>
+                  {editingCampaign ? "Editar rascunho" : "Planejar campanha"}
+                </h2>
               </div>
               <button type="button" onClick={() => setModalOpen(false)}>
                 <FaTimes />
@@ -4219,6 +4313,7 @@ function CampaignsSection({
                   <input
                     name="name"
                     required
+                    defaultValue={editingCampaign?.name ?? ""}
                     placeholder="Ex.: Convite para voltar à Trilha"
                   />
                 </label>
@@ -4269,15 +4364,31 @@ function CampaignsSection({
                       </button>
                     </div>
                   </div>
+                ) : editingCampaign?.media && !removeExistingMedia ? (
+                  <div className="crm-campaign-media__existing">
+                    <FaImage />
+                    <span>
+                      <strong>{editingCampaign.media.filename}</strong>
+                      <small>Foto atual mantida no rascunho.</small>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setRemoveExistingMedia(true)}
+                    >
+                      Remover foto atual
+                    </button>
+                  </div>
                 ) : (
                   <label className="crm-campaign-media__picker">
-                    <FaPlus /> Selecionar foto
+                    <FaPlus />
+                    {removeExistingMedia ? "Selecionar outra foto" : "Selecionar foto"}
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
-                      onChange={(event) =>
-                        setMediaFile(event.target.files?.[0] ?? null)
-                      }
+                      onChange={(event) => {
+                        setMediaFile(event.target.files?.[0] ?? null);
+                        if (event.target.files?.[0]) setRemoveExistingMedia(false);
+                      }}
                     />
                   </label>
                 )}
@@ -4285,7 +4396,7 @@ function CampaignsSection({
               <div className="crm-campaign-variants">
                 <div>
                   <strong>
-                    {mediaFile
+                    {hasCampaignMedia
                       ? "Variações A/B da legenda"
                       : "Variações A/B da mensagem"}
                   </strong>
@@ -4297,7 +4408,7 @@ function CampaignsSection({
                 </div>
                 {variants.map((value, index) => (
                   <label key={index}>
-                    {mediaFile ? "Legenda" : "Variação"} {index + 1}
+                    {hasCampaignMedia ? "Legenda" : "Variação"} {index + 1}
                     <textarea
                       value={value}
                       onChange={(event) =>
@@ -4332,7 +4443,7 @@ function CampaignsSection({
                     type="button"
                     onClick={() => setVariants((current) => [...current, ""])}
                   >
-                    <FaPlus /> Adicionar {mediaFile ? "legenda" : "variação"}
+                    <FaPlus /> Adicionar {hasCampaignMedia ? "legenda" : "variação"}
                   </button>
                 ) : null}
               </div>
@@ -4342,9 +4453,9 @@ function CampaignsSection({
                   <input
                     name="intervalMin"
                     type="number"
-                    min="60"
+                    min="30"
                     max="3600"
-                    defaultValue="120"
+                    defaultValue={editingCampaign?.intervalMin || 120}
                     required
                   />
                 </label>
@@ -4353,9 +4464,9 @@ function CampaignsSection({
                   <input
                     name="intervalMax"
                     type="number"
-                    min="60"
+                    min="30"
                     max="7200"
-                    defaultValue="240"
+                    defaultValue={editingCampaign?.intervalMax || 240}
                     required
                   />
                 </label>
@@ -4366,7 +4477,7 @@ function CampaignsSection({
                     type="number"
                     min="10"
                     max="500"
-                    defaultValue="100"
+                    defaultValue={editingCampaign?.dailyLimit || 100}
                     required
                   />
                 </label>
@@ -4377,7 +4488,7 @@ function CampaignsSection({
                     type="number"
                     min="1"
                     max="5"
-                    defaultValue="3"
+                    defaultValue={editingCampaign?.maxAttempts || 3}
                     required
                   />
                 </label>
@@ -4386,7 +4497,7 @@ function CampaignsSection({
                   <input
                     name="quietStart"
                     type="time"
-                    defaultValue="08:00"
+                    defaultValue={editingCampaign?.quietStart || "08:00"}
                     required
                   />
                 </label>
@@ -4395,7 +4506,7 @@ function CampaignsSection({
                   <input
                     name="quietEnd"
                     type="time"
-                    defaultValue="18:00"
+                    defaultValue={editingCampaign?.quietEnd || "18:00"}
                     required
                   />
                 </label>
@@ -4451,14 +4562,16 @@ function CampaignsSection({
                   ? mediaFile
                     ? "Enviando foto e preparando público..."
                     : "Preparando público..."
-                  : "Criar rascunho"}
+                  : editingCampaign
+                    ? "Salvar alterações"
+                    : "Criar rascunho"}
               </button>
             </div>
           </form>
         </div>
       ) : null}
 
-      {detailsCampaign ? (
+      {detailsCampaign && liveDetailsCampaign ? (
         <div
           className="crm-modal-backdrop"
           onMouseDown={() => setDetailsCampaign(null)}
@@ -4470,16 +4583,64 @@ function CampaignsSection({
             <div className="crm-modal__head">
               <div>
                 <span>Auditoria por destinatário</span>
-                <h2>{detailsCampaign.name}</h2>
+                <h2>{liveDetailsCampaign.name}</h2>
               </div>
               <button type="button" onClick={() => setDetailsCampaign(null)}>
                 <FaTimes />
               </button>
             </div>
+            <div className="crm-campaign-live-summary">
+              <div className="crm-campaign-live-summary__head">
+                <span
+                  className={`crm-status crm-status--${statusTone(liveDetailsCampaign.status)}`}
+                >
+                  {liveDetailsCampaign.status}
+                </span>
+                <strong>{detailsProgress}% processado</strong>
+                <small>
+                  Atualização ao vivo
+                  {liveDetailsCampaign.updatedAt
+                    ? ` · ${dayjs(liveDetailsCampaign.updatedAt).format("DD/MM HH:mm:ss")}`
+                    : ""}
+                </small>
+              </div>
+              <div className="crm-campaign-progress">
+                <div>
+                  <i style={{ width: `${detailsProgress}%` }} />
+                </div>
+                <strong>{detailsProgress}%</strong>
+                <small>{detailsRemaining} faltando</small>
+              </div>
+              <div className="crm-campaign-live-summary__stats">
+                <div><small>Elegíveis</small><strong>{detailsEligible}</strong></div>
+                <div><small>Na fila</small><strong>{detailsRemaining}</strong></div>
+                <div><small>Enviados</small><strong>{liveDetailsCampaign.sent ?? 0}</strong></div>
+                <div><small>Entregues</small><strong>{liveDetailsCampaign.delivered ?? 0}</strong></div>
+                <div><small>Lidos</small><strong>{liveDetailsCampaign.read ?? 0}</strong></div>
+                <div><small>Respostas</small><strong>{liveDetailsCampaign.replies ?? 0}</strong></div>
+                <div className={(liveDetailsCampaign.errors ?? 0) ? "has-error" : ""}><small>Erros</small><strong>{liveDetailsCampaign.errors ?? 0}</strong></div>
+                <div><small>Ignorados</small><strong>{liveDetailsCampaign.ignored ?? 0}</strong></div>
+              </div>
+              <div className="crm-campaign-live-summary__timing">
+                <span>
+                  Último disparo: {liveDetailsCampaign.lastDispatchAt
+                    ? dayjs(liveDetailsCampaign.lastDispatchAt).format("DD/MM HH:mm:ss")
+                    : "ainda não realizado"}
+                </span>
+                <span>
+                  Próxima tentativa: {liveDetailsCampaign.nextDispatchAt
+                    ? dayjs(liveDetailsCampaign.nextDispatchAt).format("DD/MM HH:mm:ss")
+                    : liveDetailsCampaign.status === "concluida"
+                      ? "campanha concluída"
+                      : "aguardando programação"}
+                </span>
+              </div>
+            </div>
             <div className="crm-recipient-filters">
               {[
                 "todos",
                 "aguardando",
+                "enviando",
                 "enviado",
                 "entregue",
                 "lido",
@@ -4509,7 +4670,7 @@ function CampaignsSection({
                     <th>Status</th>
                     <th>Tentativas</th>
                     <th>Variação</th>
-                    <th>Envio</th>
+                    <th>Último evento</th>
                     <th>Resultado</th>
                   </tr>
                 </thead>
@@ -4524,14 +4685,20 @@ function CampaignsSection({
                         <span
                           className={`crm-status crm-status--${item.status === "erro" || item.status === "opt_out" ? "cancelled" : ["lido", "respondido", "entregue"].includes(item.status) ? "confirmed" : "pending"}`}
                         >
-                          {item.status}
+                          {recipientStatusLabel(item.status)}
                         </span>
                       </td>
                       <td>{item.attempts}</td>
                       <td>{item.variant ? `#${item.variant}` : "—"}</td>
                       <td>
-                        {item.sentAt
-                          ? dayjs(item.sentAt).format("DD/MM HH:mm")
+                        {item.repliedAt || item.readAt || item.deliveredAt || item.errorAt || item.sentAt
+                          ? dayjs(
+                              item.repliedAt ??
+                                item.readAt ??
+                                item.deliveredAt ??
+                                item.errorAt ??
+                                item.sentAt,
+                            ).format("DD/MM HH:mm:ss")
                           : "—"}
                       </td>
                       <td className={item.error ? "has-error" : ""}>

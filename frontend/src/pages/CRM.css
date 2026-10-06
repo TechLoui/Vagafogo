@@ -738,7 +738,7 @@
 .crm-internal-test-note strong { font-size: .62rem; }
 .crm-internal-test-note small { margin-top: 3px; color: #628593; font-size: .53rem; }
 .crm-modal--campaign { width: min(760px, 100%); max-height: calc(100vh - 30px); overflow-y: auto; }
-.crm-modal--details { width: min(980px, 100%); max-height: calc(100vh - 30px); overflow: hidden; }
+.crm-modal--details { width: min(1080px, 100%); max-height: calc(100vh - 30px); overflow-y: auto; }
 .crm-campaign-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .crm-campaign-variants { display: grid; gap: 10px; }
 .crm-campaign-variants > div strong, .crm-campaign-variants > div small { display: block; }
@@ -757,12 +757,29 @@
 .crm-campaign-media__preview { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 12px; border-radius: 9px; padding: 8px; background: #fff; }
 .crm-campaign-media__preview img { width: 92px; height: 70px; border-radius: 8px; object-fit: cover; }
 .crm-campaign-media__preview button { margin-top: 7px; border: 0; padding: 0; background: transparent; color: #b84551; font-size: .52rem; font-weight: 800; }
+.crm-campaign-media__existing { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; border-radius: 9px; padding: 10px; background: #fff; color: #078fc7; }
+.crm-campaign-media__existing span strong, .crm-campaign-media__existing span small { display: block; }
+.crm-campaign-media__existing span strong { color: #405a6d; font-size: .64rem; }
+.crm-campaign-media__existing span small { margin-top: 3px; color: #7d919f; font-size: .53rem; }
+.crm-campaign-media__existing button { border: 0; background: transparent; color: #b84551; font-size: .52rem; font-weight: 800; }
 .crm-add-variant { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed #9ec8d8; border-radius: 9px; background: #f2fafc; color: #087da8; font-size: .58rem; font-weight: 800; }
 .crm-campaign-settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .crm-recipient-filters { display: flex; gap: 6px; margin-top: 17px; overflow-x: auto; padding-bottom: 5px; }
+.crm-campaign-live-summary { margin-top: 14px; border: 1px solid #dce8ed; border-radius: 12px; padding: 12px; background: #f8fbfc; }
+.crm-campaign-live-summary__head { display: flex; align-items: center; gap: 9px; }
+.crm-campaign-live-summary__head > strong { margin-left: auto; color: #183f59; font-size: .67rem; }
+.crm-campaign-live-summary__head > small { color: #7b8e9b; font-size: .5rem; }
+.crm-campaign-live-summary__stats { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-top: 11px; }
+.crm-campaign-live-summary__stats > div { border-radius: 8px; padding: 7px; background: #fff; text-align: center; }
+.crm-campaign-live-summary__stats small, .crm-campaign-live-summary__stats strong { display: block; }
+.crm-campaign-live-summary__stats small { color: #80919e; font-size: .46rem; }
+.crm-campaign-live-summary__stats strong { margin-top: 3px; color: #173b54; font-size: .65rem; }
+.crm-campaign-live-summary__stats .has-error { background: #fff0f1; }
+.crm-campaign-live-summary__stats .has-error strong { color: #b93645; }
+.crm-campaign-live-summary__timing { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; color: #6f8391; font-size: .5rem; }
 .crm-recipient-filters button { border: 1px solid #d9e4e9; border-radius: 999px; padding: 6px 9px; background: #fff; color: #607686; font-size: .52rem; font-weight: 800; white-space: nowrap; }
 .crm-recipient-filters button.is-active { border-color: #0799cf; background: #e1f4fb; color: #087cae; }
-.crm-recipient-list { max-height: 520px; margin-top: 10px; overflow: auto; }
+.crm-recipient-list { max-height: 440px; margin-top: 10px; overflow: auto; }
 .crm-recipient-list table { width: 100%; border-collapse: collapse; }
 .crm-recipient-list th, .crm-recipient-list td { border-bottom: 1px solid #edf2f4; padding: 9px; font-size: .56rem; text-align: left; white-space: nowrap; }
 .crm-recipient-list th { position: sticky; top: 0; z-index: 1; background: #edf4f7; color: #455d70; }
@@ -853,6 +870,7 @@
   .crm-campaign-grid { grid-template-columns: 1fr 1fr; }
   .crm-instrumentation-grid { grid-template-columns: 1fr; }
   .crm-campaign-operation__stats { grid-template-columns: repeat(3, 1fr); }
+  .crm-campaign-live-summary__stats { grid-template-columns: repeat(4, 1fr); }
   .crm-campaign-settings { grid-template-columns: repeat(2, 1fr); }
   .crm-whatsapp-connection__summary { align-items: flex-start; flex-direction: column; }
   .crm-whatsapp-connection__actions { width: 100%; justify-content: flex-start; }
@@ -889,6 +907,11 @@
   .crm-campaign-compliance > span { margin-left: 28px; }
   .crm-campaign-form-grid, .crm-campaign-settings { grid-template-columns: 1fr; }
   .crm-campaign-operation__stats { grid-template-columns: repeat(2, 1fr); }
+  .crm-campaign-live-summary__stats { grid-template-columns: repeat(2, 1fr); }
+  .crm-campaign-live-summary__head, .crm-campaign-live-summary__timing { align-items: flex-start; flex-direction: column; }
+  .crm-campaign-live-summary__head > strong { margin-left: 0; }
+  .crm-campaign-media__existing { grid-template-columns: auto 1fr; }
+  .crm-campaign-media__existing button { grid-column: 2; justify-self: start; }
   .crm-campaign-operation__actions { justify-content: stretch; }
   .crm-campaign-operation__actions button { flex: 1; justify-content: center; }
   .crm-whatsapp-connection__head { align-items: flex-start; flex-direction: column; padding: 14px; }
