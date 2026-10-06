@@ -57,6 +57,10 @@ import {
 } from "../services/whatsappReservationConfirmations";
 import { iniciarProcessadorLembretesWhatsappDoDia } from "../services/whatsappDailyReminders";
 import { garantirConfiguracaoAutomacoesWhatsapp } from "../services/whatsappAutomationConfig";
+import {
+  enfileirarAlertaAtendimentoHumano,
+  iniciarProcessadorAlertasAtendimentoHumano,
+} from "../services/whatsappHumanHandoffAlerts";
 import { exigirAdminCrm, obterIdentidadeAdminCrm } from "../middleware/crmAdminAuth";
 import { limitarEventosJornada } from "../middleware/crmJourneyRateLimit";
 import { registrarEventoJornada } from "../services/crmJourneys";
@@ -164,7 +168,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-05.2-past-reservation-guard',
+    build: '2026-10-05.3-human-handoff-alerts',
     timestamp: new Date().toISOString(),
   });
 });
@@ -625,6 +629,15 @@ app.post('/internal/agente/eventos/atendimento-resolvido', exigirServicoAgente, 
     res.json(await finalizarLeadAgentePorDuvidaResolvida(req.body?.telefone, req.body?.motivo));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/eventos/atendimento-humano', exigirServicoAgente, async (req, res) => {
+  try {
+    res.status(202).json(await enfileirarAlertaAtendimentoHumano(req.body ?? {}));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
   }
 });
 
@@ -1168,6 +1181,7 @@ app.listen(port, async () => {
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorConfirmacoesReservaWhatsapp();
   iniciarProcessadorLembretesWhatsappDoDia();
+  iniciarProcessadorAlertasAtendimentoHumano();
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
   iniciarProcessadorConfirmacoesReservaAgente();
