@@ -444,8 +444,18 @@ const normalizeTimestamp = (value: unknown) => {
   ) {
     return value.toDate().toISOString();
   }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = dayjs(value);
+    if (parsed.isValid()) return parsed.toISOString();
+  }
   return undefined;
 };
+
+const reservationCreatedReference = (reservation: CRMReservation) =>
+  reservation.createdAt ?? reservation.paidAt;
 
 const participantsFrom = (reservation: RawReservation) => {
   const declared = toNumber(
@@ -1115,7 +1125,10 @@ export function CRM() {
   const filteredReservations = useMemo(
     () =>
       reservations.filter((item) => {
-        const date = dayjs(item.date);
+        // O periodo gerencial representa quando a reserva entrou no sistema,
+        // nao a data futura em que o cliente visitara a Fazenda. Registros
+        // antigos sem criadoEm usam o pagamento como referencia legada.
+        const date = dayjs(reservationCreatedReference(item));
         return (
           date.isValid() &&
           !date.isBefore(periodBounds.start) &&
@@ -1350,7 +1363,9 @@ export function CRM() {
       cliente: item.name,
       telefone: item.phone,
       experiencia: item.activity,
-      data: item.date,
+      criadaEm: reservationCreatedReference(item) ?? "",
+      pagaEm: item.paidAt ?? "",
+      dataVisita: item.date,
       horario: item.time,
       pessoas: item.people,
       valor: item.value,
@@ -2066,12 +2081,12 @@ function OpportunityDashboardSection({
     .filter((item) => item.count > 0);
   const maxFlowCount = Math.max(1, ...reservationFlows.map((item) => item.count));
   const revenueByDayMap = new Map<string, number>();
-  confirmedReservations.forEach((item) =>
-    revenueByDayMap.set(
-      item.date,
-      (revenueByDayMap.get(item.date) ?? 0) + item.value,
-    ),
-  );
+  confirmedReservations.forEach((item) => {
+    const date = dayjs(item.paidAt ?? item.createdAt);
+    if (!date.isValid()) return;
+    const key = date.format("YYYY-MM-DD");
+    revenueByDayMap.set(key, (revenueByDayMap.get(key) ?? 0) + item.value);
+  });
   const revenueByDay = Array.from(revenueByDayMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-12)
@@ -2095,14 +2110,14 @@ function OpportunityDashboardSection({
     {
       label: "Reservas confirmadas",
       value: confirmedReservations.length,
-      hint: `${reservationConversion}% de conversão`,
+      hint: `${reservationConversion}% das reservas feitas no período`,
       icon: FaCheckCircle,
       tone: "green",
     },
     {
       label: "Receita confirmada",
       value: displayMoney(confirmedRevenue),
-      hint: `${confirmedReservations.length} pagamentos no período`,
+      hint: `${confirmedReservations.length} reservas feitas no período`,
       icon: FaMoneyBillWave,
       tone: "orange",
     },
@@ -2344,7 +2359,7 @@ function OpportunityDashboardSection({
 
         <article className="crm-card crm-flow-analysis">
           <div className="crm-card__head">
-            <div><span><FaGlobe /></span><h3>Reservas por fluxo</h3></div>
+            <div><span><FaGlobe /></span><h3>Reservas feitas por fluxo</h3></div>
             <button onClick={() => onNavigate("reservas")}>Filtrar <FaArrowRight /></button>
           </div>
           {reservationFlows.length ? (
@@ -2369,14 +2384,14 @@ function OpportunityDashboardSection({
             </div>
           ) : (
             <div className="crm-dashboard-empty">
-              <FaGlobe /><p><strong>Sem reservas no período</strong><span>Altere o filtro de datas para comparar os canais.</span></p>
+              <FaGlobe /><p><strong>Sem reservas criadas no período</strong><span>Altere o filtro de datas para comparar os canais.</span></p>
             </div>
           )}
         </article>
 
         <article className="crm-card crm-revenue-trend">
           <div className="crm-card__head">
-            <div><span><FaChartBar /></span><h3>Receita confirmada por dia</h3></div>
+            <div><span><FaChartBar /></span><h3>Receita confirmada por dia da venda</h3></div>
             <small>Últimos {revenueByDay.length || 0} dias com vendas</small>
           </div>
           {revenueByDay.length ? (
@@ -2522,7 +2537,11 @@ function ReservationsSection({
         search.includes(normalizeText(query))
       );
     })
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) =>
+      String(reservationCreatedReference(b) ?? "").localeCompare(
+        String(reservationCreatedReference(a) ?? ""),
+      ),
+    );
   const pageSize = 25;
   const totalPages = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -2539,7 +2558,9 @@ function ReservationsSection({
         cliente: item.name,
         telefone: item.phone,
         experiencia: item.activity,
-        data: item.date,
+        criadaEm: reservationCreatedReference(item) ?? "",
+        pagaEm: item.paidAt ?? "",
+        dataVisita: item.date,
         horario: item.time,
         pessoas: item.people,
         valor: item.value,
@@ -2561,7 +2582,7 @@ function ReservationsSection({
     <section className="crm-section">
       <SectionTitle
         title="Histórico de reservas"
-        subtitle={`Consulta no período: ${periodLabel}. Esta área não cria ou altera reservas.`}
+        subtitle={`Reservas criadas no período: ${periodLabel}. A data da visita não interfere neste filtro.`}
         actions={
           <>
             <button
@@ -2585,7 +2606,7 @@ function ReservationsSection({
             <FaCalendarAlt />
           </span>
           <div>
-            <small>Registros no período</small>
+            <small>Reservas feitas no período</small>
             <strong>{reservations.length}</strong>
           </div>
         </article>
@@ -2699,7 +2720,8 @@ function ReservationsSection({
                     <th>Reserva</th>
                     <th>Cliente</th>
                     <th>Experiência</th>
-                    <th>Data</th>
+                    <th>Criada em</th>
+                    <th>Visita</th>
                     <th>Valor</th>
                     <th>Origem</th>
                     <th>Domínio</th>
@@ -2727,6 +2749,18 @@ function ReservationsSection({
                         </div>
                       </td>
                       <td>{item.activity}</td>
+                      <td>
+                        <strong>
+                          {reservationCreatedReference(item)
+                            ? dayjs(reservationCreatedReference(item)).format("DD/MM/YYYY")
+                            : "—"}
+                        </strong>
+                        {reservationCreatedReference(item) ? (
+                          <small className="crm-cell-subtitle">
+                            {dayjs(reservationCreatedReference(item)).format("HH:mm")}
+                          </small>
+                        ) : null}
+                      </td>
                       <td>
                         <strong>{dayjs(item.date).format("DD/MM/YYYY")}</strong>
                         <small className="crm-cell-subtitle">{item.time}</small>
