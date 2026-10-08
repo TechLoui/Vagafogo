@@ -235,6 +235,7 @@
 .agent-settings-section__head > span { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; background: #e1f3fa; color: #0788bf; }
 .agent-settings-section__head h3 { margin: 0; color: #29485b; font-family: "Playfair Display", Georgia, serif; font-size: .95rem; }
 .agent-settings-section__head p { margin: 3px 0 0; color: #7b8d98; font-size: .59rem; line-height: 1.45; }
+.agent-settings-note { margin: 10px 0 0; color: #6f838f; font-size: .62rem; line-height: 1.5; }
 .agent-response-estimate { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; border: 1px solid #cce6d8; border-radius: 12px; padding: 11px 12px; background: #effaf4; }
 .agent-response-estimate strong { color: #1d704d; font-size: .72rem; }
 .agent-response-estimate span { color: #648475; font-size: .57rem; text-align: right; }

@@ -317,6 +317,11 @@ export const resolverTransicaoLeadAgente = (
   }
 
   const patch = { ...incoming };
+  if ((incomingStage === "atendimento_humano" || incomingOutcome === "atendimento_humano")
+    && currentStage !== "atendimento_humano" && currentOutcome !== "atendimento_humano") {
+    patch.etapaAntesAtendimentoHumano = currentStage;
+    patch.resultadoAntesAtendimentoHumano = currentOutcome;
+  }
   if (!incomingTerminal && (agentLeadStageRank[incomingStage] ?? 0) < (agentLeadStageRank[currentStage] ?? 0)) {
     patch.etapa = currentStage;
   }
@@ -332,6 +337,39 @@ export const resolverTransicaoLeadAgente = (
     reaberto: false,
     retomado: false,
     regressaoIgnorada: patch.etapa !== incoming.etapa || patch.resultado !== incoming.resultado,
+  };
+};
+
+export const resolverRetornoLeadAgenteAoBot = (currentValue: FirebaseFirestore.DocumentData = {}) => {
+  const current = { ...currentValue };
+  const currentStage = canonicalLeadStage(current.etapa);
+  const currentOutcome = canonicalLeadOutcome(current.resultado);
+  if (currentStage !== "atendimento_humano" && currentOutcome !== "atendimento_humano") {
+    return { atualizar: false, patch: {} as FirebaseFirestore.DocumentData };
+  }
+  const previousStageValue = canonicalLeadValue(current.etapaAntesAtendimentoHumano);
+  const previousOutcomeValue = canonicalLeadValue(current.resultadoAntesAtendimentoHumano);
+  const previousStage = previousStageValue && previousStageValue !== "atendimento_humano"
+    ? canonicalLeadStage(previousStageValue)
+    : "interesse_identificado";
+  const previousOutcome = previousOutcomeValue && previousOutcomeValue !== "atendimento_humano"
+    ? canonicalLeadOutcome(previousOutcomeValue)
+    : "em_andamento";
+  return {
+    atualizar: true,
+    patch: {
+      etapa: previousStage,
+      resultado: previousOutcome,
+      etapaAntesAtendimentoHumano: null,
+      resultadoAntesAtendimentoHumano: null,
+      motivo: "retorno_automatico_ao_bot",
+      proximaAcao: "Aguardar nova mensagem do cliente; bot liberado para continuar",
+      retornadoAoBotEm: FieldValue.serverTimestamp(),
+      finalizarApos: null,
+      finalizado: false,
+      finalizadoEm: null,
+      atualizadoEm: FieldValue.serverTimestamp(),
+    } as FirebaseFirestore.DocumentData,
   };
 };
 const dateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
@@ -1564,7 +1602,7 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
   };
   const lastInteractionAt = new Date();
   // No WhatsApp, o gateway e a fonte da verdade para a inatividade: ele envia
-  // duas retomadas respeitando a janela de horario e so entao suspende. O timer
+  // uma retomada respeitando a janela de horario e so entao suspende. O timer
   // local de 2h permanece apenas no simulador, onde nao existe gateway.
   const finalizeAt = isTest ? new Date(lastInteractionAt.getTime() + AGENT_LEAD_INACTIVITY_MS) : null;
   const draft = {
@@ -2016,13 +2054,11 @@ export const registrarInatividadeLeadAgente = async (telefone: unknown, tentativ
   const paymentPending = stage === "pagamento_pendente" || outcome === "pagamento_pendente";
   if (tentativa < 3) {
     const patch: FirebaseFirestore.DocumentData = {
-      tentativasRetomada: Math.max(tentativa, nonNegativeInteger(base.tentativasRetomada, 3)),
+      tentativasRetomada: Math.max(1, nonNegativeInteger(base.tentativasRetomada, 1)),
       ultimaRetomadaEm: FieldValue.serverTimestamp(),
       resultado: paymentPending ? "pagamento_pendente" : "aguardando_cliente",
-      motivo: `retomada_automatica_${tentativa}_enviada`,
-      proximaAcao: tentativa === 1
-        ? "Aguardar resposta; segunda retomada automatica programada"
-        : "Aguardar resposta; suspender se nao houver retorno",
+      motivo: "retomada_automatica_1_enviada",
+      proximaAcao: "Aguardar resposta; suspender se nao houver retorno",
       atualizadoEm: FieldValue.serverTimestamp(),
     };
     const batch = db.batch();
@@ -2035,18 +2071,34 @@ export const registrarInatividadeLeadAgente = async (telefone: unknown, tentativ
   await consolidateAgentLead(db, draftRef, base, paymentPending ? {
     etapa: "pagamento_pendente",
     resultado: "pagamento_pendente",
-    motivo: "pagamento_nao_identificado_apos_2_retomadas",
+    motivo: "pagamento_nao_identificado_apos_1_retomada",
     proximaAcao: "Elegivel para recuperacao de pagamento",
-    tentativasRetomada: 2,
+    tentativasRetomada: 1,
     suspensoPorInatividade: true,
   } : {
     resultado: "aguardando_cliente",
-    motivo: "sem_resposta_apos_2_retomadas",
+    motivo: "sem_resposta_apos_1_retomada",
     proximaAcao: "Elegivel para recuperacao do atendimento",
-    tentativasRetomada: 2,
+    tentativasRetomada: 1,
     suspensoPorInatividade: true,
   }, draftSnapshot.exists, true);
   return { atualizado: true, tentativa, finalizado: true, id: leadRef.id };
+};
+
+export const retornarLeadAgenteAoBot = async (telefone: unknown) => {
+  const db = obterFirestoreAdmin();
+  if (!db) return { atualizado: false, motivo: "firebase_indisponivel" };
+  const located = await localizarLeadAgentePorTelefone(db, telefone);
+  if (!located) return { atualizado: false, motivo: "lead_nao_encontrado" };
+  const { draftRef, leadRef, draftSnapshot, leadSnapshot } = located;
+  const base = draftSnapshot.exists ? draftSnapshot.data()! : leadSnapshot.data()!;
+  const transition = resolverRetornoLeadAgenteAoBot(base);
+  if (!transition.atualizar) return { atualizado: false, motivo: "lead_nao_esta_em_atendimento_humano" };
+  const batch = db.batch();
+  batch.set(leadRef, transition.patch, { merge: true });
+  if (draftSnapshot.exists) batch.set(draftRef, transition.patch, { merge: true });
+  await batch.commit();
+  return { atualizado: true, id: leadRef.id, etapa: transition.patch.etapa, resultado: transition.patch.resultado };
 };
 
 export const finalizarLeadAgentePorEncerramento = async (telefone: unknown) => {

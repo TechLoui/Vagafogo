@@ -5,6 +5,7 @@ const {
   canonicalLeadPhone,
   leadAgenteEstaFinalizado,
   leadPhoneVariants,
+  resolverRetornoLeadAgenteAoBot,
   resolverTransicaoLeadAgente,
 } = require("../dist/services/agentReservationTools.js");
 
@@ -98,4 +99,30 @@ test("interpretacao tardia nao regride etapa ativa", () => {
   });
   assert.equal(transition.patch.etapa, "dados_em_coleta");
   assert.equal(transition.regressaoIgnorada, true);
+});
+
+test("handoff preserva a etapa para o retorno automatico ao bot", () => {
+  const handoff = resolverTransicaoLeadAgente({
+    etapa: "dados_em_coleta",
+    resultado: "em_andamento",
+  }, {
+    etapa: "atendimento_humano",
+    resultado: "atendimento_humano",
+  });
+  assert.equal(handoff.patch.etapaAntesAtendimentoHumano, "dados_em_coleta");
+  assert.equal(handoff.patch.resultadoAntesAtendimentoHumano, "em_andamento");
+
+  const returned = resolverRetornoLeadAgenteAoBot(handoff.patch);
+  assert.equal(returned.atualizar, true);
+  assert.equal(returned.patch.etapa, "dados_em_coleta");
+  assert.equal(returned.patch.resultado, "em_andamento");
+  assert.equal(returned.patch.motivo, "retorno_automatico_ao_bot");
+});
+
+test("lead fora de atendimento humano nao e alterado pelo retorno automatico", () => {
+  const returned = resolverRetornoLeadAgenteAoBot({
+    etapa: "pagamento_pendente",
+    resultado: "pagamento_pendente",
+  });
+  assert.equal(returned.atualizar, false);
 });

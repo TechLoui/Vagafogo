@@ -82,6 +82,7 @@ type AgentConfig = {
   followupStartTime: string;
   followupEndTime: string;
   followupTimezone: string;
+  humanHandoffAutoReturnMinutes: number;
   inactivityEnabled: boolean;
   inactivityFirstMinutes: number;
   inactivitySecondMinutes: number;
@@ -1254,6 +1255,7 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
     followupStartTime: "07:45",
     followupEndTime: "18:00",
     followupTimezone: "America/Sao_Paulo",
+    humanHandoffAutoReturnMinutes: 20,
     inactivityEnabled: true,
     inactivityFirstMinutes: 30,
     inactivitySecondMinutes: 75,
@@ -1274,7 +1276,9 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
   const configuredMaxSeconds = Math.round((config.replyDelayMs + (config.typingEnabled ? config.typingMaxMs : 0)) / 1000);
   const validationError = config.typingMinMs > config.typingMaxMs
     ? "A digitação mínima não pode ser maior que a máxima."
-    : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
+    : config.humanHandoffAutoReturnMinutes < 1
+      ? "O retorno do atendimento humano deve ocorrer após pelo menos 1 minuto."
+      : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
         ? "A suspensão deve ocorrer pelo menos 5 minutos depois da retomada."
         : config.inactivityEnabled && (!config.inactivitySecondMessage.trim() || !config.inactivitySuspendMessage.trim())
           ? "Preencha a mensagem de retomada e a mensagem de suspensão."
@@ -1289,6 +1293,12 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
         <div className="agent-response-estimate"><strong>{configuredMinSeconds}–{configuredMaxSeconds} segundos configurados</strong><span>mais o tempo necessário para a IA consultar e montar a resposta.</span></div>
         <label className="agent-toggle"><input type="checkbox" checked={config.typingEnabled} onChange={(event) => setConfig((current) => ({ ...current, typingEnabled: event.target.checked }))} /><span /><div><strong>Simular “digitando…”</strong><small>Mostra presença antes da resposta e evita um envio instantâneo artificial.</small></div></label>
         <div className="agent-settings-grid">{field("Tempo para agrupar mensagens (s)", "replyDelayMs", 1000, 1, .5)}{field("Digitação mínima (s)", "typingMinMs", 1000, 0, .5)}{field("Digitação máxima (s)", "typingMaxMs", 1000, 0, .5)}{field("Velocidade (ms por caractere)", "typingMsPerChar", 1, 0, 5)}</div>
+      </section>
+
+      <section className="agent-settings-section">
+        <div className="agent-settings-section__head"><span><FaHeadset /></span><div><h3>Atendimento humano</h3><p>Evita que um contato fique pausado indefinidamente depois de ser encaminhado para a equipe.</p></div></div>
+        <div className="agent-settings-grid">{field("Devolver ao bot após inatividade (min)", "humanHandoffAutoReturnMinutes", 1, 1, 1)}</div>
+        <p className="agent-settings-note">Cada nova mensagem do cliente ou do atendente reinicia esse prazo. O retorno é silencioso e preserva o contexto da conversa.</p>
       </section>
 
       <section className="agent-settings-section">

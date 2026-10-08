@@ -84,6 +84,7 @@ import {
   obterRascunhoReservaAgente,
   registrarInatividadeLeadAgente,
   registrarLeadAgente,
+  retornarLeadAgenteAoBot,
   reservaAgenteTemConfirmacaoResumo,
   salvarRascunhoReservaAgente,
   simularReservaAgente,
@@ -676,6 +677,14 @@ app.post('/internal/agente/eventos/atendimento-humano', exigirServicoAgente, asy
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/eventos/retorno-bot', exigirServicoAgente, async (req, res) => {
+  try {
+    res.json(await retornarLeadAgenteAoBot(req.body?.telefone));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 
