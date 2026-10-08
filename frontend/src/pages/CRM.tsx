@@ -3725,8 +3725,12 @@ function CampaignsSection({
           "O envio real permanece bloqueado até a ativação segura do provedor de campanhas.",
         CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS:
           "Nenhum contato elegível restou após excluir recusas e opt-outs.",
-        CAMPAIGN_DRAFT_ONLY:
-          "Somente campanhas ainda em rascunho podem ser editadas.",
+        CAMPAIGN_EDIT_REQUIRES_DRAFT_OR_PAUSED:
+          "Pause a campanha antes de editá-la.",
+        CAMPAIGN_AUDIENCE_LOCKED_AFTER_START:
+          "O público não pode ser alterado depois que a campanha começou. Edite o conteúdo e as configurações ou crie outra campanha para mudar os destinatários.",
+        CAMPAIGN_CANNOT_PAUSE:
+          "Esta campanha não está em execução e não pode ser pausada.",
         CRM_AUTH_POLICY_NOT_CONFIGURED:
           "Configure os administradores autorizados antes de operar campanhas.",
       };
@@ -3818,7 +3822,9 @@ function CampaignsSection({
       setEditingCampaign(null);
       setRemoveExistingMedia(false);
       onToast(
-        `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`,
+        result.progressoPreservado
+          ? "Campanha pausada atualizada. Destinatários e progresso foram preservados; ela continuará com as novas configurações quando você retomar."
+          : `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`,
       );
     } catch (error) {
       if (uploadedMedia) {
@@ -3901,7 +3907,11 @@ function CampaignsSection({
       onToast(
         action === "reenfileirar-erros"
           ? `${result.reenfileirados ?? 0} erro(s) recolocado(s) na fila.`
-          : "Campanha atualizada.",
+          : action === "pausar"
+            ? "Campanha pausada. Agora você pode editar o conteúdo e as configurações com segurança."
+            : action === "retomar"
+              ? "Campanha retomada a partir dos destinatários que ainda estavam na fila."
+              : "Campanha atualizada.",
       );
     } catch (error) {
       onToast(
@@ -3935,6 +3945,7 @@ function CampaignsSection({
   const hasCampaignMedia = Boolean(
     mediaFile || (editingCampaign?.media && !removeExistingMedia),
   );
+  const editingPausedCampaign = editingCampaign?.status === "pausada";
   const liveDetailsCampaign = detailsCampaign
     ? campaigns.find((item) => item.id === detailsCampaign.id) ?? detailsCampaign
     : null;
@@ -4252,17 +4263,26 @@ function CampaignsSection({
                         </>
                       ) : null}
                       {["agendada", "enviando"].includes(item.status) ? (
-                        <button onClick={() => runAction(item, "pausar")}>
+                        <button
+                          disabled={actionId === `${item.id}:pausar`}
+                          onClick={() => runAction(item, "pausar")}
+                        >
                           Pausar
                         </button>
                       ) : null}
                       {item.status === "pausada" ? (
-                        <button
-                          className="is-primary"
-                          onClick={() => runAction(item, "retomar")}
-                        >
-                          Retomar
-                        </button>
+                        <>
+                          <button onClick={() => openEditor(item)}>
+                            <FaEdit /> Editar campanha
+                          </button>
+                          <button
+                            className="is-primary"
+                            disabled={actionId === `${item.id}:retomar`}
+                            onClick={() => runAction(item, "retomar")}
+                          >
+                            Retomar
+                          </button>
+                        </>
                       ) : null}
                       {(item.errors ?? 0) > 0 ? (
                         <button
@@ -4328,7 +4348,11 @@ function CampaignsSection({
               <div>
                 <span>Campanha com controle de recusas</span>
                 <h2>
-                  {editingCampaign ? "Editar rascunho" : "Planejar campanha"}
+                  {editingPausedCampaign
+                    ? "Editar campanha pausada"
+                    : editingCampaign
+                      ? "Editar rascunho"
+                      : "Planejar campanha"}
                 </h2>
               </div>
               <button type="button" onClick={() => setModalOpen(false)}>
@@ -4350,6 +4374,7 @@ function CampaignsSection({
                   Segmento
                   <select
                     value={selectedSegment}
+                    disabled={editingPausedCampaign}
                     onChange={(event) =>
                       setSelectedSegment(event.target.value as CampaignSegment)
                     }
@@ -4363,6 +4388,9 @@ function CampaignsSection({
                       ),
                     )}
                   </select>
+                  {editingPausedCampaign ? (
+                    <small>O público fica bloqueado após o primeiro disparo para evitar duplicidades.</small>
+                  ) : null}
                 </label>
               </div>
               <div className="crm-campaign-media">
@@ -4398,7 +4426,7 @@ function CampaignsSection({
                     <FaImage />
                     <span>
                       <strong>{editingCampaign.media.filename}</strong>
-                      <small>Foto atual mantida no rascunho.</small>
+                      <small>Foto atual mantida na campanha.</small>
                     </span>
                     <button
                       type="button"
@@ -4544,6 +4572,7 @@ function CampaignsSection({
                   <input
                     type="checkbox"
                     checked={excludeRecentRecipients}
+                    disabled={editingPausedCampaign}
                     onChange={(event) =>
                       setExcludeRecentRecipients(event.target.checked)
                     }
@@ -4566,6 +4595,7 @@ function CampaignsSection({
                       min="1"
                       max="3650"
                       value={recentExclusionDays}
+                      disabled={editingPausedCampaign}
                       onChange={(event) =>
                         setRecentExclusionDays(
                           Math.min(
@@ -4583,14 +4613,14 @@ function CampaignsSection({
                 <FaUsers />
                 <span>
                   <strong>
-                    {audienceFor(selectedSegment)} contatos no segmento antes da
-                    validação
+                    {editingPausedCampaign
+                      ? `${editingCampaign?.queued ?? 0} destinatário(s) ainda na fila`
+                      : `${audienceFor(selectedSegment)} contatos no segmento antes da validação`}
                   </strong>
                   <small>
-                    Ao salvar, o backend deduplica telefones, inclui quem aceitou
-                    ou ainda não respondeu e exclui somente quem recusou
-                    campanhas, pediu descadastro ou recebeu outra campanha dentro
-                    da janela configurada.
+                    {editingPausedCampaign
+                      ? "A edição mantém quem já recebeu, os resultados registrados e a fila restante. As novas mensagens e configurações serão usadas somente após retomar."
+                      : "Ao salvar, o backend deduplica telefones, inclui quem aceitou ou ainda não respondeu e exclui somente quem recusou campanhas, pediu descadastro ou recebeu outra campanha dentro da janela configurada."}
                   </small>
                 </span>
               </div>
@@ -4628,9 +4658,11 @@ function CampaignsSection({
               <button type="submit" disabled={saving || testingInternal}>
                 <FaCheck />{" "}
                 {saving
-                  ? mediaFile
-                    ? "Enviando foto e preparando público..."
-                    : "Preparando público..."
+                  ? editingPausedCampaign
+                    ? "Salvando sem alterar o progresso..."
+                    : mediaFile
+                      ? "Enviando foto e preparando público..."
+                      : "Preparando público..."
                   : editingCampaign
                     ? "Salvar alterações"
                     : "Criar rascunho"}

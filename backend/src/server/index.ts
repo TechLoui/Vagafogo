@@ -22,7 +22,7 @@ import {
 import { prepararBoasVindasWhatsapp } from "../services/whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
 import {
-  atualizarRascunhoCampanhaWhatsapp,
+  atualizarCampanhaWhatsapp,
   cancelarCampanhaWhatsapp,
   criarCampanhaWhatsapp,
   armazenarMidiaCampanhaWhatsapp,
@@ -1017,7 +1017,7 @@ app.post('/crm/campanhas', exigirAdminCrm, async (req, res) => {
 
 app.put('/crm/campanhas/:campanhaId', exigirAdminCrm, async (req, res) => {
   try {
-    const resultado = await atualizarRascunhoCampanhaWhatsapp(
+    const resultado = await atualizarCampanhaWhatsapp(
       req.params.campanhaId,
       req.body ?? {},
       obterIdentidadeAdminCrm(res),
@@ -1027,7 +1027,7 @@ app.put('/crm/campanhas/:campanhaId', exigirAdminCrm, async (req, res) => {
     const message = error instanceof Error ? error.message : String(error);
     const statusCode = message === 'CAMPAIGN_NOT_FOUND'
       ? 404
-      : message === 'CAMPAIGN_DRAFT_ONLY'
+      : ['CAMPAIGN_EDIT_REQUIRES_DRAFT_OR_PAUSED', 'CAMPAIGN_AUDIENCE_LOCKED_AFTER_START'].includes(message)
         ? 409
         : message === 'FIREBASE_ADMIN_UNAVAILABLE'
           ? 503

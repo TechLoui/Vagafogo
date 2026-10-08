@@ -660,15 +660,42 @@ const getCampaign = async (campaignId: string) => {
   return { db, ref, data: snapshot.data()! };
 };
 
-export const atualizarRascunhoCampanhaWhatsapp = async (
+export const resolverPoliticaEdicaoCampanhaWhatsapp = (
+  statusValue: unknown,
+  currentSegmentValue: unknown,
+  currentExclusionDaysValue: unknown,
+  nextSegmentValue: unknown,
+  nextExclusionDaysValue: unknown,
+) => {
+  const status = clean(statusValue, 40);
+  if (!["rascunho", "pausada"].includes(status)) throw new Error("CAMPAIGN_EDIT_REQUIRES_DRAFT_OR_PAUSED");
+  const preservarProgresso = status === "pausada";
+  if (preservarProgresso) {
+    const currentSegment = clean(currentSegmentValue, 40);
+    const nextSegment = clean(nextSegmentValue, 40);
+    const currentExclusionDays = clamp(currentExclusionDaysValue, 0, 3650, 30);
+    const nextExclusionDays = clamp(nextExclusionDaysValue, 0, 3650, 30);
+    if (currentSegment !== nextSegment || currentExclusionDays !== nextExclusionDays) {
+      throw new Error("CAMPAIGN_AUDIENCE_LOCKED_AFTER_START");
+    }
+  }
+  return { status, preservarProgresso };
+};
+
+export const atualizarCampanhaWhatsapp = async (
   campaignId: string,
   input: CriarCampanhaInput,
   actor: { uid: string; email?: string },
 ) => {
   const { ref, data } = await getCampaign(campaignId);
-  if (String(data.status) !== "rascunho") throw new Error("CAMPAIGN_DRAFT_ONLY");
-
-  const config = validateInput(input);
+  const config = validateInput({ ...input, diasSemana: input.diasSemana ?? data.diasSemana });
+  const editPolicy = resolverPoliticaEdicaoCampanhaWhatsapp(
+    data.status,
+    data.segmento,
+    data.excluirRecebidosUltimosDias,
+    config.segmento,
+    config.excluirRecebidosUltimosDias,
+  );
   const previousMedia = data.midia && typeof data.midia === "object"
     ? data.midia as WhatsappMediaPayload
     : undefined;
@@ -677,10 +704,12 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     : input.midia
       ? await validateStoredMedia(input.midia, actor)
       : previousMedia;
-  const audience = await loadAudience(config.segmento, config.excluirRecebidosUltimosDias);
+  const audience = editPolicy.preservarProgresso
+    ? null
+    : await loadAudience(config.segmento, config.excluirRecebidosUltimosDias);
 
-  await writeCampaignRecipients(ref, audience, true, Boolean(nextMedia));
-  await ref.update({
+  if (audience) await writeCampaignRecipients(ref, audience, true, Boolean(nextMedia));
+  const patch: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = {
     nome: config.nome,
     segmento: config.segmento,
     segmentoLabel: SEGMENT_LABELS[config.segmento],
@@ -694,30 +723,33 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
     diasSemana: config.diasSemana,
     maxTentativas: config.maxTentativas,
     excluirRecebidosUltimosDias: config.excluirRecebidosUltimosDias,
-    publicoSegmento: audience.totalSegment,
-    publicoElegivel: audience.eligible.length,
-    publicoEstimado: audience.eligible.length,
-    aguardando: audience.eligible.length,
-    semConsentimento: 0,
-    semRespostaIncluida: audience.unknownIncluded,
-    optOut: audience.optedOut,
-    excluidosCampanhaRecente: audience.recentlyContacted,
-    duplicidadesEliminadas: audience.duplicateRecords,
-    enviadas: 0,
-    entregues: 0,
-    lidas: 0,
-    respostas: 0,
-    cliques: 0,
-    reservasGeradas: 0,
-    conversoes: 0,
-    receitaAtribuida: 0,
-    erros: 0,
-    ignoradas: audience.recentlyContacted,
+    ...(audience ? {
+      publicoSegmento: audience.totalSegment,
+      publicoElegivel: audience.eligible.length,
+      publicoEstimado: audience.eligible.length,
+      aguardando: audience.eligible.length,
+      semConsentimento: 0,
+      semRespostaIncluida: audience.unknownIncluded,
+      optOut: audience.optedOut,
+      excluidosCampanhaRecente: audience.recentlyContacted,
+      duplicidadesEliminadas: audience.duplicateRecords,
+      enviadas: 0,
+      entregues: 0,
+      lidas: 0,
+      respostas: 0,
+      cliques: 0,
+      reservasGeradas: 0,
+      conversoes: 0,
+      receitaAtribuida: 0,
+      erros: 0,
+      ignoradas: audience.recentlyContacted,
+    } : {}),
     editadoEm: FieldValue.serverTimestamp(),
     editadoPorUid: actor.uid,
     editadoPor: actor.email ?? null,
     atualizadoEm: FieldValue.serverTimestamp(),
-  });
+  };
+  await ref.update(patch);
 
   if (previousMedia?.storagePath && previousMedia.storagePath !== nextMedia?.storagePath) {
     const bucket = obterStorageBucketAdmin();
@@ -726,12 +758,13 @@ export const atualizarRascunhoCampanhaWhatsapp = async (
 
   return {
     id: campaignId,
-    publicoSegmento: audience.totalSegment,
-    publicoElegivel: audience.eligible.length,
-    semRespostaIncluida: audience.unknownIncluded,
-    optOut: audience.optedOut,
-    excluidosCampanhaRecente: audience.recentlyContacted,
-    duplicidadesEliminadas: audience.duplicateRecords,
+    publicoSegmento: audience?.totalSegment ?? Number(data.publicoSegmento ?? 0),
+    publicoElegivel: audience?.eligible.length ?? Number(data.publicoElegivel ?? data.publicoEstimado ?? 0),
+    semRespostaIncluida: audience?.unknownIncluded ?? Number(data.semRespostaIncluida ?? 0),
+    optOut: audience?.optedOut ?? Number(data.optOut ?? 0),
+    excluidosCampanhaRecente: audience?.recentlyContacted ?? Number(data.excluidosCampanhaRecente ?? 0),
+    duplicidadesEliminadas: audience?.duplicateRecords ?? Number(data.duplicidadesEliminadas ?? 0),
+    progressoPreservado: editPolicy.preservarProgresso,
   };
 };
 
@@ -767,8 +800,14 @@ export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
 };
 
 export const pausarCampanhaWhatsapp = async (campaignId: string) => {
-  const { ref } = await getCampaign(campaignId);
-  await ref.update({ status: "pausada", pausadoEm: FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
+  const { ref, data } = await getCampaign(campaignId);
+  if (!ACTIVE_STATUSES.includes(String(data.status))) throw new Error("CAMPAIGN_CANNOT_PAUSE");
+  await ref.update({
+    status: "pausada",
+    pausadoEm: FieldValue.serverTimestamp(),
+    proximoDisparoEm: FieldValue.delete(),
+    atualizadoEm: FieldValue.serverTimestamp(),
+  });
 };
 
 export const retomarCampanhaWhatsapp = async (campaignId: string) => {
@@ -918,10 +957,15 @@ const acquireCampaignLease = async (campaignRef: FirebaseFirestore.DocumentRefer
   const data = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(campaignRef);
     if (!snapshot.exists || !ACTIVE_STATUSES.includes(String(snapshot.data()?.status))) return null;
+    const campaignData = snapshot.data()!;
     const lockUntil = snapshot.data()?.lockAte?.toDate?.() as Date | undefined;
     if (lockUntil && lockUntil.getTime() > Date.now()) return null;
-    transaction.update(campaignRef, { lockOwner: owner, lockAte: Timestamp.fromMillis(Date.now() + 60000) });
-    return snapshot.data()!;
+    transaction.update(campaignRef, {
+      lockOwner: owner,
+      lockAte: Timestamp.fromMillis(Date.now() + 60000),
+      ...(String(campaignData.status) === "agendada" ? { status: "enviando" } : {}),
+    });
+    return { ...campaignData, status: "enviando" } as FirebaseFirestore.DocumentData;
   });
   return data ? { owner, data } : null;
 };
@@ -1028,7 +1072,6 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
         atualizadoEm: FieldValue.serverTimestamp(),
       });
       batch.update(campaignRef, {
-        status: "enviando",
         aguardando: FieldValue.increment(-1),
         ignoradas: FieldValue.increment(1),
         ...(exclusion.reason === "opt_out"
@@ -1046,6 +1089,12 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     activeRecipientRef = due.ref;
     activeAttempts = attempts;
     await due.ref.update({ status: "enviando", tentativas: attempts, ultimaTentativaEm: FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
+    const stateBeforeSend = await campaignRef.get();
+    if (!stateBeforeSend.exists || !ACTIVE_STATUSES.includes(String(stateBeforeSend.data()?.status))) {
+      await due.ref.update({ status: "aguardando", atualizadoEm: FieldValue.serverTimestamp() });
+      await releaseCampaignLease(campaignRef, owner);
+      return;
+    }
     const variants = Array.isArray(campaign.variacoes) ? campaign.variacoes.map((value: unknown) => clean(value, 1500)).filter(Boolean) : [];
     if (!variants.length) throw new Error("CAMPAIGN_WITHOUT_VARIANTS");
     const variantIndex = Math.floor(Math.random() * variants.length);
@@ -1070,7 +1119,6 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
         atualizadoEm: FieldValue.serverTimestamp(),
       });
       batch.update(campaignRef, {
-        status: "enviando",
         enviadas: FieldValue.increment(1),
         aguardando: FieldValue.increment(-1),
         enviadasHoje: campaign.dataContadorDiario === currentDate ? FieldValue.increment(1) : 1,
@@ -1112,7 +1160,6 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
       const batch = campaignRef.firestore.batch();
       batch.update(due.ref, { status: "erro", ultimoErro: result.motivo ?? "erro_envio", erroEm: FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
       batch.update(campaignRef, {
-        status: "enviando",
         erros: FieldValue.increment(1),
         aguardando: FieldValue.increment(-1),
         proximoDisparoEm: nextDispatchAt,
