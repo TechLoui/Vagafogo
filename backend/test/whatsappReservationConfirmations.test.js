@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
 const {
   classificarDataConfirmacaoWhatsapp,
 } = require("../dist/services/whatsappReservationConfirmations");
+const {
+  prepararConfirmacaoWhatsapp,
+} = require("../dist/services/whatsapp");
 
 test("bloqueia confirmacao de reserva passada", () => {
   assert.equal(
@@ -31,4 +34,30 @@ test("bloqueia por seguranca quando a data da reserva e invalida", () => {
     classificarDataConfirmacaoWhatsapp({ data: "07/09/2026" }, "2026-10-05"),
     "data_reserva_invalida",
   );
+});
+
+test("confirmacao inclui a localizacao mesmo quando o texto foi personalizado", async () => {
+  const result = await prepararConfirmacaoWhatsapp("reserva-1", {
+    nome: "Cliente",
+    telefone: "5562999999999",
+    data: "2026-10-08",
+  }, {
+    confirmacaoAutomaticaAtiva: true,
+    mensagemConfirmacaoAutomatica: "Reserva confirmada, {nome}!",
+  });
+  assert.equal(result.enviado, true);
+  assert.match(result.mensagem, /Reserva confirmada, Cliente!/);
+  assert.match(result.mensagem, /maps\.google\.com\/\?q=-15\.824453,-48\.995220/);
+});
+
+test("confirmacao nao duplica uma localizacao ja configurada", async () => {
+  const location = "https://maps.google.com/?q=-15.824453,-48.995220";
+  const result = await prepararConfirmacaoWhatsapp("reserva-2", {
+    telefone: "5562999999999",
+    data: "2026-10-08",
+  }, {
+    confirmacaoAutomaticaAtiva: true,
+    mensagemConfirmacaoAutomatica: `Reserva confirmada.\n${location}`,
+  });
+  assert.equal((result.mensagem.match(/maps\.google\.com/g) || []).length, 1);
 });

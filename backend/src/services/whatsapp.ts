@@ -66,7 +66,16 @@ const TEMPLATE_BOAS_VINDAS_PADRAO =
   "Olá {nome}! 🌿 Seja muito bem-vindo(a) à Fazenda Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.";
 
 const TEMPLATE_CONFIRMACAO_PADRAO =
-  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\nNos vemos em breve! 🌿";
+  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\n🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.google.com/?q=-15.824453,-48.995220\n\nNos vemos em breve! 🌿";
+
+const BLOCO_LOCALIZACAO_CONFIRMACAO =
+  "🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.google.com/?q=-15.824453,-48.995220";
+
+const incluirLocalizacaoConfirmacao = (mensagem: string) => {
+  const texto = String(mensagem ?? "").trim();
+  if (!texto || /maps\.google\.com\/\?q=-15\.824453,-48\.995220/i.test(texto)) return texto;
+  return `${texto}\n\n${BLOCO_LOCALIZACAO_CONFIRMACAO}`;
+};
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -287,7 +296,10 @@ export async function prepararConfirmacaoWhatsapp(
   if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
   const template = String(config.mensagemConfirmacaoAutomatica || TEMPLATE_CONFIRMACAO_PADRAO).trim();
   if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
-  return { enviado: true, telefone, mensagem: montarMensagem(template, { ...reserva, id: reservaId }) };
+  const mensagem = incluirLocalizacaoConfirmacao(
+    montarMensagem(template, { ...reserva, id: reservaId }),
+  );
+  return { enviado: true, telefone, mensagem };
 }
 
 export async function enviarConfirmacaoWhatsapp(

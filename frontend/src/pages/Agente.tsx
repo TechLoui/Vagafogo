@@ -1274,12 +1274,10 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
   const configuredMaxSeconds = Math.round((config.replyDelayMs + (config.typingEnabled ? config.typingMaxMs : 0)) / 1000);
   const validationError = config.typingMinMs > config.typingMaxMs
     ? "A digitação mínima não pode ser maior que a máxima."
-    : config.inactivityEnabled && config.inactivitySecondMinutes < config.inactivityFirstMinutes + 5
-      ? "A segunda retomada deve ocorrer pelo menos 5 minutos depois da primeira."
-      : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
-        ? "A suspensão deve ocorrer pelo menos 5 minutos depois da segunda retomada."
-        : config.inactivityEnabled && (!config.inactivityFirstMessage.trim() || !config.inactivitySecondMessage.trim() || !config.inactivitySuspendMessage.trim())
-          ? "Preencha as três mensagens de retomada."
+    : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
+        ? "A suspensão deve ocorrer pelo menos 5 minutos depois da retomada."
+        : config.inactivityEnabled && (!config.inactivitySecondMessage.trim() || !config.inactivitySuspendMessage.trim())
+          ? "Preencha a mensagem de retomada e a mensagem de suspensão."
           : config.audioNoticeEnabled && !config.audioNoticeText.trim()
             ? "Preencha a orientação enviada para áudios."
             : "";
@@ -1294,11 +1292,11 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
       </section>
 
       <section className="agent-settings-section">
-        <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Retomadas por inatividade</h3><p>Faça até duas tentativas educadas e depois suspenda o atendimento sem apagar o contexto.</p></div></div>
+        <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Retomada por inatividade</h3><p>Faça uma única tentativa educada e depois suspenda o atendimento sem apagar o contexto.</p></div></div>
         <label className="agent-toggle"><input type="checkbox" checked={config.inactivityEnabled} onChange={(event) => setConfig((current) => ({ ...current, inactivityEnabled: event.target.checked }))} /><span /><div><strong>Ativar retomadas automáticas</strong><small>Não envia retomadas quando o cliente disser que vai decidir e voltar depois.</small></div></label>
         {config.inactivityEnabled ? <>
-          <div className="agent-settings-grid">{field("Primeira retomada após (min)", "inactivityFirstMinutes", 1, 5, 5)}{field("Segunda retomada após (min)", "inactivitySecondMinutes", 1, 10, 5)}{field("Suspender atendimento após (min)", "inactivitySuspendMinutes", 1, 15, 5)}</div>
-          <div className="agent-settings-copy-grid">{textarea("Mensagem da primeira retomada", "inactivityFirstMessage", 1000)}{textarea("Mensagem da segunda retomada", "inactivitySecondMessage", 1000)}{textarea("Mensagem de suspensão", "inactivitySuspendMessage", 1200)}</div>
+          <div className="agent-settings-grid">{field("Enviar a retomada após (min)", "inactivitySecondMinutes", 1, 10, 5)}{field("Suspender atendimento após (min)", "inactivitySuspendMinutes", 1, 15, 5)}</div>
+          <div className="agent-settings-copy-grid">{textarea("Mensagem única de retomada", "inactivitySecondMessage", 1000)}{textarea("Mensagem de suspensão", "inactivitySuspendMessage", 1200)}</div>
         </> : null}
       </section>
 
