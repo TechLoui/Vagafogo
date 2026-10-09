@@ -1,7 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 
-const AUTOMATION_CONFIG_VERSION = 2;
+const AUTOMATION_CONFIG_VERSION = 3;
 const TIMEZONE = "America/Sao_Paulo";
 const dateKey = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: TIMEZONE }).format(date);
 const reservationDate = (value: unknown) => {
@@ -38,6 +38,8 @@ export const garantirConfiguracaoAutomacoesWhatsapp = async () => {
     avisoNovaReservaEquipeNumero: String(current.avisoNovaReservaEquipeNumero ?? "").replace(/\D/g, "") || "5562991150376",
     avisoNovaReservaEquipeSomenteDataDaVisita: true,
     avisoNovaReservaEquipeSomenteEntradasDoDia: FieldValue.delete(),
+    resumoReservasEquipeAtivo: true,
+    horarioResumoReservasEquipe: String(current.horarioResumoReservasEquipe ?? "").trim() || "07:30",
     ...(currentInternalMessage ? {
       mensagemAvisoNovaReservaEquipe: currentInternalMessage.startsWith("🌿 Nova reserva recebida")
         ? currentInternalMessage.replace("🌿 Nova reserva recebida", "🌿 Reserva para hoje")
@@ -52,9 +54,8 @@ export const garantirConfiguracaoAutomacoesWhatsapp = async () => {
     atualizadoEm: FieldValue.serverTimestamp(),
   }, { merge: true });
 
-  // A primeira versao usava a data de entrada da compra e chegou a enviar
-  // avisos de visitas futuras. Reagenda esses registros para a data correta e
-  // marca como validos os avisos que realmente pertencem ao dia atual.
+  // Mantem o historico antigo, mas a versao atual usa um unico resumo matinal.
+  // Alertas individuais ficam reservados a compras feitas para o proprio dia.
   const today = dateKey();
   const alerts = await db.collection("whatsapp_notificacoes_internas").limit(200).get();
   const batch = db.batch();

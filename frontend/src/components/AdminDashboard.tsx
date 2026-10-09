@@ -464,6 +464,7 @@ interface WhatsappConfig {
   avisoNovaReservaEquipeAtivo?: boolean;
   avisoNovaReservaEquipeNumero?: string;
   mensagemAvisoNovaReservaEquipe?: string;
+  horarioResumoReservasEquipe?: string;
 
   /** Lembrete personalizado para reservas confirmadas cuja visita e hoje. */
   lembreteDiaAtivo?: boolean;
@@ -540,6 +541,20 @@ interface Reserva {
   status?: string;
 
   origem?: string;
+
+  criadaManualmente?: boolean;
+
+  pagamentoRegistradoNoAsaas?: boolean;
+
+  canalOrigem?: string;
+
+  dominioOrigem?: string;
+
+  atribuicao?: Record<string, unknown>;
+
+  asaasPaymentId?: string;
+
+  pagamentoId?: string;
 
   temPet?: boolean;
 
@@ -1459,7 +1474,29 @@ const statusEhConfirmado = (reserva?: Pick<Reserva, 'status' | 'confirmada'>) =>
 
 
 
-const reservaEhManual = (reserva?: Pick<Reserva, 'origem'>) => reserva?.origem === 'manual';
+const reservaEhManual = (reserva?: Partial<Reserva>) => {
+  if (!reserva) return false;
+  if (reserva.criadaManualmente === true) return true;
+  const origem = String(reserva.origem ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_');
+  if (origem === 'manual' || origem.includes('manual') || origem === 'balcao') return true;
+  if (origem !== 'checkout') return false;
+
+  const atribuicao = reserva.atribuicao && typeof reserva.atribuicao === 'object'
+    ? reserva.atribuicao
+    : {};
+  const canal = String(reserva.canalOrigem ?? atribuicao.sourceChannel ?? '').trim();
+  const dominio = String(
+    reserva.dominioOrigem ?? atribuicao.sourceDomain ?? atribuicao.entryDomain ?? ''
+  ).trim();
+  // Versoes antigas do cadastro manual trocavam apenas `origem` para checkout
+  // quando o pagamento era marcado como Asaas. Sem canal/dominio, continua manual.
+  return !canal && !dominio;
+};
 
 const reservaEhPagaNoCheckout = (
   reserva?: Pick<Reserva, 'origem' | 'status' | 'confirmada'>
@@ -2023,6 +2060,7 @@ export default function AdminDashboard() {
     avisoNovaReservaEquipeAtivo: true,
     avisoNovaReservaEquipeNumero: '5562991150376',
     mensagemAvisoNovaReservaEquipe: whatsappTemplateAvisoNovaReservaPadrao,
+    horarioResumoReservasEquipe: '07:30',
     lembreteDiaAtivo: true,
     horarioLembreteDia: '08:00',
     mensagemLembreteDia: whatsappTemplateLembreteDiaPadrao,
@@ -4164,6 +4202,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
+    const criadaManualmente = reservaEhManual(reserva);
+
     setEditReserva({
 
       ...reserva,
@@ -4186,6 +4226,14 @@ const totalParticipantesDoDia = useMemo(() => {
       educativo: reserva.educativo === true,
 
       naoConsomeDisponibilidade: reserva.naoConsomeDisponibilidade === true,
+
+      criadaManualmente,
+
+      pagamentoRegistradoNoAsaas:
+        reserva.pagamentoRegistradoNoAsaas === true
+        || (criadaManualmente && reserva.origem === 'checkout'),
+
+      ...(criadaManualmente ? { origem: 'manual' } : {}),
 
     });
 
@@ -4260,6 +4308,10 @@ const totalParticipantesDoDia = useMemo(() => {
       status: 'confirmado',
 
       origem: 'manual',
+
+      criadaManualmente: true,
+
+      pagamentoRegistradoNoAsaas: false,
 
       areaMesa: '',
 
@@ -4967,8 +5019,8 @@ const totalParticipantesDoDia = useMemo(() => {
       totalPendentes: Math.max(totalReservas - totalChegadas, 0),
       totalPreReservas: reservasParaResumo.filter((reserva) => statusEhPreReserva(reserva)).length,
       totalPets: reservasParaResumo.filter((reserva) => reserva.temPet === true).length,
-      totalManuais: reservasParaResumo.filter((reserva) => reserva.origem === 'manual').length,
-      totalCheckout: reservasParaResumo.filter((reserva) => reserva.origem !== 'manual').length,
+      totalManuais: reservasParaResumo.filter((reserva) => reservaEhManual(reserva)).length,
+      totalCheckout: reservasParaResumo.filter((reserva) => !reservaEhManual(reserva)).length,
       faturamento,
       gruposTotal: grupos.length,
       primeiroHorario: grupos[0]?.tituloHorario ?? 'Sem horario',
@@ -5301,6 +5353,10 @@ const totalParticipantesDoDia = useMemo(() => {
         mesaSecundariaId: mesaSecundariaEmEdicao?.id ?? null,
         mesasSelecionadas,
         capacidadeMesas,
+        criadaManualmente: isEditingReserva ? reservaEhManual(editReserva) : true,
+        origem: (isEditingReserva ? reservaEhManual(editReserva) : true)
+          ? 'manual'
+          : editReserva.origem,
       };
 
       const reservaRef =
@@ -5555,6 +5611,7 @@ const totalParticipantesDoDia = useMemo(() => {
           avisoNovaReservaEquipeAtivo: rawLegado.avisoNovaReservaEquipeAtivo !== false,
           avisoNovaReservaEquipeNumero,
           mensagemAvisoNovaReservaEquipe,
+          horarioResumoReservasEquipe: typeof rawLegado.horarioResumoReservasEquipe === 'string' ? rawLegado.horarioResumoReservasEquipe : '07:30',
           lembreteDiaAtivo: rawLegado.lembreteDiaAtivo !== false,
           horarioLembreteDia: typeof rawLegado.horarioLembreteDia === 'string' ? rawLegado.horarioLembreteDia : '08:00',
           mensagemLembreteDia,
@@ -5578,6 +5635,7 @@ const totalParticipantesDoDia = useMemo(() => {
         avisoNovaReservaEquipeAtivo: true,
         avisoNovaReservaEquipeNumero: '5562991150376',
         mensagemAvisoNovaReservaEquipe: whatsappTemplateAvisoNovaReservaPadrao,
+        horarioResumoReservasEquipe: '07:30',
         lembreteDiaAtivo: true,
         horarioLembreteDia: '08:00',
         mensagemLembreteDia: whatsappTemplateLembreteDiaPadrao,
@@ -5691,6 +5749,7 @@ const totalParticipantesDoDia = useMemo(() => {
     const mensagemBoasVindas = (whatsappConfig.mensagemBoasVindas ?? '').trim();
     const avisoNovaReservaEquipeNumero = (whatsappConfig.avisoNovaReservaEquipeNumero || '5562991150376').replace(/\D/g, '');
     const mensagemAvisoNovaReservaEquipe = (whatsappConfig.mensagemAvisoNovaReservaEquipe ?? '').trim();
+    const horarioResumoReservasEquipe = (whatsappConfig.horarioResumoReservasEquipe || '07:30').trim();
     const mensagemLembreteDia = (whatsappConfig.mensagemLembreteDia ?? '').trim();
     const horarioLembreteDia = (whatsappConfig.horarioLembreteDia || '08:00').trim();
     const intervaloLembreteDiaMinSegundos = Math.max(60, Math.min(600, Number(whatsappConfig.intervaloLembreteDiaMinSegundos ?? 60)));
@@ -5713,6 +5772,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
     if (whatsappConfig.avisoNovaReservaEquipeAtivo !== false && !mensagemAvisoNovaReservaEquipe) {
       setFeedback({ type: 'error', message: 'Informe a mensagem do aviso de nova reserva.' });
+      return;
+    }
+
+    if (whatsappConfig.avisoNovaReservaEquipeAtivo !== false && !/^([01]\d|2[0-3]):[0-5]\d$/.test(horarioResumoReservasEquipe)) {
+      setFeedback({ type: 'error', message: 'Informe um horário válido para o resumo das reservas.' });
       return;
     }
 
@@ -5757,6 +5821,8 @@ const totalParticipantesDoDia = useMemo(() => {
             avisoNovaReservaEquipeAtivo: whatsappConfig.avisoNovaReservaEquipeAtivo !== false,
             avisoNovaReservaEquipeNumero,
             mensagemAvisoNovaReservaEquipe,
+            resumoReservasEquipeAtivo: true,
+            horarioResumoReservasEquipe,
             lembreteDiaAtivo: whatsappConfig.lembreteDiaAtivo !== false,
             horarioLembreteDia,
             mensagemLembreteDia,
@@ -5776,6 +5842,7 @@ const totalParticipantesDoDia = useMemo(() => {
         modelosMensagemManual: modelos,
         avisoNovaReservaEquipeNumero,
         mensagemAvisoNovaReservaEquipe,
+        horarioResumoReservasEquipe,
         horarioLembreteDia,
         mensagemLembreteDia,
         intervaloLembreteDiaMinSegundos,
@@ -10097,7 +10164,7 @@ const totalParticipantesDoDia = useMemo(() => {
                                   const valorFormatado = formatarValor(reserva.valor);
                                   const telefoneExibicao = reserva.telefone?.trim() || 'Sem telefone';
                                   const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
-                                  const reservaManual = reserva.origem === 'manual';
+                                  const reservaManual = reservaEhManual(reserva);
                                   const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
                                   const perguntasRespondidas = obterPerguntasComResposta(reserva);
                                   const apresentacaoReserva = obterApresentacaoReserva(reserva, participantes);
@@ -10874,7 +10941,7 @@ const totalParticipantesDoDia = useMemo(() => {
                             const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
                             const valorFormatado = formatarValor(reserva.valor);
                             const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
-                            const reservaManual = reserva.origem === 'manual';
+                            const reservaManual = reservaEhManual(reserva);
                             const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
                             const perguntasRespondidas = obterPerguntasComResposta(reserva);
                             const apresentacaoReserva = obterApresentacaoReserva(reserva, participantes);
@@ -11142,7 +11209,7 @@ const totalParticipantesDoDia = useMemo(() => {
                         const podeEnviarWhatsapp = Boolean(
                           normalizarTelefoneWhatsapp(reserva.telefone)
                         );
-                        const reservaManual = reserva.origem === 'manual';
+                        const reservaManual = reservaEhManual(reserva);
                         const reservaKey =
                           reserva.id ??
                           `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
@@ -11459,7 +11526,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
 
-                            const reservaManual = reserva.origem === 'manual';
+                            const reservaManual = reservaEhManual(reserva);
                             const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
                             const perguntasRespondidas = obterPerguntasComResposta(reserva);
@@ -12643,24 +12710,25 @@ const totalParticipantesDoDia = useMemo(() => {
                         </div>
                       </div>
 
-                      <label className={`admin-manual-toggle-card ${editReserva.origem !== 'manual' ? 'is-active' : ''}`}>
+                      <label className={`admin-manual-toggle-card ${editReserva.pagamentoRegistradoNoAsaas === true ? 'is-active' : ''}`}>
                         <input
                           type="checkbox"
-                          checked={editReserva.origem !== 'manual'}
+                          checked={editReserva.pagamentoRegistradoNoAsaas === true}
                           onChange={(e) =>
                             setEditReserva({
                               ...editReserva,
-                              origem: e.target.checked ? 'checkout' : 'manual',
+                              pagamentoRegistradoNoAsaas: e.target.checked,
+                              origem: editReserva.criadaManualmente === true ? 'manual' : editReserva.origem,
                             })
                           }
                           className="sr-only"
                         />
                         <span className="admin-manual-toggle-card__indicator" aria-hidden="true">
-                          {editReserva.origem !== 'manual' ? <FaCheck className="h-3 w-3" /> : null}
+                          {editReserva.pagamentoRegistradoNoAsaas === true ? <FaCheck className="h-3 w-3" /> : null}
                         </span>
                         <span className="admin-manual-toggle-card__content">
                           <span className="admin-manual-toggle-card__label">Pago pelo Asaas</span>
-                          <span className="admin-manual-toggle-card__hint">Aparece no dashboard como reserva do checkout</span>
+                          <span className="admin-manual-toggle-card__hint">Registra o pagamento sem alterar a origem manual nem ativar disparos</span>
                         </span>
                       </label>
                     </div>
@@ -16094,7 +16162,7 @@ const totalParticipantesDoDia = useMemo(() => {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Aviso interno de nova reserva para o Uirá</h3>
                   <p className="text-sm text-slate-500">
-                    Envia somente no dia da visita. Reservas para datas futuras ficam agendadas até o dia correto.
+                    Um resumo único abre o dia; depois, entram somente reservas novas feitas para o próprio dia.
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
@@ -16118,15 +16186,24 @@ const totalParticipantesDoDia = useMemo(() => {
                       className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                     />
                   </label>
+                  <label className="block text-xs font-semibold uppercase text-slate-500">
+                    Horário do resumo diário
+                    <input
+                      type="time"
+                      value={whatsappConfig.horarioResumoReservasEquipe || '07:30'}
+                      onChange={(event) => setWhatsappConfig((prev) => ({ ...prev, horarioResumoReservasEquipe: event.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    />
+                  </label>
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                     <p className="text-xs font-semibold uppercase text-emerald-700">Funcionamento</p>
                     <ul className="mt-2 space-y-1 text-xs leading-relaxed text-emerald-900">
-                      <li>• Uma entrada por reserva, sem duplicar em tentativas de pagamento.</li>
-                      <li>• Reservas criadas manualmente no painel não geram este aviso.</li>
-                      <li>• Somente reservas confirmadas e pagas são enviadas.</li>
-                      <li>• Reservas futuras aguardam a data da visita; nunca são antecipadas.</li>
+                      <li>• Às 07h30, todas as reservas confirmadas do dia chegam em uma única lista.</li>
+                      <li>• Reservas manuais aparecem somente nesse resumo interno; o cliente não recebe automação.</li>
+                      <li>• Depois do resumo, cada reserva nova feita e paga para o mesmo dia gera um aviso.</li>
+                      <li>• Reservas futuras entram no resumo da respectiva data; nunca geram aviso antecipado.</li>
                       <li>• Entre avisos consecutivos há uma espera aleatória de 1 a 2 minutos.</li>
-                      <li>• Os envios começam às 08h e registros de dias passados são ignorados.</li>
+                      <li>• Registros de dias passados e reservas já incluídas no resumo são ignorados.</li>
                       <li>• Até cinco tentativas com espera progressiva quando houver falha.</li>
                       <li>• Histórico de enviados, fila e erros preservado no Firestore.</li>
                     </ul>

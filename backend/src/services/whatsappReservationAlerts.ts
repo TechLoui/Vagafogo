@@ -2,6 +2,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import type { ResultadoEnvio } from "./whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
+import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 
 const DESTINATION_DEFAULT = "5562991150376";
 const TIMEZONE = "America/Sao_Paulo";
@@ -69,6 +70,10 @@ const timestampMillis = (value: any) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const randomSendDelay = () => MIN_SEND_DELAY_MS + Math.floor(Math.random() * (MAX_SEND_DELAY_MS - MIN_SEND_DELAY_MS + 1));
+const formatDateBr = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+};
 
 const renderTemplate = (template: string, alert: FirebaseFirestore.DocumentData) => {
   const values: Record<string, string> = {
@@ -88,53 +93,135 @@ const renderTemplate = (template: string, alert: FirebaseFirestore.DocumentData)
 };
 
 const confirmedReservationForToday = (reservation: FirebaseFirestore.DocumentData, today: string) =>
-  reservation.origem !== "manual"
+  reservaPodeReceberDisparoAutomatico(reservation)
   && reservation.confirmada === true
   && ["pago", "confirmada", "confirmado"].includes(clean(reservation.status, 40).toLowerCase())
   && reservationDate(reservation.data ?? reservation.Data) === today;
 
-const reservationAlertData = (reservaId: string, reserva: FirebaseFirestore.DocumentData) => ({
-  reservaId,
-  nome: clean(reserva.nome ?? reserva.Nome, 160),
-  telefone: clean(reserva.telefone ?? reserva.Telefone, 80),
-  email: clean(reserva.email ?? reserva.Email, 240),
-  data: reservationDate(reserva.data ?? reserva.Data),
-  horario: clean(reserva.horario ?? reserva.Horario, 100),
-  atividade: clean(reserva.atividade ?? reserva.Atividade, 300),
-  participantes: numberValue(reserva.participantes ?? reserva.Participantes),
-  valor: numberValue(reserva.valor ?? reserva.Valor),
-  formaPagamento: clean(reserva.formaPagamento, 80),
-  statusReserva: clean(reserva.status ?? reserva.Status ?? "aguardando", 80),
-});
+const confirmedReservationForSummary = (reservation: FirebaseFirestore.DocumentData, today: string) =>
+  reservation.confirmada === true
+  && ["pago", "confirmada", "confirmado"].includes(clean(reservation.status, 40).toLowerCase())
+  && reservationDate(reservation.data ?? reservation.Data) === today;
 
-const discoverTodayReservations = async () => {
+const buildDailySummary = (
+  today: string,
+  reservations: FirebaseFirestore.QueryDocumentSnapshot[],
+) => {
+  const ordered = [...reservations].sort((left, right) => {
+    const timeDifference = parseMinutes(left.data().horario ?? left.data().Horario, 24 * 60)
+      - parseMinutes(right.data().horario ?? right.data().Horario, 24 * 60);
+    if (timeDifference) return timeDifference;
+    return clean(left.data().nome ?? left.data().Nome, 160)
+      .localeCompare(clean(right.data().nome ?? right.data().Nome, 160), "pt-BR");
+  });
+  const participants = ordered.reduce(
+    (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
+    0,
+  );
+  const header = [
+    `🌿 Resumo das reservas de hoje — ${formatDateBr(today)}`,
+    "",
+    `${ordered.length} reserva${ordered.length === 1 ? "" : "s"} • ${participants} participante${participants === 1 ? "" : "s"}`,
+    "",
+  ].join("\n");
+  if (ordered.length === 0) return `${header}Nenhuma reserva confirmada para hoje.`;
+
+  let message = header;
+  let includedLines = 0;
+  for (const [index, document] of ordered.entries()) {
+    const reservation = document.data();
+    const time = clean(reservation.horario ?? reservation.Horario, 20) || "Sem horário";
+    const name = clean(reservation.nome ?? reservation.Nome, 70) || "Nome não informado";
+    const activity = clean(reservation.atividade ?? reservation.Atividade, 100) || "Experiência não informada";
+    const quantity = numberValue(reservation.participantes ?? reservation.Participantes);
+    const line = `${index + 1}. ${time} • ${name} • ${activity} • ${quantity} pessoa${quantity === 1 ? "" : "s"}\n`;
+    if ((message + line).length > 3850) break;
+    message += line;
+    includedLines += 1;
+  }
+  const omitted = ordered.length - includedLines;
+  if (omitted > 0) message += `\n… e mais ${omitted} reserva${omitted === 1 ? "" : "s"}. Consulte a agenda no Admin.`;
+  return message.trim();
+};
+
+const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => {
   const db = obterFirestoreAdmin();
-  if (!db) return;
+  if (!db) return false;
   const today = dateKey();
+  if (config.resumoReservasEquipeAtivo === false) return true;
+  const summaryMinutes = parseMinutes(config.horarioResumoReservasEquipe, 7 * 60 + 30);
+  if (localMinutes() < summaryMinutes) return false;
+
+  const summaryRef = db.collection("whatsapp_resumos_reservas_dia").doc(today);
+  const current = await summaryRef.get();
+  if (current.data()?.status === "enviado") return true;
+  const lastAttempt = timestampMillis(current.data()?.ultimaTentativaEm);
+  if (current.data()?.status === "enviando" && lastAttempt > Date.now() - STALE_SENDING_MS) return false;
+  const nextAttempt = timestampMillis(current.data()?.proximaTentativaEm);
+  if (nextAttempt > Date.now()) return false;
+
   const reservations = await db.collection("reservas").where("data", "==", today).limit(500).get();
-  const eligible = reservations.docs.filter((document) => confirmedReservationForToday(document.data(), today));
-  if (eligible.length === 0) return;
-  const refs = eligible.map((document) => db.collection("whatsapp_notificacoes_internas").doc(document.id));
-  const existing = await db.getAll(...refs);
-  const batch = db.batch();
-  let changed = false;
-  existing.forEach((snapshot, index) => {
-    const reservation = eligible[index];
-    const current = snapshot.exists ? snapshot.data() ?? {} : {};
-    if (snapshot.exists && current.status === "enviado" && current.dataEnvioProgramada === today) return;
-    const payload = reservationAlertData(reservation.id, reservation.data());
-    batch.set(snapshot.ref, {
-      ...payload,
-      dataEntrada: current.dataEntrada ?? dateKey(),
-      status: current.status === "enviando" ? "enviando" : "aguardando",
-      tentativas: Number(current.tentativas ?? 0),
-      destino: current.destino ?? DESTINATION_DEFAULT,
-      criadoEm: current.criadoEm ?? FieldValue.serverTimestamp(),
+  const eligible = reservations.docs.filter((document) => confirmedReservationForSummary(document.data(), today));
+  const reservationIds = eligible.map((document) => document.id);
+  const message = buildDailySummary(today, eligible);
+  const attempts = Number(current.data()?.tentativas ?? 0) + 1;
+  const acquired = await db.runTransaction(async (transaction) => {
+    const fresh = await transaction.get(summaryRef);
+    if (fresh.data()?.status === "enviado") return false;
+    const freshLastAttempt = timestampMillis(fresh.data()?.ultimaTentativaEm);
+    if (fresh.data()?.status === "enviando" && freshLastAttempt > Date.now() - STALE_SENDING_MS) return false;
+    transaction.set(summaryRef, {
+      data: today,
+      status: "enviando",
+      tentativas: attempts,
+      reservaIds: reservationIds,
+      totalReservas: eligible.length,
+      totalParticipantes: eligible.reduce<number>(
+        (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
+        0,
+      ),
+      mensagem: message,
+      ultimaTentativaEm: FieldValue.serverTimestamp(),
+      criadoEm: fresh.data()?.criadoEm ?? FieldValue.serverTimestamp(),
       atualizadoEm: FieldValue.serverTimestamp(),
     }, { merge: true });
-    changed = true;
+    return true;
   });
-  if (changed) await batch.commit();
+  if (!acquired) return false;
+
+  const destination = normalizePhone(config.avisoNovaReservaEquipeNumero) || DESTINATION_DEFAULT;
+  const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
+    destination,
+    message,
+    `resumo-reservas-dia:${today}:${destination}`,
+  ).catch((error): ResultadoEnvio => ({
+    enviado: false,
+    motivo: error instanceof Error ? error.message : String(error),
+  }));
+
+  if (result.enviado) {
+    await summaryRef.set({
+      status: "enviado",
+      destino: destination,
+      messageId: result.messageId ?? null,
+      enviadoEm: FieldValue.serverTimestamp(),
+      ultimoErro: FieldValue.delete(),
+      proximaTentativaEm: FieldValue.delete(),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return true;
+  }
+
+  const finalFailure = attempts >= MAX_ATTEMPTS;
+  await summaryRef.set({
+    status: finalFailure ? "erro" : "aguardando",
+    ultimoErro: result.motivo ?? "erro_envio",
+    ...(finalFailure
+      ? { proximaTentativaEm: FieldValue.delete() }
+      : { proximaTentativaEm: Timestamp.fromMillis(Date.now() + Math.min(30, attempts * 3) * 60_000) }),
+    atualizadoEm: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return false;
 };
 
 export const enfileirarAvisoNovaReservaEquipe = async (
@@ -144,25 +231,44 @@ export const enfileirarAvisoNovaReservaEquipe = async (
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const ref = db.collection("whatsapp_notificacoes_internas").doc(reservaId);
-  const dataReserva = reservationDate(reserva.data ?? reserva.Data);
-  const initialStatus = dataReserva > dateKey() ? "agendado" : dataReserva === dateKey() ? "aguardando" : "ignorado";
+  const reservaRef = db.collection("reservas").doc(reservaId);
+  const today = dateKey();
+  const dataReservaInformada = reservationDate(reserva.data ?? reserva.Data);
+  const initialStatusByDate = (dataReserva: string, origemAutomatizada: boolean) => !origemAutomatizada
+    ? "ignorado"
+    : dataReserva === today
+      ? "aguardando"
+      : "ignorado";
   return db.runTransaction(async (transaction) => {
     const existing = await transaction.get(ref);
+    const canonicalSnapshot = await transaction.get(reservaRef);
     if (existing.exists) return false;
+    const canonical = { ...(canonicalSnapshot.data() ?? {}), ...reserva };
+    const dataReserva = reservationDate(canonical.data ?? canonical.Data) || dataReservaInformada;
+    const origemAutomatizada = reservaPodeReceberDisparoAutomatico(canonical);
+    const initialStatus = initialStatusByDate(dataReserva, origemAutomatizada);
+    const motivo = !origemAutomatizada
+      ? reservaEhManual(canonical) ? "reserva_manual" : "origem_nao_automatizada"
+      : dataReserva > today
+        ? "incluida_no_resumo_da_data"
+        : dataReserva < today
+          ? "reserva_passada"
+          : null;
     transaction.create(ref, {
       reservaId,
-      dataEntrada: dateKey(),
-      nome: clean(reserva.nome ?? reserva.Nome, 160),
-      telefone: clean(reserva.telefone ?? reserva.Telefone, 80),
-      email: clean(reserva.email ?? reserva.Email, 240),
+      dataEntrada: today,
+      nome: clean(canonical.nome ?? canonical.Nome, 160),
+      telefone: clean(canonical.telefone ?? canonical.Telefone, 80),
+      email: clean(canonical.email ?? canonical.Email, 240),
       data: dataReserva,
-      horario: clean(reserva.horario ?? reserva.Horario, 100),
-      atividade: clean(reserva.atividade ?? reserva.Atividade, 300),
-      participantes: numberValue(reserva.participantes ?? reserva.Participantes),
-      valor: numberValue(reserva.valor ?? reserva.Valor),
-      formaPagamento: clean(reserva.formaPagamento, 80),
-      statusReserva: clean(reserva.status ?? reserva.Status ?? "aguardando", 80),
+      horario: clean(canonical.horario ?? canonical.Horario, 100),
+      atividade: clean(canonical.atividade ?? canonical.Atividade, 300),
+      participantes: numberValue(canonical.participantes ?? canonical.Participantes),
+      valor: numberValue(canonical.valor ?? canonical.Valor),
+      formaPagamento: clean(canonical.formaPagamento, 80),
+      statusReserva: clean(canonical.status ?? canonical.Status ?? "aguardando", 80),
       status: initialStatus,
+      ...(motivo ? { motivo } : {}),
       tentativas: 0,
       destino: DESTINATION_DEFAULT,
       criadoEm: FieldValue.serverTimestamp(),
@@ -178,9 +284,13 @@ export const reenfileirarAvisoNovaReservaEquipe = async (reservaId: string) => {
   const ref = db.collection("whatsapp_notificacoes_internas").doc(reservaId);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new Error("RESERVATION_ALERT_NOT_FOUND");
+  const reservationSnapshot = await db.collection("reservas").doc(reservaId).get();
+  const reservation = reservationSnapshot.data() ?? {};
   const visitDate = reservationDate(snapshot.data()?.data);
+  const eligible = visitDate === dateKey() && reservaPodeReceberDisparoAutomatico(reservation);
   await ref.update({
-    status: visitDate > dateKey() ? "agendado" : visitDate === dateKey() ? "aguardando" : "ignorado",
+    status: eligible ? "aguardando" : "ignorado",
+    motivo: eligible ? FieldValue.delete() : reservaEhManual(reservation) ? "reserva_manual" : "fora_da_data_da_visita",
     tentativas: 0,
     proximaTentativaEm: Timestamp.now(),
     ultimoErro: FieldValue.delete(),
@@ -197,7 +307,27 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     if (!fresh.exists) return null;
     const reservationRef = db.collection("reservas").doc(clean(fresh.data()?.reservaId, 100));
     const reservation = await transaction.get(reservationRef);
+    const summary = await transaction.get(db.collection("whatsapp_resumos_reservas_dia").doc(today));
     const control = await transaction.get(controlRef);
+    const summarizedReservationIds = Array.isArray(summary.data()?.reservaIds)
+      ? summary.data()!.reservaIds.map(String)
+      : [];
+    if (summary.data()?.status === "enviado" && summarizedReservationIds.includes(clean(fresh.data()?.reservaId, 100))) {
+      transaction.update(document.ref, {
+        status: "ignorado",
+        motivo: "incluida_no_resumo_da_manha",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      return null;
+    }
+    if (clean(fresh.data()?.dataEntrada, 20) !== today) {
+      transaction.update(document.ref, {
+        status: "ignorado",
+        motivo: "reserva_nao_criada_no_dia",
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      return null;
+    }
     if (reservationDate(fresh.data()?.data) !== today) {
       transaction.update(document.ref, {
         status: reservationDate(fresh.data()?.data) > today ? "agendado" : "ignorado",
@@ -210,9 +340,16 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
       const reservationData = reservation.exists ? reservation.data()! : {};
       const canceled = ["cancelada", "cancelado", "canceled", "cancelled", "estornada", "estornado"]
         .includes(clean(reservationData.status, 40).toLowerCase());
+      const manual = reservaEhManual(reservationData);
       transaction.update(document.ref, {
-        status: canceled || reservationData.origem === "manual" ? "ignorado" : "aguardando_confirmacao",
-        motivo: canceled ? "reserva_cancelada" : reservationData.origem === "manual" ? "reserva_manual" : "pagamento_nao_confirmado",
+        status: canceled || !reservaPodeReceberDisparoAutomatico(reservationData) ? "ignorado" : "aguardando_confirmacao",
+        motivo: canceled
+          ? "reserva_cancelada"
+          : manual
+            ? "reserva_manual"
+            : !reservaPodeReceberDisparoAutomatico(reservationData)
+              ? "origem_nao_automatizada"
+              : "pagamento_nao_confirmado",
         proximaTentativaEm: Timestamp.fromMillis(Date.now() + 5 * 60_000),
         atualizadoEm: FieldValue.serverTimestamp(),
       });
@@ -327,10 +464,11 @@ export const processarAvisosNovaReservaEquipe = async () => {
     const configSnapshot = await db.collection("configuracoes").doc("whatsapp").get();
     const config = configSnapshot.exists ? configSnapshot.data() ?? {} : {};
     if (config.avisoNovaReservaEquipeAtivo === false) return;
-    const startAt = parseMinutes(config.horarioLembreteDia, 8 * 60);
+    const startAt = parseMinutes(config.horarioResumoReservasEquipe, 7 * 60 + 30);
     const nowMinutes = localMinutes();
     if (nowMinutes < startAt || nowMinutes >= 18 * 60) return;
-    await discoverTodayReservations();
+    const summaryReady = await processMorningSummary(config);
+    if (!summaryReady) return;
     const snapshot = await db.collection("whatsapp_notificacoes_internas").where("data", "==", dateKey()).limit(500).get();
     const candidate = snapshot.docs
       .filter((document) => ["aguardando", "agendado", "aguardando_confirmacao", "enviando"].includes(clean(document.data().status, 40)))

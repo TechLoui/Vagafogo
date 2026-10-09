@@ -18,6 +18,7 @@ import {
   isEmailConnectivityError,
   isEmailRateLimitError,
 } from "./emailService";
+import { reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 
 type ReservaEmail = Record<string, any>;
 
@@ -263,7 +264,7 @@ const registrarLimiteEmailAtingido = async (error: unknown) => {
 };
 
 // Reservas manuais sao pagas presencialmente: nao recebem email automatico.
-const reservaEhManual = (reserva: ReservaEmail): boolean => reserva?.origem === "manual";
+const reservaEhManual = (reserva: ReservaEmail): boolean => !reservaPodeReceberDisparoAutomatico(reserva);
 
 function obterStatusFilaEmail(reserva: ReservaEmail): EmailFilaStatus {
   if (reserva.emailEnviado === true) return "enviado";

@@ -4,6 +4,7 @@ import { obterFirestoreAdmin } from "./firebaseAdmin";
 import type { ResultadoEnvio } from "./whatsapp";
 import { TEMPLATE_LEMBRETE_DIA_PADRAO } from "./whatsappAutomationConfig";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
+import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 
 const TIMEZONE = "America/Sao_Paulo";
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_DAILY_REMINDER_WORKER_MS ?? 15000), 10000);
@@ -89,7 +90,7 @@ const eligibleReservation = (
 ) => {
   const reservationTime = parseMinutes(data.horario ?? data.Horario, -1);
   const visitHasNotPassed = reservationTime < 0 || localMinutes() < reservationTime;
-  return data.origem !== "manual"
+  return reservaPodeReceberDisparoAutomatico(data)
     && data.confirmada === true
     && ["pago", "confirmada", "confirmado"].includes(clean(data.status, 40).toLowerCase())
     && reservationDate(data.data ?? data.Data) === today
@@ -235,9 +236,14 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
       && reservaCriadaOuConfirmadaNoDia(reservationData, today, reservationSnapshot.createTime),
     );
     if (!reservationSnapshot.exists || !reservationData || !eligibleReservation(reservationData, today, reservationSnapshot.createTime)) {
+      const manual = Boolean(reservationData && reservaEhManual(reservationData));
       await document.ref.set({
         status: "ignorado",
-        motivo: sameDayConfirmation ? "reserva_criada_ou_confirmada_no_dia" : "reserva_nao_elegivel",
+        motivo: manual
+          ? "reserva_manual"
+          : sameDayConfirmation
+            ? "reserva_criada_ou_confirmada_no_dia"
+            : "reserva_nao_elegivel",
         atualizadoEm: FieldValue.serverTimestamp(),
       }, { merge: true });
       return;

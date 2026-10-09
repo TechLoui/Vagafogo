@@ -2,6 +2,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { prepararConfirmacaoWhatsapp, type ResultadoEnvio } from "./whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
+import { classificarOrigemReserva, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_CONFIRMATION_WORKER_MS ?? 30000), 10000);
 const MAX_ATTEMPTS = 5;
@@ -42,9 +43,26 @@ export const classificarDataConfirmacaoWhatsapp = (
 };
 
 const reservaConfirmada = (reserva: FirebaseFirestore.DocumentData) =>
-  reserva.origem !== "manual"
-  && reserva.confirmada === true
+  reserva.confirmada === true
   && ["pago", "confirmada", "confirmado"].includes(clean(reserva.status, 40).toLowerCase());
+
+const ignorarPorOrigem = (
+  transaction: FirebaseFirestore.Transaction,
+  ref: FirebaseFirestore.DocumentReference,
+  data: FirebaseFirestore.DocumentData,
+) => {
+  if (reservaPodeReceberDisparoAutomatico(data)) return false;
+  transaction.set(ref, {
+    whatsappConfirmacaoPendente: false,
+    whatsappConfirmacaoStatus: "ignorado",
+    whatsappConfirmacaoErro: classificarOrigemReserva(data) === "desconhecida"
+      ? "origem_nao_automatizada"
+      : "reserva_manual",
+    whatsappConfirmacaoProximaTentativaEm: FieldValue.delete(),
+    whatsappConfirmacaoAtualizadoEm: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return true;
+};
 
 export const enfileirarConfirmacaoReservaWhatsapp = async (reservaId: string, reserva?: Record<string, unknown>) => {
   const db = obterFirestoreAdmin();
@@ -54,6 +72,7 @@ export const enfileirarConfirmacaoReservaWhatsapp = async (reservaId: string, re
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) return false;
     const data = { ...snapshot.data(), ...(reserva ?? {}) };
+    if (ignorarPorOrigem(transaction, ref, data)) return false;
     if (!reservaConfirmada(data) || data.whatsappConfirmacaoEnviado === true) return false;
     const dateEligibility = classificarDataConfirmacaoWhatsapp(data);
     if (dateEligibility !== "elegivel") {
@@ -89,6 +108,7 @@ export const processarConfirmacaoReservaWhatsapp = async (reservaId: string, for
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) return null;
     const data = snapshot.data()!;
+    if (ignorarPorOrigem(transaction, ref, data)) return null;
     if (!reservaConfirmada(data)) return null;
     const dateEligibility = classificarDataConfirmacaoWhatsapp(data);
     if (dateEligibility !== "elegivel") {
