@@ -103,7 +103,15 @@ const confirmedReservationForSummary = (reservation: FirebaseFirestore.DocumentD
   && ["pago", "confirmada", "confirmado"].includes(clean(reservation.status, 40).toLowerCase())
   && reservationDate(reservation.data ?? reservation.Data) === today;
 
-const buildDailySummary = (
+const packageLabel = (reservation: FirebaseFirestore.DocumentData) => {
+  const activity = clean(reservation.atividade ?? reservation.Atividade, 300);
+  if (!activity) return "Pacote não informado";
+  const combo = /\(combo:\s*([^)]*?)(?:\s+-\s+(?:adulto|bari[aá]trico|crian[cç]a|idoso)|\))/i.exec(activity);
+  if (combo?.[1]) return clean(combo[1], 100);
+  return clean(activity.replace(/\s*\(combo:.*$/i, ""), 100) || "Pacote não informado";
+};
+
+export const montarResumoDiarioReservas = (
   today: string,
   reservations: FirebaseFirestore.QueryDocumentSnapshot[],
 ) => {
@@ -126,18 +134,43 @@ const buildDailySummary = (
   ].join("\n");
   if (ordered.length === 0) return `${header}Nenhuma reserva confirmada para hoje.`;
 
+  const groups = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+  ordered.forEach((document) => {
+    const label = packageLabel(document.data());
+    const current = groups.get(label) ?? [];
+    current.push(document);
+    groups.set(label, current);
+  });
+
   let message = header;
   let includedLines = 0;
-  for (const [index, document] of ordered.entries()) {
-    const reservation = document.data();
-    const time = clean(reservation.horario ?? reservation.Horario, 20) || "Sem horário";
-    const name = clean(reservation.nome ?? reservation.Nome, 70) || "Nome não informado";
-    const activity = clean(reservation.atividade ?? reservation.Atividade, 100) || "Experiência não informada";
-    const quantity = numberValue(reservation.participantes ?? reservation.Participantes);
-    const line = `${index + 1}. ${time} • ${name} • ${activity} • ${quantity} pessoa${quantity === 1 ? "" : "s"}\n`;
-    if ((message + line).length > 3850) break;
-    message += line;
-    includedLines += 1;
+  let reachedLimit = false;
+  for (const [label, documents] of groups.entries()) {
+    const groupParticipants = documents.reduce<number>(
+      (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
+      0,
+    );
+    const groupHeader = `*${label}* — ${documents.length} reserva${documents.length === 1 ? "" : "s"}, ${groupParticipants} pessoa${groupParticipants === 1 ? "" : "s"}\n`;
+    if ((message + groupHeader).length > 3850) {
+      reachedLimit = true;
+      break;
+    }
+    message += `${message.endsWith("\n\n") ? "" : "\n"}${groupHeader}`;
+
+    for (const document of documents) {
+      const reservation = document.data();
+      const time = clean(reservation.horario ?? reservation.Horario, 20) || "Sem horário";
+      const name = clean(reservation.nome ?? reservation.Nome, 90) || "Nome não informado";
+      const quantity = numberValue(reservation.participantes ?? reservation.Participantes);
+      const line = `• ${time} • ${quantity} pessoa${quantity === 1 ? "" : "s"} • ${name}\n`;
+      if ((message + line).length > 3850) {
+        reachedLimit = true;
+        break;
+      }
+      message += line;
+      includedLines += 1;
+    }
+    if (reachedLimit) break;
   }
   const omitted = ordered.length - includedLines;
   if (omitted > 0) message += `\n… e mais ${omitted} reserva${omitted === 1 ? "" : "s"}. Consulte a agenda no Admin.`;
@@ -163,7 +196,7 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
   const reservations = await db.collection("reservas").where("data", "==", today).limit(500).get();
   const eligible = reservations.docs.filter((document) => confirmedReservationForSummary(document.data(), today));
   const reservationIds = eligible.map((document) => document.id);
-  const message = buildDailySummary(today, eligible);
+  const message = montarResumoDiarioReservas(today, eligible);
   const attempts = Number(current.data()?.tentativas ?? 0) + 1;
   const acquired = await db.runTransaction(async (transaction) => {
     const fresh = await transaction.get(summaryRef);
