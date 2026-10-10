@@ -45,6 +45,7 @@ type AgentReservationDraftInput = AgentAvailabilityInput & {
   reservaId?: unknown;
   pagamentoId?: unknown;
   pixLinkVagafogo?: unknown;
+  pixCopiaCola?: unknown;
 };
 
 type AgentLeadInput = {
@@ -1191,6 +1192,11 @@ export const criarLinkPixExistenteAgente = async (input: {
     expiraEm: expiresAt.toISOString(),
     reservaId,
     paymentId,
+    // Dados retornados somente pela API interna autenticada. Permitem que o
+    // agente reenvie a mesma cobranca se o WhatsApp falhar no primeiro envio,
+    // sem criar outro PIX ou expor uma URL do provedor.
+    pixKey,
+    qrCodeImage,
   };
 };
 
@@ -1301,6 +1307,7 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   copyText("reservaId", 100);
   copyText("pagamentoId", 100);
   copyText("pixLinkVagafogo", 500);
+  copyText("pixCopiaCola", 2_000);
   return patch;
 };
 
