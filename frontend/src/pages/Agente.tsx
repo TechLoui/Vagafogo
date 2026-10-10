@@ -894,7 +894,7 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
     <div className="agent-lead-metrics">
       <article><small>Leads estruturados</small><strong>{leads.length}</strong><span>{testCount} de teste</span></article>
       <article><small>Em acompanhamento</small><strong>{inProgress}</strong><span>Atualizados durante a conversa</span></article>
-      <article><small>Finalizados</small><strong>{finalized}</strong><span>Resolvidos, convertidos ou suspensos após 2 retomadas</span></article>
+      <article><small>Finalizados</small><strong>{finalized}</strong><span>Resolvidos, convertidos ou suspensos após uma retomada</span></article>
       <article><small>Reservas vinculadas</small><strong>{confirmed}</strong><span>Conversão identificada</span></article>
     </div>
     <article className="agent-card agent-leads-card">
@@ -1260,9 +1260,9 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
     inactivityFirstMinutes: 30,
     inactivitySecondMinutes: 75,
     inactivitySuspendMinutes: 120,
-    inactivityFirstMessage: "Oi! Só passando para saber se você gostaria de continuar. Posso seguir de onde paramos e ajudar com sua dúvida ou reserva. 🌿",
-    inactivitySecondMessage: "Ainda estou por aqui. Se quiser prosseguir, é só me responder; as informações que você já enviou continuam neste atendimento.",
-    inactivitySuspendMessage: "Como não tive retorno, vou pausar este atendimento por agora. Se você voltar dentro dos próximos dias, é só mandar uma mensagem e retomamos de onde paramos, sem precisar repetir o que já informou.",
+    inactivityFirstMessage: "Oi! 🌿 Passando só para saber se você ainda gostaria de continuar. Quando puder, é só me responder — as informações que você já enviou continuam salvas, e retomamos de onde paramos.",
+    inactivitySecondMessage: "Oi! 🌿 Passando só para saber se você ainda gostaria de continuar. Quando puder, é só me responder — as informações que você já enviou continuam salvas, e retomamos de onde paramos.",
+    inactivitySuspendMessage: "O atendimento será suspenso internamente, sem enviar outra mensagem ao cliente.",
     audioNoticeEnabled: true,
     audioNoticeCooldownMinutes: 10,
     audioNoticeText: "Para manter seus dados de reserva corretos, este atendimento automático recebe as informações por texto. Por favor, escreva sua dúvida ou continue pela página oficial:\n\nhttps://vagafogo.com.br/reservar",
@@ -1280,8 +1280,8 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
       ? "O retorno do atendimento humano deve ocorrer após pelo menos 1 minuto."
       : config.inactivityEnabled && config.inactivitySuspendMinutes < config.inactivitySecondMinutes + 5
         ? "A suspensão deve ocorrer pelo menos 5 minutos depois da retomada."
-        : config.inactivityEnabled && (!config.inactivitySecondMessage.trim() || !config.inactivitySuspendMessage.trim())
-          ? "Preencha a mensagem de retomada e a mensagem de suspensão."
+        : config.inactivityEnabled && !config.inactivitySecondMessage.trim()
+          ? "Preencha a mensagem única de retomada."
           : config.audioNoticeEnabled && !config.audioNoticeText.trim()
             ? "Preencha a orientação enviada para áudios."
             : "";
@@ -1305,8 +1305,9 @@ function SettingsPanel({ onMessage, onError }: { onMessage: (text: string) => vo
         <div className="agent-settings-section__head"><span><FaComments /></span><div><h3>Retomada por inatividade</h3><p>Faça uma única tentativa educada e depois suspenda o atendimento sem apagar o contexto.</p></div></div>
         <label className="agent-toggle"><input type="checkbox" checked={config.inactivityEnabled} onChange={(event) => setConfig((current) => ({ ...current, inactivityEnabled: event.target.checked }))} /><span /><div><strong>Ativar retomadas automáticas</strong><small>Não envia retomadas quando o cliente disser que vai decidir e voltar depois.</small></div></label>
         {config.inactivityEnabled ? <>
-          <div className="agent-settings-grid">{field("Enviar a retomada após (min)", "inactivitySecondMinutes", 1, 10, 5)}{field("Suspender atendimento após (min)", "inactivitySuspendMinutes", 1, 15, 5)}</div>
-          <div className="agent-settings-copy-grid">{textarea("Mensagem única de retomada", "inactivitySecondMessage", 1000)}{textarea("Mensagem de suspensão", "inactivitySuspendMessage", 1200)}</div>
+          <div className="agent-settings-grid">{field("Enviar a retomada após (min)", "inactivitySecondMinutes", 1, 10, 5)}{field("Suspender internamente após (min)", "inactivitySuspendMinutes", 1, 15, 5)}</div>
+          {textarea("Mensagem única de retomada", "inactivitySecondMessage", 1000)}
+          <p className="agent-settings-note">Depois dessa tentativa, o acompanhamento é suspenso apenas no sistema. Nenhuma segunda mensagem é enviada ao cliente, e o contexto fica preservado caso ele volte.</p>
         </> : null}
       </section>
 
