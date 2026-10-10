@@ -66,14 +66,17 @@ const TEMPLATE_BOAS_VINDAS_PADRAO =
   "Olá {nome}! 🌿 Seja muito bem-vindo(a) à Fazenda Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.";
 
 const TEMPLATE_CONFIRMACAO_PADRAO =
-  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\n🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.google.com/?q=-15.824453,-48.995220\n\nNos vemos em breve! 🌿";
+  "Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\n🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.app.goo.gl/47wbDVWwAHQuKho86\n\nNos vemos em breve! 🌿";
 
 const BLOCO_LOCALIZACAO_CONFIRMACAO =
-  "🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.google.com/?q=-15.824453,-48.995220";
+  "🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.app.goo.gl/47wbDVWwAHQuKho86";
+
+const URL_LOCALIZACAO_OFICIAL = "https://maps.app.goo.gl/47wbDVWwAHQuKho86";
+const URL_LOCALIZACAO_ANTIGA = /https:\/\/maps\.google\.com\/\?q=-15\.824453,-48\.995220/gi;
 
 const incluirLocalizacaoConfirmacao = (mensagem: string) => {
-  const texto = String(mensagem ?? "").trim();
-  if (!texto || /maps\.google\.com\/\?q=-15\.824453,-48\.995220/i.test(texto)) return texto;
+  const texto = String(mensagem ?? "").trim().replace(URL_LOCALIZACAO_ANTIGA, URL_LOCALIZACAO_OFICIAL);
+  if (!texto || texto.includes(URL_LOCALIZACAO_OFICIAL)) return texto;
   return `${texto}\n\n${BLOCO_LOCALIZACAO_CONFIRMACAO}`;
 };
 

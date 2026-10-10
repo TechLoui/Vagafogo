@@ -101,7 +101,7 @@ const whatsappTemplateMensagemManualPadrao =
   'Olá {nome}!\n\nAqui é o Vagafogo. Estamos entrando em contato sobre sua reserva para {datareserva} {horario}.\n\nAtividade: {atividade}\nParticipantes: {participantes}';
 
 const whatsappTemplateConfirmacaoPagamentoPadrao =
-  'Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\n🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.google.com/?q=-15.824453,-48.995220\n\nNos vemos em breve! 🌿';
+  'Olá {nome}! ✅ Seu pagamento foi confirmado automaticamente e sua reserva na Fazenda Vagafogo está garantida. Não é necessário enviar comprovante.\n\n📅 Data: {data}\n⏰ Horário: {horario}\n🎫 Atividade: {atividade}\n👥 Participantes: {participantes}\n💰 Valor: {valor}\n\n🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.\n📍 https://maps.app.goo.gl/47wbDVWwAHQuKho86\n\nNos vemos em breve! 🌿';
 
 const whatsappTemplateBoasVindasPadrao =
   'Olá {nome}! 🌿 Seja muito bem-vindo(a) à Fazenda Vagafogo. É um prazer receber você hoje! Tenha uma experiência incrível.';

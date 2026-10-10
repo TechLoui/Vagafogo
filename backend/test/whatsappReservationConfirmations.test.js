@@ -47,11 +47,11 @@ test("confirmacao inclui a localizacao mesmo quando o texto foi personalizado", 
   });
   assert.equal(result.enviado, true);
   assert.match(result.mensagem, /Reserva confirmada, Cliente!/);
-  assert.match(result.mensagem, /maps\.google\.com\/\?q=-15\.824453,-48\.995220/);
+  assert.match(result.mensagem, /maps\.app\.goo\.gl\/47wbDVWwAHQuKho86/);
 });
 
 test("confirmacao nao duplica uma localizacao ja configurada", async () => {
-  const location = "https://maps.google.com/?q=-15.824453,-48.995220";
+  const location = "https://maps.app.goo.gl/47wbDVWwAHQuKho86";
   const result = await prepararConfirmacaoWhatsapp("reserva-2", {
     telefone: "5562999999999",
     data: "2026-10-08",
@@ -59,5 +59,17 @@ test("confirmacao nao duplica uma localizacao ja configurada", async () => {
     confirmacaoAutomaticaAtiva: true,
     mensagemConfirmacaoAutomatica: `Reserva confirmada.\n${location}`,
   });
-  assert.equal((result.mensagem.match(/maps\.google\.com/g) || []).length, 1);
+  assert.equal((result.mensagem.match(/maps\.app\.goo\.gl/g) || []).length, 1);
+});
+
+test("confirmacao migra automaticamente a localizacao antiga para a oficial", async () => {
+  const result = await prepararConfirmacaoWhatsapp("reserva-3", {
+    telefone: "5562999999999",
+    data: "2026-10-08",
+  }, {
+    confirmacaoAutomaticaAtiva: true,
+    mensagemConfirmacaoAutomatica: "Reserva confirmada.\nhttps://maps.google.com/?q=-15.824453,-48.995220",
+  });
+  assert.doesNotMatch(result.mensagem, /maps\.google\.com/);
+  assert.match(result.mensagem, /maps\.app\.goo\.gl\/47wbDVWwAHQuKho86/);
 });

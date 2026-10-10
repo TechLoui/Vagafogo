@@ -176,7 +176,7 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
     ...(instructions.length ? ["", "Orientações importantes:", ...instructions] : []),
     "",
     "🚗 Durante o trajeto, fique atento às placas indicando a estrada de acesso à Fazenda Vagafogo.",
-    "📍 https://maps.google.com/?q=-15.824453,-48.995220",
+    "📍 https://maps.app.goo.gl/47wbDVWwAHQuKho86",
     "",
     "Consulte sua reserva em:",
     "https://vagafogo.com.br/minha-reserva",
