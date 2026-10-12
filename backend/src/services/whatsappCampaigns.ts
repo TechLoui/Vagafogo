@@ -7,6 +7,7 @@ import {
   type WhatsappAckEvent,
   type WhatsappInboundEvent,
   type WhatsappMediaPayload,
+  type WhatsappTemplatePayload,
 } from "./whatsapp";
 
 export type CampaignSegment =
@@ -34,6 +35,7 @@ export type CriarCampanhaInput = {
   excluirRecebidosUltimosDias?: number;
   midia?: WhatsappMediaPayload;
   removerMidia?: boolean;
+  modelosOficiais?: Array<{ nome?: string; idioma?: string }>;
 };
 
 type CampaignCustomer = {
@@ -56,6 +58,9 @@ type CampaignCustomer = {
 const CAMPAIGN_SENDING_ENABLED =
   (process.env.WHATSAPP_CAMPAIGNS_ENABLED ?? "false").trim().toLowerCase() === "true";
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_CAMPAIGN_WORKER_MS ?? 15000), 5000);
+const OFFICIAL_WHATSAPP_MODE = ["meta", "meta_cloud", "cloud_api"]
+  .includes(String(process.env.WHATSAPP_PROVIDER ?? "baileys").trim().toLowerCase());
+const DEFAULT_TEMPLATE_LANGUAGE = String(process.env.META_WHATSAPP_TEMPLATE_LANGUAGE ?? "pt_BR").trim() || "pt_BR";
 const TIMEZONE = "America/Sao_Paulo";
 const ACTIVE_STATUSES = ["agendada", "enviando"];
 const SEGMENTS: CampaignSegment[] = ["inactive90", "inactive180", "inactive365", "recurring", "brunch", "trail", "pending", "abandoned", "lost"];
@@ -398,6 +403,7 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
     const segmentCustomers = Array.from(abandonedCustomers.values());
     const eligible: CampaignCustomer[] = [];
     let unknownIncluded = 0;
+    const withoutConsentCustomers: CampaignCustomer[] = [];
     let optedOut = 0;
     let recentlyContacted = 0;
     const recentlyExcluded: CampaignCustomer[] = [];
@@ -405,6 +411,11 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
       const contact = contacts.get(customer.phone);
       if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
         optedOut += 1;
+        return;
+      }
+      if (contact?.marketingOptIn === true) customer.marketingPreference = true;
+      if (OFFICIAL_WHATSAPP_MODE && customer.marketingPreference !== true) {
+        withoutConsentCustomers.push(customer);
         return;
       }
       if (contactReceivedCampaignRecently(contact, exclusionDays)) {
@@ -416,7 +427,6 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
         });
         return;
       }
-      if (contact?.marketingOptIn === true) customer.marketingPreference = true;
       if (customer.marketingPreference !== true) unknownIncluded += 1;
       eligible.push(customer);
     });
@@ -424,6 +434,8 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
       eligible,
       totalSegment: segmentCustomers.length,
       unknownIncluded,
+      withoutConsent: withoutConsentCustomers.length,
+      withoutConsentCustomers,
       optedOut,
       recentlyContacted,
       recentlyExcluded,
@@ -434,6 +446,7 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
   const segmentCustomers = Array.from(customers.values()).filter((customer) => segmentMatches(customer, segment));
   const eligible: CampaignCustomer[] = [];
   let unknownIncluded = 0;
+  const withoutConsentCustomers: CampaignCustomer[] = [];
   let optedOut = 0;
   let recentlyContacted = 0;
   const recentlyExcluded: CampaignCustomer[] = [];
@@ -441,6 +454,11 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
     const contact = contacts.get(customer.phone);
     if (contactExplicitlyOptedOut(contact) || customer.marketingPreference === false) {
       optedOut += 1;
+      return;
+    }
+    if (contact?.marketingOptIn === true) customer.marketingPreference = true;
+    if (OFFICIAL_WHATSAPP_MODE && customer.marketingPreference !== true) {
+      withoutConsentCustomers.push(customer);
       return;
     }
     if (contactReceivedCampaignRecently(contact, exclusionDays)) {
@@ -452,7 +470,6 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
       });
       return;
     }
-    if (contact?.marketingOptIn === true) customer.marketingPreference = true;
     if (customer.marketingPreference !== true) unknownIncluded += 1;
     eligible.push(customer);
   });
@@ -461,6 +478,8 @@ const loadAudience = async (segment: CampaignSegment, exclusionDays = 0) => {
     eligible,
     totalSegment: segmentCustomers.length,
     unknownIncluded,
+    withoutConsent: withoutConsentCustomers.length,
+    withoutConsentCustomers,
     optedOut,
     recentlyContacted,
     recentlyExcluded,
@@ -476,6 +495,16 @@ const validateInput = (input: CriarCampanhaInput) => {
     .map((value) => clean(value, 1500))
     .filter(Boolean))).slice(0, 5);
   if (!variacoes.length) throw new Error("CAMPAIGN_VARIANT_REQUIRED");
+  const modelosOficiais = (Array.isArray(input.modelosOficiais) ? input.modelosOficiais : [])
+    .map((model) => ({
+      nome: clean(model?.nome, 512).toLowerCase(),
+      idioma: clean(model?.idioma, 20) || DEFAULT_TEMPLATE_LANGUAGE,
+    }))
+    .filter((model) => /^[a-z0-9_]+$/.test(model.nome))
+    .slice(0, 5);
+  if (OFFICIAL_WHATSAPP_MODE && modelosOficiais.length !== variacoes.length) {
+    throw new Error("META_MARKETING_TEMPLATE_REQUIRED_FOR_EACH_VARIANT");
+  }
   const intervaloMinSegundos = clamp(input.intervaloMinSegundos, 30, 3600, 120);
   const intervaloMaxSegundos = Math.max(
     intervaloMinSegundos,
@@ -490,6 +519,7 @@ const validateInput = (input: CriarCampanhaInput) => {
     nome,
     segmento: input.segmento,
     variacoes,
+    modelosOficiais,
     intervaloMinSegundos,
     intervaloMaxSegundos,
     limiteDiario: clamp(input.limiteDiario, 10, 500, 100),
@@ -511,7 +541,8 @@ const writeCampaignRecipients = async (
 ) => {
   const now = FieldValue.serverTimestamp();
   const retainedIds = new Set(
-    [...audience.eligible, ...audience.recentlyExcluded].map((customer) => hashId(customer.phone)),
+    [...audience.eligible, ...audience.recentlyExcluded, ...audience.withoutConsentCustomers]
+      .map((customer) => hashId(customer.phone)),
   );
 
   if (resetDraft) {
@@ -583,6 +614,32 @@ const writeCampaignRecipients = async (
     });
     await batch.commit();
   }
+
+  for (let index = 0; index < audience.withoutConsentCustomers.length; index += 400) {
+    const batch = campaignRef.firestore.batch();
+    audience.withoutConsentCustomers.slice(index, index + 400).forEach((customer) => {
+      const recipientRef = campaignRef.collection("destinatarios").doc(hashId(customer.phone));
+      batch.set(recipientRef, {
+        campanhaId: campaignRef.id,
+        nome: customer.name,
+        telefone: customer.phone,
+        email: customer.email ?? null,
+        status: "sem_consentimento",
+        tentativas: 0,
+        reservas: customer.bookings,
+        ultimaVisita: customer.lastVisit ?? null,
+        atividades: Array.from(customer.activities).slice(0, 10),
+        reservaIds: customer.reservationIds.slice(-20),
+        consentimentoStatus: "nao_respondido",
+        consentimento: null,
+        temMidia: hasMedia,
+        ultimoErro: "consentimento_explicito_necessario_api_oficial",
+        criadoEm: now,
+        atualizadoEm: now,
+      });
+    });
+    await batch.commit();
+  }
 };
 
 export const criarCampanhaWhatsapp = async (
@@ -601,6 +658,7 @@ export const criarCampanhaWhatsapp = async (
     segmento: config.segmento,
     segmentoLabel: SEGMENT_LABELS[config.segmento],
     variacoes: config.variacoes,
+    modelosOficiais: config.modelosOficiais,
     ...(media ? { midia: media } : {}),
     status: "rascunho",
     canal: "whatsapp",
@@ -615,7 +673,7 @@ export const criarCampanhaWhatsapp = async (
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
     publicoEstimado: audience.eligible.length,
-    semConsentimento: 0,
+    semConsentimento: audience.withoutConsent,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
     excluidosCampanhaRecente: audience.recentlyContacted,
@@ -630,7 +688,7 @@ export const criarCampanhaWhatsapp = async (
     conversoes: 0,
     receitaAtribuida: 0,
     erros: 0,
-    ignoradas: audience.recentlyContacted,
+    ignoradas: audience.recentlyContacted + audience.withoutConsent,
     criadoEm: now,
     atualizadoEm: now,
     criadoPorUid: actor.uid,
@@ -643,7 +701,7 @@ export const criarCampanhaWhatsapp = async (
     id: campaignRef.id,
     publicoSegmento: audience.totalSegment,
     publicoElegivel: audience.eligible.length,
-    semConsentimento: 0,
+    semConsentimento: audience.withoutConsent,
     semRespostaIncluida: audience.unknownIncluded,
     optOut: audience.optedOut,
     excluidosCampanhaRecente: audience.recentlyContacted,
@@ -714,6 +772,7 @@ export const atualizarCampanhaWhatsapp = async (
     segmento: config.segmento,
     segmentoLabel: SEGMENT_LABELS[config.segmento],
     variacoes: config.variacoes,
+    modelosOficiais: config.modelosOficiais,
     ...(nextMedia ? { midia: nextMedia } : { midia: FieldValue.delete() }),
     intervaloMinSegundos: config.intervaloMinSegundos,
     intervaloMaxSegundos: config.intervaloMaxSegundos,
@@ -728,7 +787,7 @@ export const atualizarCampanhaWhatsapp = async (
       publicoElegivel: audience.eligible.length,
       publicoEstimado: audience.eligible.length,
       aguardando: audience.eligible.length,
-      semConsentimento: 0,
+      semConsentimento: audience.withoutConsent,
       semRespostaIncluida: audience.unknownIncluded,
       optOut: audience.optedOut,
       excluidosCampanhaRecente: audience.recentlyContacted,
@@ -742,7 +801,7 @@ export const atualizarCampanhaWhatsapp = async (
       conversoes: 0,
       receitaAtribuida: 0,
       erros: 0,
-      ignoradas: audience.recentlyContacted,
+      ignoradas: audience.recentlyContacted + audience.withoutConsent,
     } : {}),
     editadoEm: FieldValue.serverTimestamp(),
     editadoPorUid: actor.uid,
@@ -760,6 +819,7 @@ export const atualizarCampanhaWhatsapp = async (
     id: campaignId,
     publicoSegmento: audience?.totalSegment ?? Number(data.publicoSegmento ?? 0),
     publicoElegivel: audience?.eligible.length ?? Number(data.publicoElegivel ?? data.publicoEstimado ?? 0),
+    semConsentimento: audience?.withoutConsent ?? Number(data.semConsentimento ?? 0),
     semRespostaIncluida: audience?.unknownIncluded ?? Number(data.semRespostaIncluida ?? 0),
     optOut: audience?.optedOut ?? Number(data.optOut ?? 0),
     excluidosCampanhaRecente: audience?.recentlyContacted ?? Number(data.excluidosCampanhaRecente ?? 0),
@@ -772,6 +832,13 @@ export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
   if (!CAMPAIGN_SENDING_ENABLED) throw new Error("CAMPAIGN_SENDING_DISABLED");
   const { ref, data } = await getCampaign(campaignId);
   if (!["rascunho", "pausada"].includes(String(data.status))) throw new Error("CAMPAIGN_CANNOT_START");
+  if (OFFICIAL_WHATSAPP_MODE) {
+    const variants = Array.isArray(data.variacoes) ? data.variacoes.filter(Boolean) : [];
+    const models = Array.isArray(data.modelosOficiais) ? data.modelosOficiais : [];
+    if (!variants.length || models.length !== variants.length) {
+      throw new Error("META_MARKETING_TEMPLATE_REQUIRED_FOR_EACH_VARIANT");
+    }
+  }
   let eligible = Number(data.publicoElegivel ?? 0);
   if (String(data.status) === "rascunho") {
     const segment = String(data.segmento ?? "") as CampaignSegment;
@@ -785,12 +852,12 @@ export const iniciarCampanhaWhatsapp = async (campaignId: string) => {
       publicoElegivel: eligible,
       publicoEstimado: eligible,
       aguardando: eligible,
-      semConsentimento: 0,
+      semConsentimento: audience.withoutConsent,
       semRespostaIncluida: audience.unknownIncluded,
       optOut: audience.optedOut,
       excluirRecebidosUltimosDias: exclusionDays,
       excluidosCampanhaRecente: audience.recentlyContacted,
-      ignoradas: audience.recentlyContacted,
+      ignoradas: audience.recentlyContacted + audience.withoutConsent,
       duplicidadesEliminadas: audience.duplicateRecords,
       atualizadoEm: FieldValue.serverTimestamp(),
     });
@@ -814,6 +881,13 @@ export const retomarCampanhaWhatsapp = async (campaignId: string) => {
   if (!CAMPAIGN_SENDING_ENABLED) throw new Error("CAMPAIGN_SENDING_DISABLED");
   const { ref, data } = await getCampaign(campaignId);
   if (String(data.status) !== "pausada") throw new Error("CAMPAIGN_NOT_PAUSED");
+  if (OFFICIAL_WHATSAPP_MODE) {
+    const variants = Array.isArray(data.variacoes) ? data.variacoes.filter(Boolean) : [];
+    const models = Array.isArray(data.modelosOficiais) ? data.modelosOficiais : [];
+    if (!variants.length || models.length !== variants.length) {
+      throw new Error("META_MARKETING_TEMPLATE_REQUIRED_FOR_EACH_VARIANT");
+    }
+  }
   await ref.update({ status: "agendada", proximoDisparoEm: Timestamp.now(), atualizadoEm: FieldValue.serverTimestamp() });
 };
 
@@ -891,10 +965,31 @@ const enviarViaDisparadorCampanhas = async (
   phone: string,
   text: string,
   media?: WhatsappMediaPayload,
-) => enviarMensagemWhatsappGerenciada(phone, text, media);
+  template?: WhatsappTemplatePayload,
+) => enviarMensagemWhatsappGerenciada(phone, text, media, template);
+
+const montarModeloMarketingOficial = (
+  model: { nome?: unknown; idioma?: unknown } | undefined,
+  recipient: FirebaseFirestore.DocumentData,
+  hasMedia: boolean,
+): WhatsappTemplatePayload | undefined => {
+  if (!OFFICIAL_WHATSAPP_MODE) return undefined;
+  const name = clean(model?.nome, 512).toLowerCase();
+  if (!/^[a-z0-9_]+$/.test(name)) throw new Error("META_MARKETING_TEMPLATE_REQUIRED");
+  const firstName = clean(recipient.nome, 160).split(/\s+/)[0] || "visitante";
+  return {
+    name,
+    languageCode: clean(model?.idioma, 20) || DEFAULT_TEMPLATE_LANGUAGE,
+    category: "marketing",
+    mediaHeader: hasMedia,
+    // Convencao Vagafogo: os modelos de campanha usam {{1}} para o primeiro nome.
+    // Todo o restante do texto fica fixo no modelo aprovado pela Meta.
+    components: [{ type: "body", parameters: [{ type: "text", text: firstName }] }],
+  };
+};
 
 export const enviarTesteInternoCampanhaWhatsapp = async (
-  input: Pick<CriarCampanhaInput, "variacoes" | "midia">,
+  input: Pick<CriarCampanhaInput, "variacoes" | "midia" | "modelosOficiais">,
   actor: { uid: string; email?: string },
 ) => {
   const db = obterFirestoreAdmin();
@@ -929,7 +1024,9 @@ export const enviarTesteInternoCampanhaWhatsapp = async (
     atualizadoEm: FieldValue.serverTimestamp(),
   });
   try {
-    const result = await enviarViaDisparadorCampanhas(destination, message, media);
+    const modelos = Array.isArray(input.modelosOficiais) ? input.modelosOficiais : [];
+    const template = montarModeloMarketingOficial(modelos[variantIndex], { nome: "Equipe Vagafogo" }, Boolean(media));
+    const result = await enviarViaDisparadorCampanhas(destination, message, media, template);
     await auditRef.update({
       status: result.enviado ? "enviado" : "erro",
       messageId: result.messageId ?? null,
@@ -984,12 +1081,18 @@ const currentCampaignExclusionReason = async (
   db: FirebaseFirestore.Firestore,
   phone: unknown,
   exclusionDays: number,
+  consentimentoStatus?: unknown,
 ) => {
   const snapshots = await Promise.all(
     phoneVariants(phone).map((variant) => db.collection("crm_whatsapp_contatos").doc(variant).get()),
   );
   const contacts = snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => snapshot.data());
   if (contacts.some(contactExplicitlyOptedOut)) return { reason: "opt_out" as const };
+  if (
+    OFFICIAL_WHATSAPP_MODE
+    && String(consentimentoStatus ?? "") !== "sim"
+    && !contacts.some((contact) => contact?.marketingOptIn === true)
+  ) return { reason: "no_consent" as const };
   const recentContact = contacts
     .map((contact) => ({
       contact,
@@ -1052,15 +1155,18 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
       campaignRef.firestore,
       recipientData.telefone,
       exclusionDays,
+      recipientData.consentimentoStatus,
     );
     if (exclusion) {
       const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
       const batch = campaignRef.firestore.batch();
       batch.update(due.ref, {
-        status: exclusion.reason === "opt_out" ? "opt_out" : "ignorado",
+        status: exclusion.reason === "opt_out" ? "opt_out" : exclusion.reason === "no_consent" ? "sem_consentimento" : "ignorado",
         ultimoErro: exclusion.reason === "opt_out"
           ? "recusa_ou_opt_out_identificado_antes_do_disparo"
-          : `campanha_recebida_nos_ultimos_${exclusionDays}_dias`,
+          : exclusion.reason === "no_consent"
+            ? "consentimento_explicito_necessario_api_oficial"
+            : `campanha_recebida_nos_ultimos_${exclusionDays}_dias`,
         ...(exclusion.reason === "recent_campaign"
           ? {
               ultimaCampanhaId: exclusion.lastCampaignId ?? null,
@@ -1076,7 +1182,9 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
         ignoradas: FieldValue.increment(1),
         ...(exclusion.reason === "opt_out"
           ? { optOut: FieldValue.increment(1) }
-          : { excluidosCampanhaRecente: FieldValue.increment(1) }),
+          : exclusion.reason === "no_consent"
+            ? { semConsentimento: FieldValue.increment(1) }
+            : { excluidosCampanhaRecente: FieldValue.increment(1) }),
         proximoDisparoEm: nextDispatchAt,
         lockOwner: FieldValue.delete(),
         lockAte: FieldValue.delete(),
@@ -1102,7 +1210,18 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     const media = campaign.midia && typeof campaign.midia === "object"
       ? campaign.midia as WhatsappMediaPayload
       : undefined;
-    const result = await enviarViaDisparadorCampanhas(String(recipientData.telefone ?? ""), message, media);
+    const officialModels = Array.isArray(campaign.modelosOficiais) ? campaign.modelosOficiais : [];
+    const officialTemplate = montarModeloMarketingOficial(
+      officialModels[variantIndex],
+      recipientData,
+      Boolean(media),
+    );
+    const result = await enviarViaDisparadorCampanhas(
+      String(recipientData.telefone ?? ""),
+      message,
+      media,
+      officialTemplate,
+    );
     const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
 
     if (result.enviado) {
@@ -1112,6 +1231,7 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
         status: "enviado",
         mensagem: message,
         variacaoIndice: variantIndex,
+        ...(officialTemplate ? { modeloOficial: officialTemplate.name } : {}),
         messageId: messageId || null,
         midiaEnviada: result.midiaEnviada === true,
         enviadoEm: FieldValue.serverTimestamp(),
@@ -1210,6 +1330,39 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
 const handleAck = async (event: WhatsappAckEvent) => {
   const db = obterFirestoreAdmin();
   if (!db) return;
+  const category = clean(event.category, 40).toLowerCase();
+  const configuredRate = Number(
+    category === "marketing"
+      ? process.env.META_WHATSAPP_RATE_MARKETING_BRL
+      : category === "utility"
+        ? process.env.META_WHATSAPP_RATE_UTILITY_BRL
+        : category === "authentication"
+          ? process.env.META_WHATSAPP_RATE_AUTHENTICATION_BRL
+          : 0,
+  );
+  const statusLabel = clean(event.status, 40) || (event.ack >= 4 ? "read" : event.ack >= 3 ? "delivered" : event.ack <= 0 ? "failed" : "sent");
+  const eventDate = event.eventoEm instanceof Date && Number.isFinite(event.eventoEm.getTime())
+    ? event.eventoEm
+    : new Date();
+  const hasBilling = typeof event.billable === "boolean";
+  await db.collection("crm_whatsapp_mensagens_status").doc(hashId(event.messageId)).set({
+    messageId: event.messageId,
+    provider: clean(event.provider, 40) || (OFFICIAL_WHATSAPP_MODE ? "meta_cloud" : "baileys"),
+    ...(normalizePhone(event.telefone) ? { telefone: normalizePhone(event.telefone) } : {}),
+    status: statusLabel,
+    ack: event.ack,
+    ...(hasBilling ? { billable: event.billable } : {}),
+    ...(category ? { category } : {}),
+    ...(clean(event.pricingModel, 80) ? { pricingModel: clean(event.pricingModel, 80) } : {}),
+    ...(clean(event.conversationId, 240) ? { conversationId: clean(event.conversationId, 240) } : {}),
+    errors: Array.isArray(event.errors) ? event.errors.slice(0, 5) : [],
+    ...(event.billable === true && Number.isFinite(configuredRate) && configuredRate > 0
+      ? { estimativaCustoBRL: configuredRate }
+      : {}),
+    eventoEm: Timestamp.fromDate(eventDate),
+    atualizadoEm: FieldValue.serverTimestamp(),
+    criadoEm: FieldValue.serverTimestamp(),
+  }, { merge: true }).catch(() => undefined);
   const mapping = await db.collection("crm_whatsapp_mensagens").doc(hashId(event.messageId)).get();
   if (!mapping.exists || mapping.data()?.messageId !== event.messageId) return;
   const { campanhaId, destinatarioId } = mapping.data()!;
@@ -1222,7 +1375,13 @@ const handleAck = async (event: WhatsappAckEvent) => {
     const ranks: Record<string, number> = { aguardando: 0, enviando: 1, enviado: 2, entregue: 3, lido: 4, respondido: 5 };
     if (event.ack <= 0) {
       if (current === "erro") return;
-      transaction.update(recipientRef, { status: "erro", erroAposEnvio: "ack_failed", erroEm: FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
+      transaction.update(recipientRef, {
+        status: "erro",
+        erroAposEnvio: event.errors?.[0]?.message || event.errors?.[0]?.title || "ack_failed",
+        erroCodigo: event.errors?.[0]?.code ?? null,
+        erroEm: Timestamp.fromDate(eventDate),
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
       transaction.update(campaignRef, { erros: FieldValue.increment(1), atualizadoEm: FieldValue.serverTimestamp() });
       return;
     }
@@ -1232,7 +1391,7 @@ const handleAck = async (event: WhatsappAckEvent) => {
     const campaignPatch: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = { atualizadoEm: FieldValue.serverTimestamp() };
     if ((ranks[current] ?? 0) < ranks.entregue && ranks[nextStatus] >= ranks.entregue) campaignPatch.entregues = FieldValue.increment(1);
     if ((ranks[current] ?? 0) < ranks.lido && ranks[nextStatus] >= ranks.lido) campaignPatch.lidas = FieldValue.increment(1);
-    transaction.update(recipientRef, { status: nextStatus, [`${nextStatus}Em`]: FieldValue.serverTimestamp(), atualizadoEm: FieldValue.serverTimestamp() });
+    transaction.update(recipientRef, { status: nextStatus, [`${nextStatus}Em`]: Timestamp.fromDate(eventDate), atualizadoEm: FieldValue.serverTimestamp() });
     transaction.update(campaignRef, campaignPatch);
   });
 };
@@ -1277,14 +1436,53 @@ export const obterCapacidadeCampanhasWhatsapp = async () => {
   conectado: whatsapp.status === "ready",
   intervaloMinimoSegundos: 30,
   limiteDiarioMaximo: 500,
-  provedor: "Jatobá / Baileys compartilhado",
-  recomendacao: "As campanhas reutilizam a conexão ativa da Jatobá, com controle de recusas, limites, pausas e monitoramento por destinatário.",
+  provedor: whatsapp.providerLabel ?? (OFFICIAL_WHATSAPP_MODE ? "WhatsApp Cloud API oficial" : "Jatobá / Baileys compartilhado"),
+  provider: whatsapp.provider ?? (OFFICIAL_WHATSAPP_MODE ? "meta_cloud" : "baileys"),
+  exigeConsentimentoExplicito: OFFICIAL_WHATSAPP_MODE,
+  exigeModeloAprovado: OFFICIAL_WHATSAPP_MODE,
+  recomendacao: OFFICIAL_WHATSAPP_MODE
+    ? "Campanhas usam modelos de marketing aprovados pela Meta e incluem somente contatos com consentimento explícito."
+    : "As campanhas reutilizam a conexão ativa da Jatobá, com controle de recusas, limites, pausas e monitoramento por destinatário.",
   };
 };
 
 export const registrarAckCampanhaExterno = async (event: WhatsappAckEvent) => handleAck(event);
 
 export const registrarRespostaCampanhaExterna = async (event: WhatsappInboundEvent) => handleInbound(event);
+
+export const obterMetricasMensagensWhatsapp = async (diasValue: unknown = 30) => {
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const dias = clamp(diasValue, 1, 365, 30);
+  const inicio = new Date(Date.now() - dias * 86400000);
+  const snapshot = await db.collection("crm_whatsapp_mensagens_status")
+    .where("eventoEm", ">=", inicio)
+    .get();
+  const porCategoria: Record<string, number> = {};
+  const porStatus: Record<string, number> = {};
+  let faturaveis = 0;
+  let estimativaCustoBRL = 0;
+  snapshot.docs.forEach((document) => {
+    const data = document.data();
+    const status = clean(data.status, 40) || "desconhecido";
+    const category = clean(data.category, 40) || "sem_categoria";
+    porStatus[status] = (porStatus[status] ?? 0) + 1;
+    porCategoria[category] = (porCategoria[category] ?? 0) + 1;
+    if (data.billable === true) faturaveis += 1;
+    estimativaCustoBRL += Math.max(0, Number(data.estimativaCustoBRL) || 0);
+  });
+  return {
+    dias,
+    inicio: inicio.toISOString(),
+    mensagens: snapshot.size,
+    faturaveis,
+    naoFaturaveis: Math.max(0, snapshot.size - faturaveis),
+    porStatus,
+    porCategoria,
+    estimativaCustoBRL: Math.round(estimativaCustoBRL * 10000) / 10000,
+    observacaoCusto: "Estimativa baseada nas tarifas configuradas; o valor oficial permanece no faturamento da Meta.",
+  };
+};
 
 export const obterAtribuicaoCampanhaPorTelefone = async (telefone: unknown) => {
   const phone = normalizePhone(telefone);

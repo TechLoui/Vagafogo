@@ -1002,10 +1002,12 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
   const email = clean(input.email, 240).toLowerCase();
   const cpf = String(input.cpf ?? "").replace(/\D/g, "");
   const telefone = normalizePhone(input.telefone);
-  if (!nome || !/^\S+@\S+\.\S+$/.test(email) || !cpfValidoParaReservaAgente(cpf) || telefone.length < 10) {
+  if ((email && !/^\S+@\S+\.\S+$/.test(email)) || (cpf && !cpfValidoParaReservaAgente(cpf)) || telefone.length < 10) {
     throw new Error("AGENT_CHECKOUT_PERSONAL_DATA_REQUIRED");
   }
-  if (typeof input.temPet !== "boolean") throw new Error("AGENT_CHECKOUT_PET_ANSWER_REQUIRED");
+  const paymentMethod = clean((input as AgentAvailabilityInput & { formaPagamento?: unknown }).formaPagamento, 30) === "PIX"
+    ? "PIX" as const
+    : "CREDIT_CARD" as const;
 
   // O checkout do Agente sempre permanece no dominio oficial. Mesmo uma
   // variavel de ambiente incorreta nunca pode transformar este retorno em um
@@ -1041,6 +1043,7 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
   const expiresAt = new Date(now.getTime() + AGENT_CHECKOUT_HANDOFF_TTL_MS);
   const payload = {
     version: 1,
+    tipo: "checkout_pagamento" as const,
     tipoOferta: offerType,
     ofertaId: offerId,
     ofertaNome: availability.oferta.nome,
@@ -1056,11 +1059,11 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
     email,
     cpf,
     telefone,
-    temPet: input.temPet,
+    ...(typeof input.temPet === "boolean" ? { temPet: input.temPet } : {}),
     ...(typeof input.whatsappMarketingOptIn === "boolean"
       ? { whatsappMarketingOptIn: input.whatsappMarketingOptIn === true }
       : {}),
-    formaPagamento: "CREDIT_CARD" as const,
+    formaPagamento: paymentMethod,
     valorValidado: availability.valor,
     sessionId: sessionId || null,
     campaignId: campaignId || null,

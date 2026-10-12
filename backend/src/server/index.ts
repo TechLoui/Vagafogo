@@ -30,6 +30,7 @@ import {
   iniciarCampanhaWhatsapp,
   iniciarProcessadorCampanhasWhatsapp,
   obterCapacidadeCampanhasWhatsapp,
+  obterMetricasMensagensWhatsapp,
   obterAtribuicaoCampanhaPorTelefone,
   pausarCampanhaWhatsapp,
   processarFilaCampanhasWhatsapp,
@@ -226,6 +227,8 @@ const mapearStatusWhatsappAgente = (response: AgentResponse) => {
   const connected = body.connected === true;
   return {
     status: ready ? "ready" : connected ? "initializing" : "disconnected",
+    provider: body.provider === "meta_cloud" ? "meta_cloud" : "baileys",
+    providerLabel: body.providerLabel ? String(body.providerLabel) : undefined,
     qr: null,
     lastError: body.lastError ? String(body.lastError) : null,
     authStrategy: "remote",
@@ -233,6 +236,9 @@ const mapearStatusWhatsappAgente = (response: AgentResponse) => {
       wid: String(body.connectedWid ?? body.connectedNumber ?? "") || undefined,
       pushname: "Jatobá — Fazenda Vagafogo",
     },
+    lastWebhookAt: body.lastWebhookAt ? String(body.lastWebhookAt) : null,
+    lastWebhookStatus: body.lastWebhookStatus ? String(body.lastWebhookStatus) : null,
+    meta: body.meta && typeof body.meta === "object" ? body.meta : null,
   };
 };
 
@@ -326,6 +332,10 @@ app.patch('/crm/agente/galeria/padroes/:id', exigirAdminCrm, async (req, res) =>
 
 app.get('/crm/agente/qrcode', exigirAdminCrm, async (_req, res) => {
   responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/qrcode", { timeoutMs: 15_000 }));
+});
+
+app.get('/crm/agente/templates-whatsapp', exigirAdminCrm, async (_req, res) => {
+  responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/templates", { timeoutMs: 20_000 }));
 });
 
 app.post('/crm/agente/logout', exigirAdminCrm, async (_req, res) => {
@@ -730,7 +740,28 @@ app.post('/internal/agente/eventos/ack', exigirServicoAgente, async (req, res) =
     res.status(400).json({ error: "AGENT_ACK_INVALID" });
     return;
   }
-  await registrarAckCampanhaExterno({ messageId, ack });
+  const rawErrors = Array.isArray(req.body?.errors) ? req.body.errors : [];
+  const timestamp = Number(req.body?.timestamp);
+  await registrarAckCampanhaExterno({
+    messageId,
+    ack,
+    status: String(req.body?.status ?? "").trim().slice(0, 40) || undefined,
+    telefone: String(req.body?.telefone ?? "").replace(/\D/g, "").slice(0, 15) || undefined,
+    eventoEm: Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp) : new Date(),
+    billable: typeof req.body?.billable === "boolean" ? req.body.billable : null,
+    category: String(req.body?.category ?? "").trim().slice(0, 40) || null,
+    pricingModel: String(req.body?.pricingModel ?? "").trim().slice(0, 80) || null,
+    conversationId: String(req.body?.conversationId ?? "").trim().slice(0, 240) || null,
+    errors: rawErrors.slice(0, 5).map((item: unknown) => {
+      const error = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      return {
+        code: Number.isFinite(Number(error.code)) ? Number(error.code) : undefined,
+        title: String(error.title ?? "").slice(0, 240) || undefined,
+        message: String(error.message ?? "").slice(0, 500) || undefined,
+      };
+    }),
+    provider: String(req.body?.provider ?? "").trim().slice(0, 40) || undefined,
+  });
   res.status(202).json({ ok: true });
 });
 
@@ -993,6 +1024,15 @@ app.get('/crm/campanhas/capacidade', exigirAdminCrm, async (_req, res) => {
   res.json(await obterCapacidadeCampanhasWhatsapp());
 });
 
+app.get('/crm/whatsapp/metricas', exigirAdminCrm, async (req, res) => {
+  try {
+    res.json(await obterMetricasMensagensWhatsapp(req.query.dias));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
+  }
+});
+
 app.delete('/crm/campanhas/midia', exigirAdminCrm, async (req, res) => {
   try {
     await removerMidiaCampanhaWhatsapp(req.body?.storagePath, obterIdentidadeAdminCrm(res));
@@ -1085,7 +1125,7 @@ app.post('/whatsapp/avisos-reserva/:reservaId/reenviar', exigirAdminCrm, async (
 app.post('/whatsapp/start', exigirAdminCrm, async (_req, res) => {
   const current = await requestAgentService("gateway", "/api/whatsapp/status", { timeoutMs: 15_000 });
   const mapped = mapearStatusWhatsappAgente(current);
-  if (mapped.status === "ready") {
+  if (mapped.status === "ready" || mapped.provider === "meta_cloud") {
     res.json(mapped);
     return;
   }
@@ -1143,6 +1183,7 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
         prepared.mensagem,
         `boas-vindas:${String(reserva.data ?? reserva.Data ?? "sem-data")}:${prepared.telefone}`,
         reserva.nome ?? reserva.Nome,
+        prepared.template,
       )
       : prepared;
 
@@ -1272,7 +1313,7 @@ app.listen(port, async () => {
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
   iniciarProcessadorConfirmacoesReservaAgente();
-  console.log("[whatsapp] Campanhas e automações usam o gateway Baileys já ativo no Agente; Chromium local removido.");
+  console.log(`[whatsapp] Campanhas e automações usam o gateway do Agente (${process.env.WHATSAPP_PROVIDER ?? "baileys"}); navegador local removido.`);
 
   const asaasKey = (process.env.ASAAS_API_KEY ?? "").trim();
   const splitWalletId = (process.env.ASAAS_SPLIT_WALLET_ID ?? "").trim();

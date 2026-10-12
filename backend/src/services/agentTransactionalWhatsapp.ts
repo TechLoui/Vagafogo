@@ -1,5 +1,5 @@
 import { requestAgentService } from "./agentGateway";
-import type { ResultadoEnvio } from "./whatsapp";
+import type { ResultadoEnvio, WhatsappTemplatePayload } from "./whatsapp";
 
 const normalizePhone = (value: unknown) => {
   const digits = String(value ?? "").replace(/\D/g, "");
@@ -14,6 +14,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
   mensagemInformada: unknown,
   requestId: string,
   nomeContato?: unknown,
+  template?: WhatsappTemplatePayload,
 ): Promise<ResultadoEnvio> => {
   const telefone = normalizePhone(telefoneInformado);
   const mensagem = String(mensagemInformada ?? "").trim().slice(0, 4096);
@@ -27,6 +28,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
       text: mensagem,
       requestId: String(requestId ?? "").trim().slice(0, 160),
       contactName: String(nomeContato ?? "").trim().slice(0, 120),
+      ...(template ? { template } : {}),
     },
     timeoutMs: 30_000,
   });

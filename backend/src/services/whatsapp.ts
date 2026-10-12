@@ -13,6 +13,8 @@ type WhatsappStatus =
 
 export type WhatsappStatusPayload = {
   status: WhatsappStatus;
+  provider?: "baileys" | "meta_cloud";
+  providerLabel?: string;
   qr?: string | null;
   lastError?: string | null;
   lastQrAt?: string | null;
@@ -21,6 +23,19 @@ export type WhatsappStatusPayload = {
     wid?: string;
     pushname?: string;
   };
+  lastWebhookAt?: string | null;
+  lastWebhookStatus?: string | null;
+  meta?: {
+    configured?: boolean;
+    missing?: string[];
+    phoneNumberId?: string | null;
+    businessAccountId?: string | null;
+    webhookPath?: string | null;
+    verifiedName?: string | null;
+    qualityRating?: string | null;
+    verificationStatus?: string | null;
+    throughput?: unknown;
+  } | null;
 };
 
 export type WhatsappConfig = {
@@ -41,6 +56,7 @@ export type ResultadoEnvio = {
   telefone?: string;
   messageId?: string;
   midiaEnviada?: boolean;
+  template?: WhatsappTemplatePayload;
 };
 
 export type WhatsappMediaPayload = {
@@ -50,9 +66,36 @@ export type WhatsappMediaPayload = {
   sizeBytes: number;
 };
 
+export type WhatsappTemplateParameter =
+  | { type: "text"; text: string }
+  | { type: "currency"; currency: { fallback_value: string; code: string; amount_1000: number } }
+  | { type: "date_time"; date_time: { fallback_value: string } };
+
+export type WhatsappTemplatePayload = {
+  name: string;
+  languageCode?: string;
+  category?: "marketing" | "utility" | "authentication";
+  mediaHeader?: boolean;
+  components?: Array<{
+    type: "header" | "body" | "button";
+    subType?: "url" | "quick_reply";
+    index?: number;
+    parameters: WhatsappTemplateParameter[];
+  }>;
+};
+
 export type WhatsappAckEvent = {
   messageId: string;
   ack: number;
+  status?: string;
+  telefone?: string;
+  eventoEm?: Date;
+  billable?: boolean | null;
+  category?: string | null;
+  pricingModel?: string | null;
+  conversationId?: string | null;
+  errors?: Array<{ code?: number; title?: string; message?: string }>;
+  provider?: string;
 };
 
 export type WhatsappInboundEvent = {
@@ -78,6 +121,20 @@ const incluirLocalizacaoConfirmacao = (mensagem: string) => {
   const texto = String(mensagem ?? "").trim().replace(URL_LOCALIZACAO_ANTIGA, URL_LOCALIZACAO_OFICIAL);
   if (!texto || texto.includes(URL_LOCALIZACAO_OFICIAL)) return texto;
   return `${texto}\n\n${BLOCO_LOCALIZACAO_CONFIRMACAO}`;
+};
+
+export const criarTemplateUtilitarioWhatsapp = (envName: string, parametros: unknown[]): WhatsappTemplatePayload | undefined => {
+  const name = String(process.env[envName] ?? "").trim();
+  if (!name) return undefined;
+  return {
+    name,
+    languageCode: String(process.env.META_WHATSAPP_TEMPLATE_LANGUAGE ?? "pt_BR").trim() || "pt_BR",
+    category: "utility",
+    components: [{
+      type: "body",
+      parameters: parametros.map((value) => ({ type: "text" as const, text: String(value ?? "-").slice(0, 1024) })),
+    }],
+  };
 };
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
@@ -161,6 +218,7 @@ const enviarTransacional = async (
   mensagem: string,
   requestId: string,
   nomeContato?: unknown,
+  template?: WhatsappTemplatePayload,
 ) => resultadoGateway(await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
   method: "POST",
   body: {
@@ -168,6 +226,7 @@ const enviarTransacional = async (
     text: mensagem,
     requestId: requestId.slice(0, 160),
     contactName: String(nomeContato ?? "").trim().slice(0, 120),
+    ...(template ? { template } : {}),
   },
   timeoutMs: 30_000,
 }), telefone, mensagem);
@@ -186,6 +245,8 @@ export async function obterStatusWhatsApp(): Promise<WhatsappStatusPayload> {
   const connected = body.connected === true;
   return {
     status: ready ? "ready" : connected ? "initializing" : "disconnected",
+    provider: body.provider === "meta_cloud" ? "meta_cloud" : "baileys",
+    providerLabel: body.providerLabel ? String(body.providerLabel) : undefined,
     qr: null,
     lastError: body.lastError ? String(body.lastError) : null,
     authStrategy: "remote",
@@ -193,13 +254,16 @@ export async function obterStatusWhatsApp(): Promise<WhatsappStatusPayload> {
       wid: String(body.connectedWid ?? body.connectedNumber ?? "") || undefined,
       pushname: "Jatobá — Fazenda Vagafogo",
     },
+    lastWebhookAt: body.lastWebhookAt ? String(body.lastWebhookAt) : null,
+    lastWebhookStatus: body.lastWebhookStatus ? String(body.lastWebhookStatus) : null,
+    meta: body.meta && typeof body.meta === "object" ? body.meta as WhatsappStatusPayload["meta"] : null,
   };
 }
 
-// Compatibilidade com integrações antigas. A conexão agora pertence
-// exclusivamente ao gateway Baileys do Agente; este serviço não abre navegador.
+// Compatibilidade com integrações antigas. A conexão pertence ao gateway do
+// Agente (Cloud API oficial ou fallback Baileys); este serviço não abre navegador.
 export function iniciarWhatsApp(): void {
-  console.info("[whatsapp] Conexão centralizada no gateway do Agente; nenhum Chromium local será iniciado.");
+  console.info("[whatsapp] Conexão centralizada no gateway do Agente; nenhum navegador local será iniciado.");
 }
 
 export async function desconectarWhatsApp(): Promise<void> {
@@ -218,7 +282,8 @@ export async function encerrarWhatsAppSeMemoriaAlta(_rssMB: number): Promise<voi
 }
 
 export function logarConfigWhatsapp(): void {
-  console.log("[whatsapp][config] Provedor centralizado: Agente/Baileys (sem Chromium no backend principal).", {
+  console.log("[whatsapp][config] Provedor centralizado no gateway do Agente.", {
+    provider: process.env.WHATSAPP_PROVIDER ?? "baileys",
     gatewayConfigurado: Boolean((process.env.AGENT_GATEWAY_URL ?? "").trim()),
     campanhasHabilitadas: (process.env.WHATSAPP_CAMPAIGNS_ENABLED ?? "false").trim().toLowerCase() === "true",
   });
@@ -228,6 +293,7 @@ export async function enviarMensagemWhatsappGerenciada(
   telefoneInformado: string,
   mensagemInformada: string,
   midia?: WhatsappMediaPayload,
+  template?: WhatsappTemplatePayload,
 ): Promise<ResultadoEnvio> {
   const telefone = normalizarTelefone(telefoneInformado);
   const mensagem = String(mensagemInformada ?? "").trim().slice(0, 4096);
@@ -253,7 +319,12 @@ export async function enviarMensagemWhatsappGerenciada(
 
   const response = await requestAgentService("gateway", "/api/whatsapp/campaign-send", {
     method: "POST",
-    body: { phone: telefone, text: mensagem, ...(mediaBody ? { media: mediaBody } : {}) },
+    body: {
+      phone: telefone,
+      text: mensagem,
+      ...(mediaBody ? { media: mediaBody } : {}),
+      ...(template ? { template } : {}),
+    },
     timeoutMs: 45_000,
   });
   return resultadoGateway(response, telefone, mensagem, Boolean(mediaBody));
@@ -269,7 +340,17 @@ export async function prepararBoasVindasWhatsapp(
   if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
   const template = String(config.mensagemBoasVindas || TEMPLATE_BOAS_VINDAS_PADRAO).trim();
   if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
-  return { enviado: true, telefone, mensagem: montarMensagem(template, { ...reserva, id: reservaId }) };
+  return {
+    enviado: true,
+    telefone,
+    mensagem: montarMensagem(template, { ...reserva, id: reservaId }),
+    template: criarTemplateUtilitarioWhatsapp("META_TEMPLATE_BOAS_VINDAS", [
+      reserva?.nome ?? reserva?.Nome ?? "Visitante",
+      formatarDataReserva(reserva?.data ?? reserva?.Data),
+      reserva?.horario ?? reserva?.Horario ?? "Sem horário específico",
+      reserva?.atividade ?? reserva?.Atividade ?? "Experiência Vagafogo",
+    ]),
+  };
 }
 
 export async function enviarBoasVindasWhatsapp(
@@ -284,6 +365,7 @@ export async function enviarBoasVindasWhatsapp(
     prepared.mensagem,
     `boas-vindas:${reservaId}:${prepared.telefone}`,
     reserva?.nome ?? reserva?.Nome,
+    prepared.template,
   );
 }
 
@@ -302,7 +384,20 @@ export async function prepararConfirmacaoWhatsapp(
   const mensagem = incluirLocalizacaoConfirmacao(
     montarMensagem(template, { ...reserva, id: reservaId }),
   );
-  return { enviado: true, telefone, mensagem };
+  return {
+    enviado: true,
+    telefone,
+    mensagem,
+    template: criarTemplateUtilitarioWhatsapp("META_TEMPLATE_RESERVA_CONFIRMADA", [
+      reserva?.nome ?? reserva?.Nome ?? "Visitante",
+      reserva?.atividade ?? reserva?.Atividade ?? "Experiência Vagafogo",
+      formatarDataReserva(reserva?.data ?? reserva?.Data),
+      reserva?.horario ?? reserva?.Horario ?? "Sem horário específico",
+      reserva?.participantes ?? reserva?.Participantes ?? "-",
+      currencyFormatter.format(Number(reserva?.valor ?? reserva?.Valor ?? 0) || 0),
+      URL_LOCALIZACAO_OFICIAL,
+    ]),
+  };
 }
 
 export async function enviarConfirmacaoWhatsapp(
@@ -317,5 +412,6 @@ export async function enviarConfirmacaoWhatsapp(
     prepared.mensagem,
     `reserva-confirmada:${reservaId}:${prepared.telefone}`,
     reserva?.nome ?? reserva?.Nome,
+    prepared.template,
   );
 }

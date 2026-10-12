@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import type { ResultadoEnvio } from "./whatsapp";
+import { criarTemplateUtilitarioWhatsapp, type ResultadoEnvio } from "./whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 
@@ -227,6 +227,8 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
     destination,
     message,
     `resumo-reservas-dia:${today}:${destination}`,
+    "Uira",
+    criarTemplateUtilitarioWhatsapp("META_TEMPLATE_RESUMO_RESERVAS_DIA", [message]),
   ).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),
@@ -429,6 +431,8 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     destination,
     message,
     `aviso-reserva:${today}:${clean(acquired.data.reservaId, 100)}`,
+    "Uira",
+    criarTemplateUtilitarioWhatsapp("META_TEMPLATE_NOVA_RESERVA_DIA", [message]),
   ).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),

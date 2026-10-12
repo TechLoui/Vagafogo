@@ -1111,13 +1111,13 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     setSelectedDay(new Date(`${initialAgentCheckout.data}T12:00:00`));
     setHorario(initialAgentCheckout.horario);
     setHorariosPorPacote(initialAgentCheckout.horariosPorPacote);
-    setNome(initialAgentCheckout.nome);
-    setEmail(initialAgentCheckout.email);
+    setNome(initialAgentCheckout.nome || "");
+    setEmail(initialAgentCheckout.email || "");
     const phoneDigits = onlyNumbers(initialAgentCheckout.telefone);
     setTelefone(formatPhone(phoneDigits.startsWith("55") && phoneDigits.length > 11 ? phoneDigits.slice(2) : phoneDigits));
-    setCpf(formatCpf(initialAgentCheckout.cpf));
+    setCpf(formatCpf(initialAgentCheckout.cpf || ""));
     setWhatsappMarketingOptIn(initialAgentCheckout.whatsappMarketingOptIn === true);
-    setTemPet(initialAgentCheckout.temPet);
+    setTemPet(typeof initialAgentCheckout.temPet === "boolean" ? initialAgentCheckout.temPet : null);
 
     const groupKey = initialAgentCheckout.tipoOferta === "combo"
       ? `combo:${initialAgentCheckout.ofertaId}`
@@ -1178,7 +1178,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     const existingPix = initialAgentCheckout.tipo === "pix_existente"
       && initialAgentCheckout.formaPagamento === "PIX"
       && Boolean(initialAgentCheckout.pixKey || initialAgentCheckout.qrCodeImage);
-    setFormaPagamento(existingPix ? "PIX" : "CREDIT_CARD");
+    setFormaPagamento(existingPix || initialAgentCheckout.formaPagamento === "PIX" ? "PIX" : "CREDIT_CARD");
     setSubEtapaPagamento(existingPix ? "pix" : "metodo");
     if (existingPix) {
       setPixKey(initialAgentCheckout.pixKey || null);

@@ -39,6 +39,8 @@ type TabKey = "overview" | "sessions" | "internal" | "leads" | "gallery" | "what
 type ContactMode = "bot" | "human" | "blocked";
 
 type AgentStatus = {
+  provider?: "baileys" | "meta_cloud";
+  providerLabel?: string;
   connected?: boolean;
   ready?: boolean;
   build?: string;
@@ -48,6 +50,16 @@ type AgentStatus = {
   lastMessageAt?: string | null;
   privacy?: { conversationStorage?: string; ttlSeconds?: number; firestoreMessages?: boolean; mediaBinariesStored?: boolean };
   contactControls?: { ready?: boolean; lastError?: string | null };
+  lastWebhookAt?: string | null;
+  lastWebhookStatus?: string | null;
+  meta?: {
+    configured?: boolean;
+    missing?: string[];
+    verifiedName?: string | null;
+    qualityRating?: string | null;
+    verificationStatus?: string | null;
+    webhookPath?: string | null;
+  } | null;
 };
 
 type Contact = {
@@ -449,7 +461,7 @@ export function Agente() {
         <header className="agent-topbar">
           <div><span>PAINEL OPERACIONAL</span><strong>{titles[tab].title}</strong><p>{titles[tab].subtitle}</p></div>
           <div className="agent-topbar__actions">
-            <span className={`agent-live-status ${operational ? "is-online" : ""}`}><i />{statusLoading ? "Verificando" : operational ? "WhatsApp conectado" : status.ready ? "Envios protegidos" : "WhatsApp desconectado"}</span>
+            <span className={`agent-live-status ${operational ? "is-online" : ""}`}><i />{statusLoading ? "Verificando" : operational ? status.provider === "meta_cloud" ? "API oficial conectada" : "WhatsApp conectado" : status.ready ? "Envios protegidos" : "WhatsApp desconectado"}</span>
             <button onClick={() => { void loadStatus(); void loadContacts(); }} title="Atualizar"><FaSyncAlt /></button>
             <button onClick={() => void signOut(auth)} title="Sair"><FaSignOutAlt /></button>
           </div>
@@ -589,10 +601,10 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
     <section className="agent-metrics">{cards.map((card) => { const Icon = card.icon; return <article key={card.label} className={`tone-${card.tone}`}><span><Icon /></span><div><small>{card.label}</small><strong>{card.value}</strong></div></article>; })}</section>
     <section className="agent-overview-grid">
       <article className="agent-card agent-connection-card">
-        <div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Canal de atendimento</h2><p>Esta sessão atende clientes e confirma reservas iniciadas pelo Agente. Campanhas usam outra sessão no Admin.</p></div></div>
-        <div className={`agent-connection-state ${status.ready && !controlsUnavailable ? "is-online" : ""}`}><i /><div><strong>{status.ready ? controlsUnavailable ? "Conectado, com envios protegidos" : "WhatsApp conectado" : "WhatsApp desconectado"}</strong><span>{controlsUnavailable ? status.contactControls?.lastError || "Lista de bloqueios indisponível" : status.connectedNumber ? `Número: +${status.connectedNumber}` : status.lastError || "Conecte pelo QR Code para iniciar."}</span></div></div>
+        <div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Canal de atendimento</h2><p>{status.provider === "meta_cloud" ? "Atendimento, confirmações e campanhas usam a API oficial com webhook e templates aprovados." : "Esta sessão atende clientes e confirma reservas iniciadas pelo Agente."}</p></div></div>
+        <div className={`agent-connection-state ${status.ready && !controlsUnavailable ? "is-online" : ""}`}><i /><div><strong>{status.ready ? controlsUnavailable ? "Conectado, com envios protegidos" : status.provider === "meta_cloud" ? "API oficial conectada" : "WhatsApp conectado" : status.provider === "meta_cloud" ? "API oficial não configurada" : "WhatsApp desconectado"}</strong><span>{controlsUnavailable ? status.contactControls?.lastError || "Lista de bloqueios indisponível" : status.connectedNumber ? `Número: +${status.connectedNumber}` : status.lastError || (status.provider === "meta_cloud" ? "Confira as credenciais da Meta no Railway." : "Conecte pelo QR Code para iniciar.")}</span></div></div>
         <dl><div><dt>Último evento</dt><dd>{dateTimeLabel(status.lastMessageAt)}</dd></div><div><dt>Versão do gateway</dt><dd>{status.build || "—"}</dd></div></dl>
-        <button onClick={() => onOpen("whatsapp")}>{status.ready ? "Gerenciar conexão" : "Conectar agora"}<FaArrowLeft /></button>
+        <button onClick={() => onOpen("whatsapp")}>{status.provider === "meta_cloud" ? "Ver API oficial" : status.ready ? "Gerenciar conexão" : "Conectar agora"}<FaArrowLeft /></button>
       </article>
       <article className="agent-card agent-privacy-card">
         <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Privacidade das conversas</h2><p>Configuração aplicada no gateway.</p></div></div>
@@ -600,7 +612,7 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
       </article>
       <article className="agent-card agent-next-card">
         <div className="agent-card__title"><span><FaQrcode /></span><div><h2>Fluxo de reserva</h2><p>Integração preparada para homologação.</p></div></div>
-        <ol><li className="is-current"><b>1</b><span><strong>Consulta real</strong>Experiências, horários e vagas</span></li><li className="is-current"><b>2</b><span><strong>Pagamento seguro</strong>PIX no WhatsApp ou cartão no site</span></li><li className="is-current"><b>3</b><span><strong>Confirmação</strong>Status atualizado pelo sistema Vagafogo</span></li><li className="is-current"><b>4</b><span><strong>Lead final</strong>Registro estruturado sem conversa</span></li></ol>
+        <ol><li className="is-current"><b>1</b><span><strong>Consulta real</strong>Experiências, horários e vagas</span></li><li className="is-current"><b>2</b><span><strong>Checkout seguro</strong>CPF, PIX e cartão somente no site oficial</span></li><li className="is-current"><b>3</b><span><strong>Confirmação</strong>Status atualizado automaticamente</span></li><li className="is-current"><b>4</b><span><strong>Lead final</strong>Registro estruturado sem conversa</span></li></ol>
         <button onClick={() => onOpen("diagnostics")}>Ver diagnóstico<FaArrowLeft /></button>
       </article>
     </section>
@@ -1155,6 +1167,13 @@ function WhatsappPanel({ status, onReload, onMessage, onError }: { status: Agent
   const [phone, setPhone] = useState(() => formatPhone("5562991150376"));
   const [text, setText] = useState("Teste do Agente Vagafogo. Se você recebeu esta mensagem, a conexão está funcionando.");
   const [sending, setSending] = useState(false);
+  const [metrics, setMetrics] = useState<{ mensagens?: number; faturaveis?: number; estimativaCustoBRL?: number } | null>(null);
+  useEffect(() => {
+    if (status.provider !== "meta_cloud") { setMetrics(null); return; }
+    api("/crm/whatsapp/metricas?dias=30")
+      .then((data) => setMetrics(data as { mensagens?: number; faturaveis?: number; estimativaCustoBRL?: number }))
+      .catch(() => setMetrics(null));
+  }, [status.provider, status.lastWebhookAt]);
 
   const connect = async () => {
     setConnecting(true); setQr("");
@@ -1175,13 +1194,14 @@ function WhatsappPanel({ status, onReload, onMessage, onError }: { status: Agent
   };
 
   const canSend = Boolean(status.ready && status.contactControls?.ready !== false);
+  const official = status.provider === "meta_cloud";
   return <div className="agent-two-columns">
-    <article className="agent-card agent-whatsapp-card"><div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>Número do agente</h2><p>Use apenas este gateway para o número conectado.</p></div></div><div className={`agent-connection-state ${status.ready ? "is-online" : ""}`}><i /><div><strong>{status.ready ? "Conectado e pronto" : "Desconectado"}</strong><span>{status.connectedNumber ? formatPhone(status.connectedNumber) : status.lastState || "Aguardando conexão"}</span></div></div>
-      {!status.ready ? <button className="agent-primary" onClick={() => void connect()} disabled={connecting}><FaPlug />{connecting ? "Gerando QR Code…" : "Conectar por QR Code"}</button> : <button className="agent-danger-outline" onClick={async () => { try { await api("/crm/agente/logout", { method: "POST" }); setQr(""); await onReload(); onMessage("WhatsApp desconectado."); } catch (caught) { onError(caught); } }}><FaUnlink /> Desconectar</button>}
+    <article className="agent-card agent-whatsapp-card"><div className="agent-card__title"><span><FaWhatsapp /></span><div><h2>{official ? "WhatsApp Cloud API" : "Número do agente"}</h2><p>{official ? "Conexão oficial por credenciais e webhook, sem leitura de QR Code." : "Use apenas este gateway para o número conectado."}</p></div></div><div className={`agent-connection-state ${status.ready ? "is-online" : ""}`}><i /><div><strong>{status.ready ? official ? "API oficial pronta" : "Conectado e pronto" : official ? "Configuração pendente" : "Desconectado"}</strong><span>{status.connectedNumber ? formatPhone(status.connectedNumber) : status.lastState || "Aguardando conexão"}</span></div></div>
+      {official ? <dl><div><dt>Nome verificado</dt><dd>{status.meta?.verifiedName || "—"}</dd></div><div><dt>Qualidade</dt><dd>{status.meta?.qualityRating || "—"}</dd></div><div><dt>Último webhook</dt><dd>{dateTimeLabel(status.lastWebhookAt)}</dd></div><div><dt>Mensagens (30 dias)</dt><dd>{metrics?.mensagens ?? "—"}</dd></div><div><dt>Faturáveis (30 dias)</dt><dd>{metrics?.faturaveis ?? "—"}</dd></div><div><dt>Custo estimado</dt><dd>{typeof metrics?.estimativaCustoBRL === "number" ? metrics.estimativaCustoBRL.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</dd></div><div><dt>Webhook</dt><dd>{status.meta?.webhookPath || "/webhooks/whatsapp"}</dd></div></dl> : !status.ready ? <button className="agent-primary" onClick={() => void connect()} disabled={connecting}><FaPlug />{connecting ? "Gerando QR Code…" : "Conectar por QR Code"}</button> : <button className="agent-danger-outline" onClick={async () => { try { await api("/crm/agente/logout", { method: "POST" }); setQr(""); await onReload(); onMessage("WhatsApp desconectado."); } catch (caught) { onError(caught); } }}><FaUnlink /> Desconectar</button>}
       {qr ? <div className="agent-qr"><img src={qr} alt="QR Code do WhatsApp" /><strong>Escaneie em Aparelhos conectados</strong><span>WhatsApp → Menu → Aparelhos conectados → Conectar aparelho</span></div> : null}
       {status.lastError || status.contactControls?.lastError ? <p className="agent-inline-error">{status.contactControls?.lastError || status.lastError}</p> : null}
     </article>
-    <article className="agent-card agent-test-card"><div className="agent-card__title"><span><FaPaperPlane /></span><div><h2>Disparo de teste</h2><p>Valide uma mensagem isolada antes de ativar os fluxos.</p></div></div><label>Telefone com DDI<input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} placeholder="+55 (62) 99999-9999" /></label><label>Mensagem<textarea value={text} onChange={(event) => setText(event.target.value)} /></label><button className="agent-primary" disabled={sending || !canSend || !phone || !text.trim()} onClick={async () => { setSending(true); try { await api("/crm/agente/teste-whatsapp", { method: "POST", body: JSON.stringify({ phone, text }) }); onMessage("Mensagem de teste enviada."); } catch (caught) { onError(caught); } finally { setSending(false); } }}><FaPaperPlane />{sending ? "Enviando…" : "Enviar teste"}</button><small>Contatos bloqueados não recebem nem mesmo disparos de teste.</small></article>
+    <article className="agent-card agent-test-card"><div className="agent-card__title"><span><FaPaperPlane /></span><div><h2>Disparo de teste</h2><p>Valide uma mensagem isolada antes de ativar os fluxos.</p></div></div><label>Telefone com DDI<input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} placeholder="+55 (62) 99999-9999" /></label><label>Mensagem<textarea value={text} onChange={(event) => setText(event.target.value)} /></label><button className="agent-primary" disabled={sending || !canSend || !phone || !text.trim()} onClick={async () => { setSending(true); try { await api("/crm/agente/teste-whatsapp", { method: "POST", body: JSON.stringify({ phone, text }) }); onMessage("Mensagem de teste enviada."); } catch (caught) { onError(caught); } finally { setSending(false); } }}><FaPaperPlane />{sending ? "Enviando…" : "Enviar teste"}</button><small>{official ? "Texto livre funciona dentro da janela de 24 horas do contato. Fora dela, use um template aprovado." : "Contatos bloqueados não recebem nem mesmo disparos de teste."}</small></article>
   </div>;
 }
 
