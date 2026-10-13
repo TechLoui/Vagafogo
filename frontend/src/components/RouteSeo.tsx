@@ -10,8 +10,6 @@ const publicSeoPaths: SeoPath[] = [
   "/planeje-sua-visita",
   "/educacao-ambiental",
   "/reservar",
-  "/politica-de-privacidade",
-  "/exclusao-de-dados",
 ];
 
 const privatePages: Record<string, { title: string; description: string }> = {

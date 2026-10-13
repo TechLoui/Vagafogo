@@ -133,27 +133,6 @@ const SEO_PAGES = {
       { name: "Reservar", path: "/reservar" },
     ],
   },
-  "/politica-de-privacidade": {
-    title: "Política de Privacidade | Fazenda Vagafogo",
-    description:
-      "Entenda como a Fazenda Vagafogo trata dados no site, nas reservas, no CRM e no atendimento pelo WhatsApp.",
-    canonicalPath: "/politica-de-privacidade",
-    schemaType: "WebPage",
-    breadcrumbs: [
-      { name: "Início", path: "/" },
-      { name: "Política de Privacidade", path: "/politica-de-privacidade" },
-    ],
-  },
-  "/exclusao-de-dados": {
-    title: "Exclusão de dados | Fazenda Vagafogo",
-    description: "Veja como solicitar a exclusão ou anonimização de dados pessoais tratados pela Fazenda Vagafogo.",
-    canonicalPath: "/exclusao-de-dados",
-    schemaType: "WebPage",
-    breadcrumbs: [
-      { name: "Início", path: "/" },
-      { name: "Exclusão de dados", path: "/exclusao-de-dados" },
-    ],
-  },
 } as const satisfies Record<string, SeoDefinition>;
 
 export type SeoPath = keyof typeof SEO_PAGES;
