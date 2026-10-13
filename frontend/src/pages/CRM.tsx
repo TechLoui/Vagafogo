@@ -214,7 +214,6 @@ type CampaignRecord = {
   nextDispatchAt?: string;
   lastDispatchAt?: string;
   variants?: string[];
-  officialModels?: Array<{ nome: string; idioma: string }>;
   media?: CampaignMedia;
   clicks?: number;
   bookings?: number;
@@ -1085,12 +1084,6 @@ export function CRM() {
                 : raw.mensagem
                   ? [String(raw.mensagem)]
                   : [],
-              officialModels: Array.isArray(raw.modelosOficiais)
-                ? raw.modelosOficiais.map((item) => {
-                    const model = item && typeof item === "object" ? item as Record<string, unknown> : {};
-                    return { nome: String(model.nome ?? ""), idioma: String(model.idioma ?? "pt_BR") };
-                  }).filter((item) => item.nome)
-                : [],
               media: rawMedia
                 ? {
                     storagePath: String(rawMedia.storagePath ?? ""),
@@ -3582,15 +3575,6 @@ function CampaignsSection({
   const [selectedSegment, setSelectedSegment] =
     useState<CampaignSegment>("inactive180");
   const [variants, setVariants] = useState(defaultVariants);
-  const [officialModelNames, setOfficialModelNames] = useState<string[]>(defaultVariants.map(() => ""));
-  const [officialTemplates, setOfficialTemplates] = useState<Array<{
-    name: string;
-    language: string;
-    status: string;
-    category: string;
-    bodyText: string;
-    hasImageHeader: boolean;
-  }>>([]);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState("");
   const [editingCampaign, setEditingCampaign] =
@@ -3610,9 +3594,6 @@ function CampaignsSection({
     envioHabilitado: boolean;
     conectado?: boolean;
     recomendacao?: string;
-    provider?: "baileys" | "meta_cloud";
-    exigeConsentimentoExplicito?: boolean;
-    exigeModeloAprovado?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -3634,39 +3615,7 @@ function CampaignsSection({
         const response = await fetch(`${API_BASE}/crm/campanhas/capacidade`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (response.ok) {
-          const nextCapability = await response.json();
-          setCapability(nextCapability);
-          if (nextCapability?.provider === "meta_cloud") {
-            const templatesResponse = await fetch(`${API_BASE}/crm/agente/templates-whatsapp`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            const templatesBody = await templatesResponse.json().catch(() => ({}));
-            if (templatesResponse.ok) {
-              setOfficialTemplates((Array.isArray(templatesBody.templates) ? templatesBody.templates : [])
-                .map((item: Record<string, unknown>) => {
-                  const components = Array.isArray(item.components) ? item.components as Array<Record<string, unknown>> : [];
-                  const body = components.find((component) => String(component.type ?? "").toUpperCase() === "BODY");
-                  const header = components.find((component) => String(component.type ?? "").toUpperCase() === "HEADER");
-                  return {
-                    name: String(item.name ?? ""),
-                    language: String(item.language ?? "pt_BR"),
-                    status: String(item.status ?? ""),
-                    category: String(item.category ?? ""),
-                    bodyText: String(body?.text ?? ""),
-                    hasImageHeader: String(header?.format ?? "").toUpperCase() === "IMAGE",
-                  };
-                })
-                .filter((item: { name: string; status: string; category: string; bodyText: string }) => (
-                  item.name
-                  && item.status === "APPROVED"
-                  && item.category === "MARKETING"
-                  && /\{\{1\}\}/.test(item.bodyText)
-                  && !/\{\{[2-9]\d*\}\}/.test(item.bodyText)
-                )));
-            }
-          }
-        }
+        if (response.ok) setCapability(await response.json());
       } catch {
         setCapability(null);
       }
@@ -3735,7 +3684,6 @@ function CampaignsSection({
         ? abandonedVariants
         : defaultVariants,
     );
-    setOfficialModelNames((segment === "abandoned" || segment === "lost" ? abandonedVariants : defaultVariants).map(() => ""));
     setMediaFile(null);
     setRemoveExistingMedia(false);
     setExcludeRecentRecipients(true);
@@ -3747,10 +3695,6 @@ function CampaignsSection({
     setEditingCampaign(campaign);
     setSelectedSegment(campaign.segment);
     setVariants(campaign.variants?.length ? campaign.variants : defaultVariants);
-    setOfficialModelNames((campaign.officialModels?.length
-      ? campaign.officialModels
-      : (campaign.variants?.length ? campaign.variants : defaultVariants).map(() => ({ nome: "", idioma: "pt_BR" })))
-      .map((item) => item.nome ? `${item.nome}|${item.idioma || "pt_BR"}` : ""));
     setMediaFile(null);
     setRemoveExistingMedia(false);
     setExcludeRecentRecipients((campaign.exclusionDays ?? 30) > 0);
@@ -3781,8 +3725,6 @@ function CampaignsSection({
           "O envio real permanece bloqueado até a ativação segura do provedor de campanhas.",
         CAMPAIGN_WITHOUT_ELIGIBLE_RECIPIENTS:
           "Nenhum contato elegível restou após excluir recusas e opt-outs.",
-        META_MARKETING_TEMPLATE_REQUIRED_FOR_EACH_VARIANT:
-          "Selecione um modelo de marketing aprovado para cada variação.",
         CAMPAIGN_EDIT_REQUIRES_DRAFT_OR_PAUSED:
           "Pause a campanha antes de editá-la.",
         CAMPAIGN_AUDIENCE_LOCKED_AFTER_START:
@@ -3841,30 +3783,11 @@ function CampaignsSection({
   const saveDraft = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const activeVariants = variants.map((value, index) => ({ value: value.trim(), index })).filter((item) => item.value);
-    const validVariants = activeVariants.map((item) => item.value);
+    const validVariants = variants.map((value) => value.trim()).filter(Boolean);
     if (!validVariants.length) {
       onToast("Adicione ao menos uma variação de mensagem.");
       return;
     }
-    if (capability?.exigeModeloAprovado && activeVariants.some((item) => !officialModelNames[item.index])) {
-      onToast("Selecione um modelo aprovado da Meta para cada variação.");
-      return;
-    }
-    const willHaveMedia = Boolean(mediaFile || (!removeExistingMedia && editingCampaign?.media));
-    if (capability?.exigeModeloAprovado && activeVariants.some((item) => {
-      const selected = officialTemplates.find((template) => `${template.name}|${template.language}` === officialModelNames[item.index]);
-      return !selected || selected.hasImageHeader !== willHaveMedia;
-    })) {
-      onToast(willHaveMedia
-        ? "Campanhas com foto exigem um modelo aprovado com cabeçalho de imagem."
-        : "Selecione um modelo aprovado sem cabeçalho de imagem para campanhas de texto.");
-      return;
-    }
-    const officialModels = activeVariants.map((item) => officialModelNames[item.index]).map((value) => {
-      const [nome, idioma = "pt_BR"] = value.split("|");
-      return { nome, idioma };
-    });
     setSaving(true);
     let uploadedMedia: CampaignMedia | undefined;
     try {
@@ -3873,7 +3796,6 @@ function CampaignsSection({
         nome: String(data.get("name") ?? "").trim(),
         segmento: selectedSegment,
         variacoes: validVariants,
-        ...(capability?.exigeModeloAprovado ? { modelosOficiais: officialModels } : {}),
         intervaloMinSegundos: Number(data.get("intervalMin") ?? 120),
         intervaloMaxSegundos: Number(data.get("intervalMax") ?? 240),
         limiteDiario: Number(data.get("dailyLimit") ?? 100),
@@ -3902,9 +3824,7 @@ function CampaignsSection({
       onToast(
         result.progressoPreservado
           ? "Campanha pausada atualizada. Destinatários e progresso foram preservados; ela continuará com as novas configurações quando você retomar."
-          : capability?.exigeConsentimentoExplicito
-            ? `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semConsentimento ?? 0} sem consentimento explícito; ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`
-            : `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`,
+          : `Rascunho ${editingCampaign ? "atualizado" : "criado"}: ${result.publicoElegivel} elegível(is); ${result.semRespostaIncluida ?? 0} sem resposta incluído(s); ${result.optOut ?? 0} recusa(s)/opt-out(s) e ${result.excluidosCampanhaRecente ?? 0} contato(s) recente(s) excluído(s).`,
       );
     } catch (error) {
       if (uploadedMedia) {
@@ -3925,30 +3845,11 @@ function CampaignsSection({
   };
 
   const sendInternalTest = async () => {
-    const activeVariants = variants.map((value, index) => ({ value: value.trim(), index })).filter((item) => item.value);
-    const validVariants = activeVariants.map((item) => item.value);
+    const validVariants = variants.map((value) => value.trim()).filter(Boolean);
     if (!validVariants.length) {
       onToast("Adicione ao menos uma variação antes do teste.");
       return;
     }
-    if (capability?.exigeModeloAprovado && activeVariants.some((item) => !officialModelNames[item.index])) {
-      onToast("Selecione um modelo aprovado da Meta para cada variação antes do teste.");
-      return;
-    }
-    const willHaveMedia = Boolean(mediaFile || (!removeExistingMedia && editingCampaign?.media));
-    if (capability?.exigeModeloAprovado && activeVariants.some((item) => {
-      const selected = officialTemplates.find((template) => `${template.name}|${template.language}` === officialModelNames[item.index]);
-      return !selected || selected.hasImageHeader !== willHaveMedia;
-    })) {
-      onToast(willHaveMedia
-        ? "O teste com foto exige um modelo aprovado com cabeçalho de imagem."
-        : "O teste em texto exige um modelo aprovado sem cabeçalho de imagem.");
-      return;
-    }
-    const officialModels = activeVariants.map((item) => officialModelNames[item.index]).map((value) => {
-      const [nome, idioma = "pt_BR"] = value.split("|");
-      return { nome, idioma };
-    });
     if (
       !window.confirm(
         "Enviar agora um único teste desta campanha para o número interno configurado? Nenhum cliente da base será incluído.",
@@ -3968,7 +3869,6 @@ function CampaignsSection({
         "/crm/campanhas/teste-interno",
         {
           variacoes: validVariants,
-          ...(capability?.exigeModeloAprovado ? { modelosOficiais: officialModels } : {}),
           ...(testMedia ? { midia: testMedia } : {}),
         },
       );
@@ -4077,7 +3977,6 @@ function CampaignsSection({
       erro: "Erro final",
       opt_out: "Recusa/descadastro",
       ignorado: "Já recebeu no período",
-      sem_consentimento: "Sem consentimento explícito",
     };
     return labels[status] ?? status;
   };
@@ -4559,9 +4458,8 @@ function CampaignsSection({
                       : "Variações A/B da mensagem"}
                   </strong>
                   <small>
-                    {capability?.exigeModeloAprovado
-                      ? "Cada prévia deve corresponder a um modelo de marketing aprovado. A API oficial envia o modelo selecionado e usa {nome} como variável {{1}}."
-                      : "Até cinco textos. A campanha envia exatamente o conteúdo configurado, sem acrescentar links automaticamente."}
+                    Até cinco textos. A campanha envia exatamente o conteúdo
+                    configurado, sem acrescentar links automaticamente.
                   </small>
                 </div>
                 {variants.map((value, index) => (
@@ -4579,46 +4477,15 @@ function CampaignsSection({
                       rows={4}
                       required={index === 0}
                     />
-                    {capability?.exigeModeloAprovado ? (
-                      <select
-                        aria-label={`Modelo oficial da variação ${index + 1}`}
-                        value={officialModelNames[index] ?? ""}
-                        required
-                        onChange={(event) => {
-                          const selectedValue = event.target.value;
-                          setOfficialModelNames((current) => {
-                            const next = [...current];
-                            next[index] = selectedValue;
-                            return next;
-                          });
-                          const selectedTemplate = officialTemplates.find(
-                            (template) => `${template.name}|${template.language}` === selectedValue,
-                          );
-                          if (selectedTemplate?.bodyText) {
-                            setVariants((current) => current.map((item, itemIndex) => (
-                              itemIndex === index
-                                ? selectedTemplate.bodyText.replace(/\{\{1\}\}/g, "{nome}")
-                                : item
-                            )));
-                          }
-                        }}
-                      >
-                        <option value="">Selecione o modelo aprovado da Meta</option>
-                        {officialTemplates.filter((template) => template.hasImageHeader === hasCampaignMedia).map((template) => (
-                          <option key={`${template.name}|${template.language}`} value={`${template.name}|${template.language}`}>
-                            {template.name} · {template.language}
-                          </option>
-                        ))}
-                      </select>
-                    ) : null}
                     {variants.length > 1 ? (
                       <button
                         type="button"
                         onClick={() =>
-                          {
-                            setVariants((current) => current.filter((_, itemIndex) => itemIndex !== index));
-                            setOfficialModelNames((current) => current.filter((_, itemIndex) => itemIndex !== index));
-                          }
+                          setVariants((current) =>
+                            current.filter(
+                              (_, itemIndex) => itemIndex !== index,
+                            ),
+                          )
                         }
                       >
                         Remover
@@ -4630,10 +4497,7 @@ function CampaignsSection({
                   <button
                     className="crm-add-variant"
                     type="button"
-                    onClick={() => {
-                      setVariants((current) => [...current, ""]);
-                      setOfficialModelNames((current) => [...current, ""]);
-                    }}
+                    onClick={() => setVariants((current) => [...current, ""])}
                   >
                     <FaPlus /> Adicionar {hasCampaignMedia ? "legenda" : "variação"}
                   </button>
@@ -4756,9 +4620,7 @@ function CampaignsSection({
                   <small>
                     {editingPausedCampaign
                       ? "A edição mantém quem já recebeu, os resultados registrados e a fila restante. As novas mensagens e configurações serão usadas somente após retomar."
-                      : capability?.exigeConsentimentoExplicito
-                        ? "Na API oficial, o backend deduplica telefones e inclui somente quem aceitou campanhas. Contatos sem resposta, recusas e opt-outs ficam visíveis na lista, mas não recebem disparo."
-                        : "Ao salvar, o backend deduplica telefones, inclui quem aceitou ou ainda não respondeu e exclui somente quem recusou campanhas, pediu descadastro ou recebeu outra campanha dentro da janela configurada."}
+                      : "Ao salvar, o backend deduplica telefones, inclui quem aceitou ou ainda não respondeu e exclui somente quem recusou campanhas, pediu descadastro ou recebeu outra campanha dentro da janela configurada."}
                   </small>
                 </span>
               </div>
@@ -4887,7 +4749,6 @@ function CampaignsSection({
                 "erro",
                 "opt_out",
                 "ignorado",
-                "sem_consentimento",
               ].map((status) => (
                 <button
                   className={recipientFilter === status ? "is-active" : ""}

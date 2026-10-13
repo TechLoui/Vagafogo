@@ -7,7 +7,7 @@ export type AgentCheckoutAnswer = {
 
 export type AgentCheckoutHandoff = {
   version: 1;
-  tipo?: "checkout_cartao" | "checkout_pagamento" | "pix_existente";
+  tipo?: "checkout_cartao" | "pix_existente";
   tipoOferta: "combo" | "pacote";
   ofertaId: string;
   ofertaNome: string;
@@ -19,11 +19,11 @@ export type AgentCheckoutHandoff = {
   idadesPorTipo: Record<string, number[]>;
   perguntasPersonalizadas: AgentCheckoutAnswer[];
   confirmouCarteirinhaBariatrica: boolean;
-  nome?: string;
-  email?: string;
-  cpf?: string;
+  nome: string;
+  email: string;
+  cpf: string;
   telefone: string;
-  temPet?: boolean;
+  temPet: boolean;
   whatsappMarketingOptIn?: boolean;
   formaPagamento: "CREDIT_CARD" | "PIX";
   valorValidado: number;

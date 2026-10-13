@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
-import { criarTemplateUtilitarioWhatsapp, type ResultadoEnvio } from "./whatsapp";
+import type { ResultadoEnvio } from "./whatsapp";
 
 const COLLECTION = "whatsapp_alertas_atendimento_humano";
 const DESTINATION_DEFAULT = "5562991150376";
@@ -89,7 +89,6 @@ const processOne = async (id: string) => {
     mensagem,
     `atendimento-humano:${id}`,
     "Uira",
-    criarTemplateUtilitarioWhatsapp("META_TEMPLATE_ATENDIMENTO_HUMANO", [mensagem]),
   ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
 
   if (result.enviado) {

@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { criarTemplateUtilitarioWhatsapp, type ResultadoEnvio } from "./whatsapp";
+import type { ResultadoEnvio } from "./whatsapp";
 import { TEMPLATE_LEMBRETE_DIA_PADRAO } from "./whatsappAutomationConfig";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
@@ -256,14 +256,6 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
       message,
       `lembrete-dia:${today}:${normalizePhone(reservation.telefone ?? reservation.Telefone)}`,
       reservation.nome ?? reservation.Nome,
-      criarTemplateUtilitarioWhatsapp("META_TEMPLATE_LEMBRETE_DIA", [
-        clean(reservation.nome ?? reservation.Nome, 160).split(/\s+/)[0] || "Visitante",
-        clean(reservation.atividade ?? reservation.Atividade, 240) || "Experiência Vagafogo",
-        reservationDate(reservation.data ?? reservation.Data),
-        clean(reservation.horario ?? reservation.Horario, 40) || "Sem horário específico",
-        Number(reservation.participantes ?? reservation.Participantes ?? 0) || "-",
-        "https://maps.app.goo.gl/47wbDVWwAHQuKho86",
-      ]),
     ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
     const nextGlobalAt = Timestamp.fromMillis(Date.now() + randomDelayMs(config));
     if (result.enviado) {
