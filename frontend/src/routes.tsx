@@ -70,6 +70,20 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: "/politica-de-privacidade",
+        lazy: async () => {
+          const { PrivacyPolicy } = await import("./pages/PrivacyPolicy");
+          return { Component: PrivacyPolicy };
+        },
+      },
+      {
+        path: "/exclusao-de-dados",
+        lazy: async () => {
+          const { DataDeletion } = await import("./pages/DataDeletion");
+          return { Component: DataDeletion };
+        },
+      },
+      {
         path: "/formulario/:publicId",
         lazy: async () => {
           const { FormularioPublico } = await import("./pages/FormularioPublico");

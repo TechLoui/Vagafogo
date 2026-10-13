@@ -175,6 +175,41 @@ const pages = [
     ],
   },
   {
+    outputPath: "politica-de-privacidade/index.html",
+    title: "Política de Privacidade | Fazenda Vagafogo",
+    description:
+      "Entenda como a Fazenda Vagafogo trata dados no site, nas reservas, no CRM e no atendimento pelo WhatsApp.",
+    canonicalPath: "/politica-de-privacidade",
+    schemaType: "WebPage",
+    heading: "Política de Privacidade da Fazenda Vagafogo",
+    highlights: [
+      "Transparência sobre os dados usados em reservas e atendimentos.",
+      "Informações sobre inteligência artificial, campanhas e fornecedores.",
+      "Canais para exercer direitos previstos na LGPD.",
+    ],
+    breadcrumbs: [
+      { name: "Início", path: "/" },
+      { name: "Política de Privacidade", path: "/politica-de-privacidade" },
+    ],
+  },
+  {
+    outputPath: "exclusao-de-dados/index.html",
+    title: "Exclusão de dados | Fazenda Vagafogo",
+    description: "Veja como solicitar a exclusão ou anonimização de dados pessoais tratados pela Fazenda Vagafogo.",
+    canonicalPath: "/exclusao-de-dados",
+    schemaType: "WebPage",
+    heading: "Solicitação de exclusão de dados",
+    highlights: [
+      "Solicitação pelo WhatsApp oficial da Fazenda Vagafogo.",
+      "Validação de identidade para proteger o titular.",
+      "Exclusão ou anonimização quando legalmente aplicável.",
+    ],
+    breadcrumbs: [
+      { name: "Início", path: "/" },
+      { name: "Exclusão de dados", path: "/exclusao-de-dados" },
+    ],
+  },
+  {
     outputPath: "admin/index.html",
     title: "Painel administrativo | Santuário Vagafogo",
     description: "Área restrita de administração do Santuário Vagafogo.",

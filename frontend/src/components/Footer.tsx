@@ -176,9 +176,15 @@ export function Footer() {
           <p className="text-gray-400 text-xs">
             © {currentYear} Santuário Vagafogo. Todos os direitos reservados.
           </p>
-          <p className="text-gray-400 text-xs">
-            Pirenópolis · Goiás · Brasil
-          </p>
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-gray-400 sm:justify-end">
+            <Link to="/politica-de-privacidade" className="transition-colors hover:text-white">
+              Política de Privacidade
+            </Link>
+            <Link to="/exclusao-de-dados" className="transition-colors hover:text-white">
+              Exclusão de dados
+            </Link>
+            <span>Pirenópolis · Goiás · Brasil</span>
+          </div>
         </div>
       </div>
     </footer>
