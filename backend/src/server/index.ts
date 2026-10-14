@@ -1,5 +1,6 @@
 import express, { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
+import { createHash } from "crypto";
 import { criarCobrancaHandler } from "../services/assas";
 import "dotenv/config";
 import webhookRouter, {
@@ -169,8 +170,114 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-14.1-expire-stale-dispatches',
+    build: '2026-10-14.2-site-chat',
     timestamp: new Date().toISOString(),
+  });
+});
+
+type SiteChatWindow = { startedAt: number; count: number };
+const siteChatWindows = new Map<string, SiteChatWindow>();
+let siteChatRateChecks = 0;
+const SITE_CHAT_WINDOW_MS = 10 * 60 * 1000;
+const SITE_CHAT_MAX_MESSAGES = 30;
+
+const normalizeSiteChatPhone = (value: unknown) => {
+  const digits = String(value ?? "").replace(/\D/g, "").slice(0, 15);
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+};
+
+const consumeSiteChatRateLimit = (key: string, windowMs = SITE_CHAT_WINDOW_MS, maximum = SITE_CHAT_MAX_MESSAGES) => {
+  const now = Date.now();
+  siteChatRateChecks += 1;
+  if (siteChatRateChecks % 500 === 0) {
+    for (const [storedKey, value] of siteChatWindows) {
+      if (now - value.startedAt > 60 * 60 * 1000) siteChatWindows.delete(storedKey);
+    }
+  }
+  const current = siteChatWindows.get(key);
+  if (!current || now - current.startedAt >= windowMs) {
+    siteChatWindows.set(key, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= maximum) return false;
+  current.count += 1;
+  return true;
+};
+
+// Canal publico do chat do site. O navegador nunca recebe o token interno do
+// Agente: o backend valida e limita a entrada antes de encaminhar ao mesmo
+// cerebro usado pelo atendimento assistido e pelo CRM.
+app.post('/atendimento/site/mensagem', async (req, res) => {
+  const mensagem = String(req.body?.mensagem ?? "").trim().slice(0, 4096);
+  const nome = String(req.body?.nome ?? "").trim().slice(0, 120);
+  const telefone = normalizeSiteChatPhone(req.body?.telefone);
+  const sessionId = String(req.body?.sessionId ?? "").trim().slice(0, 120);
+  if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || telefone.length < 12 || telefone.length > 13) {
+    res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
+    return;
+  }
+
+  const historySource = Array.isArray(req.body?.historico) ? req.body.historico : [];
+  const historico = historySource
+    .filter((item: any) => item && (item.role === "user" || item.role === "assistant"))
+    .map((item: any) => ({
+      role: item.role,
+      content: String(item.content ?? "").trim().slice(0, 4096),
+    }))
+    .filter((item: { content: string }) => item.content)
+    .slice(-50);
+  const clientIp = req.ip ?? "unknown";
+  const withinSessionLimit = consumeSiteChatRateLimit(`session:${clientIp}:${sessionId}`);
+  const withinIpLimit = consumeSiteChatRateLimit(`ip:${clientIp}`, 60 * 60 * 1000, 120);
+  if (!withinSessionLimit || !withinIpLimit) {
+    res.status(429).json({ error: "SITE_CHAT_RATE_LIMIT", mensagem: "Aguarde alguns minutos antes de enviar outra mensagem." });
+    return;
+  }
+
+  const response = await requestAgentService("ai", "/ask", {
+    method: "POST",
+    body: {
+      pergunta: mensagem,
+      session_id: sessionId,
+      mode: "site",
+      telefone,
+      nome_contato: nome,
+      historico,
+    },
+    timeoutMs: 100_000,
+  });
+  if (response.status < 200 || response.status >= 300 || !response.body || typeof response.body !== "object") {
+    res.status(response.status >= 400 && response.status < 600 ? response.status : 502).json({
+      error: "SITE_CHAT_AGENT_UNAVAILABLE",
+    });
+    return;
+  }
+
+  const body = response.body as Record<string, any>;
+  if (body.handoff && typeof body.handoff === "object") {
+    const sourceMessageId = createHash("sha256")
+      .update(`site-chat\0${sessionId}\0${mensagem}`)
+      .digest("hex");
+    void enfileirarAlertaAtendimentoHumano({
+      telefone,
+      nome,
+      motivo: body.handoff.motivo ?? "excecao_operacional",
+      resumo: body.handoff.resumo ?? mensagem,
+      ultimaMensagem: mensagem,
+      sourceMessageId,
+    }).catch((error) => console.error("[site-chat] Falha ao alertar equipe:", error));
+  }
+
+  res.json({
+    resposta: String(body.resposta ?? "").slice(0, 12_000),
+    session_id: String(body.session_id ?? sessionId).slice(0, 120),
+    media: body.media && typeof body.media === "object" ? body.media : null,
+    mensagens_adicionais: Array.isArray(body.mensagens_adicionais)
+      ? body.mensagens_adicionais.map((item: unknown) => String(item ?? "").slice(0, 4096)).slice(0, 3)
+      : [],
+    handoff: body.handoff && typeof body.handoff === "object" ? body.handoff : null,
   });
 });
 
@@ -771,6 +878,8 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
     return;
   }
   try {
+    const requestedSessionId = String(req.body?.sessionId ?? "").slice(0, 100);
+    const fromSiteChat = requestedSessionId.startsWith("site_");
     // A cobranca nunca confia no valor ou na composicao enviados pela IA. Tudo
     // e recalculado no sistema Vagafogo imediatamente antes de criar o PIX.
     const disponibilidade = await simularReservaAgente(req.body ?? {});
@@ -814,10 +923,10 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
       atribuicao: {
         ...(req.body?.atribuicao && typeof req.body.atribuicao === "object" ? req.body.atribuicao : {}),
         sessionId: String(req.body?.sessionId ?? req.body?.atribuicao?.sessionId ?? "").slice(0, 100),
-        sourceChannel: "whatsapp",
-        utmSource: "whatsapp",
-        utmMedium: "agente",
-        utmCampaign: "reserva_assistida",
+        sourceChannel: fromSiteChat ? "site" : "whatsapp",
+        utmSource: fromSiteChat ? "site" : "whatsapp",
+        utmMedium: fromSiteChat ? "jatoba" : "agente",
+        utmCampaign: fromSiteChat ? "reserva_assistida_site" : "reserva_assistida",
         capturedAt: new Date().toISOString(),
         ...campaignAttribution,
       },

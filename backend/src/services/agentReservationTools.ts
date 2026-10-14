@@ -51,6 +51,7 @@ type AgentReservationDraftInput = AgentAvailabilityInput & {
 type AgentLeadInput = {
   sessionId?: unknown;
   telefone?: unknown;
+  canal?: unknown;
   nome?: unknown;
   email?: unknown;
   etapa?: unknown;
@@ -1020,17 +1021,19 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
   } catch {
     // Mantem o dominio oficial quando a configuracao nao for uma URL valida.
   }
+  const requestedSessionId = clean(input.sessionId, 100);
+  const fromSiteChat = requestedSessionId.startsWith("site_");
   const query = new URLSearchParams({
-    source_channel: "whatsapp",
-    utm_source: "whatsapp",
-    utm_medium: "agente",
-    utm_campaign: "reserva_assistida",
+    source_channel: fromSiteChat ? "site" : "whatsapp",
+    utm_source: fromSiteChat ? "site" : "whatsapp",
+    utm_medium: fromSiteChat ? "jatoba" : "agente",
+    utm_campaign: fromSiteChat ? "reserva_assistida_site" : "reserva_assistida",
   });
   const offerType = availability.oferta.tipo;
   const offerId = availability.oferta.id;
   const date = availability.data;
   const time = availability.horario === "Sem horario especifico" ? "" : availability.horario;
-  const sessionId = clean(input.sessionId, 100);
+  const sessionId = requestedSessionId;
   const campaignId = clean(input.campaignId, 100);
   const recipientId = clean(input.recipientId, 100);
 
@@ -1298,7 +1301,7 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   }
   if (owns(input, "canalConclusao")) {
     const value = clean(input.canalConclusao, 20);
-    if (value === "whatsapp" || value === "site") patch.canalConclusao = value;
+    if (value === "whatsapp" || value === "site" || value === "site_chat") patch.canalConclusao = value;
   }
   if (owns(input, "formaPagamento")) {
     const value = clean(input.formaPagamento, 30).toUpperCase();
@@ -1449,10 +1452,12 @@ const leadArray = (value: unknown, maximum = 10) => Array.isArray(value)
   : [];
 
 const buildAgentLeadPatch = (input: AgentLeadInput, sessionId: string, phone: string, isTest: boolean) => {
+  const sourceChannel = clean(input.canal, 30).toLowerCase();
+  const isSite = !isTest && sourceChannel === "site";
   const patch: FirebaseFirestore.DocumentData = {
-    canal: isTest ? "teste_privado" : "whatsapp",
+    canal: isTest ? "teste_privado" : isSite ? "site" : "whatsapp",
     teste: isTest,
-    origem: isTest ? "simulador_agente" : "agente_whatsapp",
+    origem: isTest ? "simulador_agente" : isSite ? "agente_site" : "agente_whatsapp",
     telefone: phone,
     sessionId,
     etapa: canonicalLeadStage(input.etapa),

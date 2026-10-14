@@ -1,0 +1,307 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useLocation } from "react-router-dom";
+import logo from "../assets/logo.jpg";
+
+const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
+const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
+const STORAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nComo posso te ajudar?";
+
+type ChatMedia = {
+  type?: string;
+  dataUrl?: string;
+  pixPayload?: string;
+  items?: Array<{ dataUrl?: string; titulo?: string; legenda?: string }>;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  media?: ChatMedia | null;
+  additional?: string[];
+  createdAt: number;
+};
+
+type StoredChat = {
+  expiresAt: number;
+  sessionId: string;
+  name: string;
+  phone: string;
+  messages: ChatMessage[];
+};
+
+const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+const createSessionId = () => `site_${createId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+
+const normalizePhone = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 13);
+  if (digits.startsWith("55")) return digits;
+  return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+};
+
+const formatPhone = (value: string) => {
+  let digits = value.replace(/\D/g, "");
+  if (digits.startsWith("55")) digits = digits.slice(2);
+  digits = digits.slice(0, 11);
+  if (!digits) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  const split = digits.length === 11 ? 7 : 6;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, split)}-${digits.slice(split)}`;
+};
+
+const safeStoredChat = (): StoredChat | null => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as StoredChat | null;
+    if (!parsed || parsed.expiresAt < Date.now() || !String(parsed.sessionId).startsWith("site_")) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return {
+      ...parsed,
+      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null })) : [],
+    };
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
+};
+
+function RichText({ children }: { children: string }) {
+  const parts = children.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
+  return (
+    <>
+      {parts.map((part, index): ReactNode => {
+        const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+        if (markdownLink) return <a key={index} href={markdownLink[2]} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{markdownLink[1]}</a>;
+        if (part.startsWith("http")) {
+          const url = part.replace(/[),.;]+$/, "");
+          return <a key={`${part}-${index}`} href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{url}</a>;
+        }
+        if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("*") && part.endsWith("*"))) {
+          return <strong key={index}>{part.replace(/^\*{1,2}|\*{1,2}$/g, "")}</strong>;
+        }
+        return <span key={index}>{part}</span>;
+      })}
+    </>
+  );
+}
+
+function MediaBlock({ media }: { media?: ChatMedia | null }) {
+  const [copied, setCopied] = useState(false);
+  if (!media) return null;
+  if (media.type === "gallery" && media.items?.length) {
+    return (
+      <div className="mt-3 grid gap-2">
+        {media.items.slice(0, 3).map((item, index) => item.dataUrl ? (
+          <figure key={index} className="overflow-hidden rounded-2xl bg-white">
+            <img src={item.dataUrl} alt={item.titulo || item.legenda || "Foto da Fazenda Vagafogo"} className="max-h-56 w-full object-cover" />
+            {(item.legenda || item.titulo) && <figcaption className="px-3 py-2 text-xs text-[#5f574d]">{item.legenda || item.titulo}</figcaption>}
+          </figure>
+        ) : null)}
+      </div>
+    );
+  }
+  if (media.type === "pix") {
+    return (
+      <div className="mt-3 rounded-2xl border border-[#dbe7d3] bg-white p-3">
+        {media.dataUrl && <img src={media.dataUrl} alt="QR Code PIX" className="mx-auto mb-3 w-full max-w-52 rounded-xl" />}
+        {media.pixPayload && (
+          <>
+            <p className="mb-1 text-xs font-semibold text-[#3b4b36]">PIX copia e cola</p>
+            <p className="max-h-24 overflow-auto break-all rounded-lg bg-[#f3f7ee] p-2 text-[11px] leading-relaxed text-[#3b4b36]">{media.pixPayload}</p>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(media.pixPayload || "").then(() => setCopied(true))}
+              className="mt-2 w-full rounded-xl bg-[#20745a] px-3 py-2 text-sm font-semibold text-white"
+            >
+              {copied ? "Código copiado" : "Copiar código PIX"}
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+  if (media.type === "image" && media.dataUrl) {
+    return <img src={media.dataUrl} alt="Imagem enviada pela Jatobá" className="mt-3 max-h-56 w-full rounded-2xl object-cover" />;
+  }
+  return null;
+}
+
+export function openSiteChat() {
+  window.dispatchEvent(new CustomEvent("vagafogo:open-chat"));
+}
+
+export function SiteChatWidget() {
+  const location = useLocation();
+  const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname);
+  const initial = useMemo(safeStoredChat, []);
+  const [open, setOpen] = useState(false);
+  const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
+  const [name, setName] = useState(initial?.name || "");
+  const [phone, setPhone] = useState(initial?.phone || "");
+  const [started, setStarted] = useState(Boolean(initial?.phone));
+  const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : []);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sendingRef = useRef(false);
+
+  useEffect(() => {
+    const openChat = () => setOpen(true);
+    window.addEventListener("vagafogo:open-chat", openChat);
+    return () => window.removeEventListener("vagafogo:open-chat", openChat);
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("atendimento") === "1") setOpen(true);
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!started) return;
+    const persistable = messages.slice(-50).map(({ media: _media, ...message }) => message);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      expiresAt: Date.now() + STORAGE_TTL_MS,
+      sessionId,
+      name,
+      phone,
+      messages: persistable,
+    } satisfies StoredChat));
+  }, [messages, name, phone, sessionId, started]);
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+  }, [messages, loading, open]);
+
+  const begin = (event: FormEvent) => {
+    event.preventDefault();
+    const normalized = normalizePhone(phone);
+    if (normalized.length < 12 || normalized.length > 13) {
+      setError("Informe um WhatsApp válido com DDD.");
+      return;
+    }
+    setPhone(normalized);
+    setStarted(true);
+    setError("");
+    if (!messages.length) setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
+  };
+
+  const send = async () => {
+    const content = draft.trim();
+    if (!content || loading || sendingRef.current) return;
+    sendingRef.current = true;
+    const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
+    const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
+    setMessages((current) => [...current, userMessage]);
+    setDraft("");
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/atendimento/site/mensagem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, historico: history }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.resposta) throw new Error(result.mensagem || "Não foi possível responder agora.");
+      if (result.session_id) setSessionId(String(result.session_id));
+      setMessages((current) => [...current, {
+        id: createId(),
+        role: "assistant",
+        content: String(result.resposta),
+        media: result.media || null,
+        additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
+        createdAt: Date.now(),
+      }]);
+    } catch (cause) {
+      setMessages((current) => current.filter((message) => message.id !== userMessage.id));
+      setDraft(content);
+      setError(cause instanceof Error ? cause.message : "Não foi possível responder agora. Tente novamente.");
+    } finally {
+      sendingRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void send();
+    }
+  };
+
+  if (hidden) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-[80] sm:bottom-6 sm:right-6">
+      {open && (
+        <section aria-label="Atendimento com a Jatobá" className="fixed inset-0 flex flex-col overflow-hidden bg-[#f8faf5] shadow-2xl sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(650px,calc(100vh-7rem))] sm:w-[390px] sm:rounded-[28px] sm:border sm:border-[#dfe7d9]">
+          <header className="flex items-center gap-3 bg-[#214f3e] px-4 py-3.5 text-white">
+            <img src={logo} alt="Fazenda Vagafogo" className="h-11 w-11 rounded-full border-2 border-white/30 object-cover" />
+            <div className="min-w-0 flex-1">
+              <h2 className="font-display text-lg leading-tight">Jatobá</h2>
+              <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
+            </div>
+            <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </header>
+
+          {!started ? (
+            <form onSubmit={begin} className="flex flex-1 flex-col justify-center px-6 py-8">
+              <span className="mb-4 text-4xl">🌿</span>
+              <h3 className="font-display text-2xl text-[#263d31]">Vamos começar?</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#657066]">Informe seu nome e WhatsApp para mantermos o atendimento e sua reserva organizados. Esses dados não autorizam campanhas.</p>
+              <label className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome</label>
+              <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} placeholder="Como podemos chamar você?" className="mt-1 rounded-xl border border-[#d6dfd1] bg-white px-4 py-3 outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+              <label className="mt-4 text-xs font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label>
+              <input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 rounded-xl border border-[#d6dfd1] bg-white px-4 py-3 outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+              {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+              <button type="submit" className="mt-6 rounded-xl bg-[#8b4f23] px-5 py-3 font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">Iniciar atendimento</button>
+              <p className="mt-4 text-center text-[11px] leading-relaxed text-[#7b837c]">O histórico fica disponível neste aparelho por até 7 dias.</p>
+            </form>
+          ) : (
+            <>
+              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
+                {messages.map((message) => (
+                  <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[88%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                      <p className="whitespace-pre-wrap"><RichText>{message.content}</RichText></p>
+                      <MediaBlock media={message.media} />
+                      {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText>{extra}</RichText></p>)}
+                    </div>
+                  </div>
+                ))}
+                {loading && <div className="flex justify-start"><div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">Jatobá está escrevendo<span className="animate-pulse">…</span></div></div>}
+              </div>
+              <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+                {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
+                <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
+                  <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
+                  <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {!open && (
+        <button type="button" onClick={() => setOpen(true)} aria-label="Abrir atendimento com a Jatobá" className="group flex items-center gap-3">
+          <span className="hidden rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg sm:block">Fale com a Jatobá</span>
+          <span className="grid h-16 w-16 place-items-center rounded-full border-2 border-white bg-[#20745a] text-white shadow-xl shadow-[#214f3e]/30 transition-transform group-hover:scale-105">
+            <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.5-4A7.5 7.5 0 0 1 3 13.5v-3A6.5 6.5 0 0 1 9.5 4h5A6.5 6.5 0 0 1 21 10.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></svg>
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}

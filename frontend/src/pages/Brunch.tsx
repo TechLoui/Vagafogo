@@ -98,7 +98,7 @@ const perguntasFrequentes = [
   {
     question: "Como informo uma restrição alimentar?",
     answer:
-      "Antes de reservar, fale com a equipe pelo WhatsApp para confirmar ingredientes e verificar quais orientações podem ser oferecidas para a sua necessidade.",
+      "Antes de reservar, fale com a Jatobá no chat do site para confirmar ingredientes e verificar quais orientações podem ser oferecidas para a sua necessidade.",
   },
 ];
 

@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 import { RouteSeo } from "./RouteSeo";
 import { ScrollToTop } from "./ScrollToTop";
+import { SiteChatWidget } from "./SiteChatWidget";
 import logo from "../assets/logo.jpg";
 
 export function PageLoader() {
@@ -32,6 +33,7 @@ export function AppLayout() {
       <RouteSeo />
       <ScrollToTop />
       <Outlet />
+      <SiteChatWidget />
     </>
   );
 }

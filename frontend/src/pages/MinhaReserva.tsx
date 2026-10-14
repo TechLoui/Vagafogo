@@ -384,14 +384,12 @@ export function MinhaReserva() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <p className="text-xs text-amber-800 leading-relaxed">
-                          Caso já tenha pago, aguarde alguns instantes para a confirmação automática. Em caso de dúvidas, entre em contato pelo{" "}
+                          Caso já tenha pago, aguarde alguns instantes para a confirmação automática. Em caso de dúvidas, fale com a Jatobá pelo{" "}
                           <a
-                            href={`https://wa.me/5562992225471?text=Olá! Preciso de ajuda com a reserva ${reserva.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            href="/?atendimento=1"
                             className="font-semibold underline hover:text-amber-900"
                           >
-                            WhatsApp
+                            chat do site
                           </a>
                           .
                         </p>

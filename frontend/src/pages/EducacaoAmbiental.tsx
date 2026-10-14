@@ -19,7 +19,7 @@ import { Reveal } from "../components/Reveal";
 import educacaoImg from "../assets/educacaoambiental/educacaoambiental-1.jpg";
 import mataImg from "../assets/trilhaecologica/trilhaecologica-2.jpg";
 
-const whatsappUrl = "https://wa.me/5562992225471";
+const whatsappUrl = "/?atendimento=1";
 
 const publicos = [
   {
@@ -81,7 +81,7 @@ const perguntasFrequentes = [
   {
     question: "É necessário agendar?",
     answer:
-      "Sim. O agendamento prévio é necessário para escolas, universidades e grupos. O primeiro passo é consultar a equipe pelo WhatsApp.",
+      "Sim. O agendamento prévio é necessário para escolas, universidades e grupos. O primeiro passo é falar com a Jatobá no chat do site.",
   },
   {
     question: "Onde consulto valores, datas e condições?",
@@ -362,7 +362,7 @@ export function EducacaoAmbiental() {
                         className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#25D366] px-8 py-4 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-[#1ebe5d] sm:w-auto"
                       >
                         <FaWhatsapp className="h-4 w-4" />
-                        Agendar pelo WhatsApp
+                        Agendar com a Jatobá
                       </a>
                     </Magnetic>
                     <Link

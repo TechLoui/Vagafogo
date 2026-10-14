@@ -72,7 +72,7 @@ export function EducationSection() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-amber-900 text-sm leading-relaxed">
-                <strong>Agendamento prévio obrigatório.</strong> Entre em contato via WhatsApp para verificar disponibilidade e condições especiais para grupos.
+                <strong>Agendamento prévio obrigatório.</strong> Fale com a Jatobá no chat do site para verificar disponibilidade e condições para grupos.
               </p>
             </Reveal>
 
@@ -87,12 +87,10 @@ export function EducationSection() {
                 </Link>
               </Magnetic>
               <a
-                href="https://wa.me/5562992225471"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/?atendimento=1"
                 className="inline-flex items-center px-7 py-4 text-sm font-semibold text-emerald-800 hover:underline"
               >
-                Agendar pelo WhatsApp
+                Agendar com a Jatobá
               </a>
             </Reveal>
           </Reveal>

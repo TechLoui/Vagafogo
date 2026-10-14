@@ -39,7 +39,7 @@ const features = [
     title: "Educação Ambiental",
     description:
       "Projeto para escolas, faculdades e grupos. Trilhas guiadas com interpretação sobre flora, fauna, recursos naturais e sustentabilidade.",
-    cta: { type: "whatsapp" as const, href: "https://wa.me/5562992225471", label: "Agendar via WhatsApp" },
+    cta: { type: "whatsapp" as const, href: "/?atendimento=1", label: "Agendar com a Jatobá" },
     accent: "#2196F3",
   },
 ];

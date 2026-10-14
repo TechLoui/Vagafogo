@@ -19,7 +19,7 @@ import heroImg from "../assets/Carrossel-1.webp";
 import heroImgMobile from "../assets/Carrossel-1-800.webp";
 import trilhaImg from "../assets/trilhaecologica/trilhaecologica-1.jpg";
 
-const whatsappUrl = "https://wa.me/5562992225471";
+const whatsappUrl = "/?atendimento=1";
 const mapsUrl =
   "https://www.google.com/maps/search/?api=1&query=R.%20do%20Frota%2C%20S%2FN%2C%20Alto%20do%20Carmo%2C%20Piren%C3%B3polis%20GO%2C%2072980-000";
 
@@ -68,12 +68,12 @@ const perguntasFrequentes = [
   {
     question: "Como agendo uma atividade de educação ambiental?",
     answer:
-      "As atividades para escolas, universidades e grupos precisam de agendamento prévio. Fale com a equipe pelo WhatsApp para consultar disponibilidade e condições.",
+      "As atividades para escolas, universidades e grupos precisam de agendamento prévio. Fale com a Jatobá no chat do site para consultar disponibilidade e condições.",
   },
   {
     question: "Como confirmo uma necessidade específica antes da visita?",
     answer:
-      "Entre em contato pelo WhatsApp antes de reservar. A equipe poderá orientar sobre a atividade escolhida sem que você precise se basear em informações genéricas.",
+      "Fale com a Jatobá no chat do site antes de reservar. A equipe poderá orientar sobre a atividade escolhida sem que você precise se basear em informações genéricas.",
   },
 ];
 
@@ -188,7 +188,7 @@ export function PlanejeVisita() {
                     <FaPhoneAlt className="h-3.5 w-3.5" />
                     (62) 99222-5471
                   </a>
-                  <p className="mt-1 text-sm text-gray-600">Atendimento pelo WhatsApp.</p>
+                  <p className="mt-1 text-sm text-gray-600">Atendimento pelo chat oficial do site.</p>
                 </div>
               </article>
             </Reveal>
@@ -373,7 +373,7 @@ export function PlanejeVisita() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/25 bg-white/10 px-8 py-4 text-sm font-semibold text-white transition-colors hover:bg-white hover:text-[#2D1E0F] sm:w-auto"
                     >
                       <FaWhatsapp className="h-4 w-4" />
-                      Falar no WhatsApp
+                      Falar com a Jatobá
                     </a>
                   </div>
                 </div>

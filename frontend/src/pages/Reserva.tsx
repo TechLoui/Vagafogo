@@ -118,7 +118,7 @@ export function Reserva() {
       <footer className="reserva-footer relative z-10 hidden shrink-0 border-t border-[#8B4F23]/10 bg-white/50 px-4 py-1.5 text-center xl:block">
         <p className="text-xs text-gray-400">
           © {new Date().getFullYear()} Santuário Vagafogo · Pirenópolis, GO ·{" "}
-          <a href="https://wa.me/5562992225471" target="_blank" rel="noopener noreferrer" className="text-[#8B4F23] hover:underline">
+          <a href="/?atendimento=1" className="text-[#8B4F23] hover:underline">
             (62) 99222-5471
           </a>
         </p>
