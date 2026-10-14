@@ -264,13 +264,25 @@ export function SiteChatWidget() {
   const location = useLocation();
   const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
-  const initial = useMemo(safeStoredChat, []);
+  const redirectedPhone = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("origem") !== "whatsapp") return "";
+    const normalized = normalizePhone(params.get("telefone") || "");
+    return normalized.length >= 12 && normalized.length <= 13 ? normalized : "";
+  }, [location.search]);
+  const stored = useMemo(safeStoredChat, []);
+  const initial = useMemo(() => {
+    if (!stored) return null;
+    if (redirectedPhone && normalizePhone(stored.phone) !== redirectedPhone) return null;
+    return stored;
+  }, [redirectedPhone, stored]);
   const [open, setOpen] = useState(false);
   const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
   const [name, setName] = useState(initial?.name || "");
-  const [phone, setPhone] = useState(initial?.phone || "");
-  const [started, setStarted] = useState(Boolean(initial?.phone));
+  const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
+  const [started, setStarted] = useState(Boolean(initial?.phone && (!redirectedPhone || initial.name)));
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : []);
+  const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -317,7 +329,7 @@ export function SiteChatWidget() {
   }, [messages, loading, open]);
 
   useEffect(() => {
-    if (!started || !sessionId || !phone) return;
+    if (!started || !sessionRegistered || !sessionId || !phone) return;
     let disposed = false;
     const poll = async () => {
       try {
@@ -357,11 +369,15 @@ export function SiteChatWidget() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [phone, sessionId, started]);
+  }, [phone, sessionId, sessionRegistered, started]);
 
   const begin = (event: FormEvent) => {
     event.preventDefault();
     const normalized = normalizePhone(phone);
+    if (redirectedPhone && name.trim().length < 2) {
+      setError("Informe seu nome para iniciar o atendimento.");
+      return;
+    }
     if (normalized.length < 12 || normalized.length > 13) {
       setError("Informe um WhatsApp válido com DDD.");
       return;
@@ -369,6 +385,11 @@ export function SiteChatWidget() {
     setPhone(normalized);
     setStarted(true);
     setError("");
+    if (redirectedPhone) {
+      const cleanLocation = new URL(window.location.href);
+      cleanLocation.searchParams.delete("telefone");
+      window.history.replaceState(window.history.state, "", `${cleanLocation.pathname}${cleanLocation.search}${cleanLocation.hash}`);
+    }
     if (!messages.length) setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
   };
 
@@ -388,6 +409,7 @@ export function SiteChatWidget() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, messageId: userMessage.id, historico: history }),
       });
+      if (response.ok) setSessionRegistered(true);
       const result = await response.json().catch(() => ({}));
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
       if (result.session_id) setSessionId(String(result.session_id));
@@ -459,14 +481,13 @@ export function SiteChatWidget() {
                 </div>
 
                 <form onSubmit={begin} className="ml-10 mt-3 rounded-2xl border border-[#dfe7d9] bg-white p-4 shadow-sm">
-                  <h3 className="font-display text-lg text-[#263d31]">Antes de começarmos</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-[#657066]">Informe seu WhatsApp para manter o atendimento e a reserva organizados. Isso não autoriza o envio de campanhas.</p>
-                  <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome <span className="normal-case font-normal text-[#7d877f]">(opcional)</span></label>
-                  <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} placeholder="Como podemos chamar você?" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
-                  <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label>
-                  <input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+                  <h3 className="font-display text-lg text-[#263d31]">{redirectedPhone ? "Como podemos chamar você?" : "Antes de começarmos"}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-[#657066]">{redirectedPhone ? "Seu WhatsApp já foi identificado. Informe seu nome para a Jatobá continuar o atendimento por aqui." : "Informe seu WhatsApp para manter o atendimento e a reserva organizados. Isso não autoriza o envio de campanhas."}</p>
+                  <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome {!redirectedPhone && <span className="normal-case font-normal text-[#7d877f]">(opcional)</span>}</label>
+                  <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} required={Boolean(redirectedPhone)} autoFocus={Boolean(redirectedPhone)} placeholder="Como podemos chamar você?" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+                  {!redirectedPhone && <><label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label><input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" /></>}
                   {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-                  <button type="submit" className="mt-4 w-full rounded-xl bg-[#8b4f23] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">Continuar no chat</button>
+                  <button type="submit" className="mt-4 w-full rounded-xl bg-[#8b4f23] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">{redirectedPhone ? "Continuar com a Jatobá" : "Continuar no chat"}</button>
                   <p className="mt-3 text-center text-[10px] leading-relaxed text-[#7b837c]">O histórico fica disponível neste aparelho por até 7 dias.</p>
                 </form>
               </div>
