@@ -221,6 +221,23 @@ const consumeSiteChatRateLimit = (key: string, windowMs = SITE_CHAT_WINDOW_MS, m
 // Canal publico do chat do site. O navegador nunca recebe o token interno do
 // Agente: o backend valida e limita a entrada antes de encaminhar ao mesmo
 // cerebro usado pelo atendimento assistido e pelo CRM.
+app.get('/atendimento/site/catalogo', async (_req, res) => {
+  try {
+    const catalogo = await listarCatalogoAgente();
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({
+      tiposClientes: catalogo.tiposClientes.map(({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima }) =>
+        ({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima })),
+      pacotes: catalogo.pacotes.map(({ id, nome, descricao, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo }) =>
+        ({ id, nome, descricao, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo })),
+      combos: catalogo.combos.map(({ id, nome, pacoteIds, precosPorTipo, preco, desconto }) =>
+        ({ id, nome, pacoteIds, precosPorTipo, preco, desconto })),
+    });
+  } catch {
+    res.status(503).json({ error: 'SITE_CHAT_CATALOG_UNAVAILABLE' });
+  }
+});
+
 app.post('/atendimento/site/mensagem', async (req, res) => {
   const mensagem = String(req.body?.mensagem ?? "").trim().slice(0, 4096);
   const nome = String(req.body?.nome ?? "").trim().slice(0, 120);

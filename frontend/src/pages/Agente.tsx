@@ -1025,7 +1025,7 @@ function Sessions(props: SessionsProps) {
         <div className="agent-thread-scroll" ref={threadRef} onScroll={(event) => {
           const element = event.currentTarget;
           stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 72;
-        }}>{props.messages.length === 0 ? <p className="agent-empty">Sem mensagens na memória desta instância.</p> : props.messages.map((message) => <div key={message.id} className={`agent-bubble-row from-${message.from}`}><div><small>{message.from === "client" ? contactName(props.selected) : message.from === "agent" ? "Atendente" : "Bot"}</small><p>{message.text}</p><time>{timeLabel(message.ts)}</time></div></div>)}</div>
+        }}>{props.messages.length === 0 ? <p className="agent-empty">Sem mensagens na memória desta instância.</p> : props.messages.map((message) => <div key={message.id} className={`agent-bubble-row from-${message.from}`}><div><small>{message.from === "client" ? contactName(props.selected) : message.from === "agent" ? "Atendente" : "Bot"}</small><p>{message.text}</p>{["gallery", "image"].includes(message.mediaType || "") && <small><FaImage /> Foto enviada no chat</small>}{message.mediaType === "pix" && <small>QR Code PIX enviado no chat</small>}<time>{timeLabel(message.ts)}</time></div></div>)}</div>
         <footer>{contactMode(props.selected) !== "human" ? <p>{contactMode(props.selected) === "blocked" ? "Desbloqueie o contato antes de enviar." : "Assuma o atendimento para responder manualmente."}</p> : <><input value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => {
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();

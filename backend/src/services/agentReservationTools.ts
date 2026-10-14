@@ -622,8 +622,12 @@ const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerTy
     const quantity = nonNegativeInteger(participants[key]);
     if (!type.perguntarIdade || quantity <= 0) return;
     const values = normalizedAges[key] ?? [];
-    if (values.length !== quantity) {
-      pending.push(`Informe a idade de cada participante da categoria ${type.nome}.`);
+    // No atendimento assistido, a categoria escolhida pelo cliente ja define
+    // a faixa etaria. Idades individuais sao opcionais; se forem informadas,
+    // ainda precisam corresponder a quantidade e aos limites da categoria.
+    if (values.length === 0) return;
+    if (values.length > quantity) {
+      pending.push(`A categoria ${type.nome} recebeu mais idades do que participantes.`);
       return;
     }
     if (values.some((age) => age < 0 || age > 120)) pending.push(`Existe idade invalida na categoria ${type.nome}.`);

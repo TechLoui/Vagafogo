@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-assistant.png";
+import { SiteBookingForm } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -156,7 +157,7 @@ function MediaBlock({ media }: { media?: ChatMedia | null }) {
       <div className="mt-3 grid gap-2">
         {media.items.slice(0, 3).map((item, index) => item.dataUrl ? (
           <figure key={index} className="overflow-hidden rounded-2xl bg-white">
-            <img src={item.dataUrl} alt={item.titulo || item.legenda || "Foto da Fazenda Vagafogo"} className="max-h-56 w-full object-cover" />
+            <a href={item.dataUrl} target="_blank" rel="noreferrer" aria-label={`Ampliar ${item.titulo || "foto da Fazenda Vagafogo"}`}><img src={item.dataUrl} alt={item.titulo || item.legenda || "Foto da Fazenda Vagafogo"} loading="lazy" className="max-h-56 w-full object-cover" /></a>
             {(item.legenda || item.titulo) && <figcaption className="px-3 py-2 text-xs text-[#5f574d]">{item.legenda || item.titulo}</figcaption>}
           </figure>
         ) : null)}
@@ -184,7 +185,7 @@ function MediaBlock({ media }: { media?: ChatMedia | null }) {
     );
   }
   if (media.type === "image" && media.dataUrl) {
-    return <img src={media.dataUrl} alt="Imagem enviada pela Jatobá" className="mt-3 max-h-56 w-full rounded-2xl object-cover" />;
+    return <a href={media.dataUrl} target="_blank" rel="noreferrer" aria-label="Ampliar imagem enviada pela Jatobá"><img src={media.dataUrl} alt="Imagem enviada pela Jatobá" loading="lazy" className="mt-3 max-h-56 w-full rounded-2xl object-cover" /></a>;
   }
   return null;
 }
@@ -288,7 +289,15 @@ export function SiteChatWidget() {
   const [error, setError] = useState("");
   const [checkoutUrl, setCheckoutUrl] = useState("");
   const [humanMode, setHumanMode] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
+  const [bookingFormOpen, setBookingFormOpen] = useState(false);
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bookingFormRef = useRef<HTMLDivElement>(null);
+  const followMessagesRef = useRef(true);
+  const showCurrentBookingStep = useCallback(() => {
+    bookingFormRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
   const sendingRef = useRef(false);
   const manualCursorRef = useRef(0);
 
@@ -322,11 +331,23 @@ export function SiteChatWidget() {
   }, [messages, name, phone, sessionId, started]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !followMessagesRef.current) return;
     requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     });
-  }, [messages, loading, open]);
+  }, [messages, loading, open, bookingFormOpen]);
+
+  useEffect(() => {
+    if (!bookingFormOpen) return;
+    requestAnimationFrame(showCurrentBookingStep);
+  }, [bookingFormOpen, showCurrentBookingStep]);
+
+  useEffect(() => {
+    if (!loading) { setWaitingSeconds(0); return; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setWaitingSeconds(Math.floor((Date.now() - startedAt) / 1000)), 500);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   useEffect(() => {
     if (!started || !sessionRegistered || !sessionId || !phone) return;
@@ -393,14 +414,16 @@ export function SiteChatWidget() {
     if (!messages.length) setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
   };
 
-  const send = async () => {
-    const content = draft.trim();
-    if (!content || loading || sendingRef.current) return;
+  const send = async (override?: string): Promise<boolean> => {
+    const content = (override ?? draft).trim();
+    if (!content || loading || sendingRef.current) return false;
     sendingRef.current = true;
+    followMessagesRef.current = true;
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
     setMessages((current) => [...current, userMessage]);
-    setDraft("");
+    if (!override) setDraft("");
+    if (!override && /\b(quero|gostaria|vamos|pode|preciso|desejo).{0,40}\b(reservar|reserva)\b/i.test(content)) setBookingFormOpen(true);
     setLoading(true);
     setError("");
     try {
@@ -429,10 +452,12 @@ export function SiteChatWidget() {
           .find(Boolean);
         if (checkout) setCheckoutUrl(checkout);
       }
+      return result.atendimento_humano !== true;
     } catch (cause) {
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(content);
       setError(cause instanceof Error ? cause.message : "Não foi possível responder agora. Tente novamente.");
+      return false;
     } finally {
       sendingRef.current = false;
       setLoading(false);
@@ -454,7 +479,7 @@ export function SiteChatWidget() {
         {open && (
           <section
             aria-label="Atendimento com a Jatobá"
-            className="fixed bottom-2 left-2 right-2 flex h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-[26px] border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px] sm:rounded-[28px]"
+            className={`flex flex-col overflow-hidden border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl ${fullScreen ? "fixed inset-0 h-[100dvh] w-screen rounded-none sm:inset-4 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-[28px]" : "fixed bottom-2 left-2 right-2 h-[calc(100dvh-1rem)] rounded-[26px] sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px] sm:rounded-[28px]"}`}
           >
             <header className="flex items-center gap-3 bg-[#214f3e] px-4 py-3.5 text-white">
               <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full border-2 border-white/30 bg-[#f4eddd]">
@@ -464,6 +489,9 @@ export function SiteChatWidget() {
                 <h2 className="font-display text-lg leading-tight">Jatobá</h2>
                 <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
               </div>
+              <button type="button" onClick={() => setFullScreen((value) => !value)} aria-label={fullScreen ? "Reduzir atendimento" : "Abrir atendimento em tela cheia"} aria-pressed={fullScreen} title={fullScreen ? "Reduzir" : "Tela cheia"} className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={fullScreen ? "M8 3v5H3m13-5v5h5M3 16h5v5m13-5h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} /></svg>
+              </button>
               <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
                 <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
               </button>
@@ -493,7 +521,9 @@ export function SiteChatWidget() {
               </div>
             ) : (
               <>
-                <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
+                <div className={`min-h-0 flex-1 ${bookingFormOpen ? `grid grid-rows-[minmax(145px,38%)_minmax(0,1fr)] ${fullScreen ? "sm:grid-cols-[minmax(0,1fr)_minmax(360px,46%)] sm:grid-rows-1" : ""}` : "flex flex-col"}`}>
+                  <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followMessagesRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 overflow-y-auto px-3 py-4 sm:px-4">
+                  <div className="space-y-3">
                   {messages.map((message) => (
                     <div key={message.id} className={`flex items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                       {message.role === "assistant" && (
@@ -501,7 +531,7 @@ export function SiteChatWidget() {
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
                         </span>
                       )}
-                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
                         <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
                         <MediaBlock media={message.media} />
                         {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>)}
@@ -511,13 +541,17 @@ export function SiteChatWidget() {
                   {loading && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
-                      <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">Jatobá está escrevendo<span className="animate-pulse">…</span></div>
+                      <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">{waitingSeconds >= 3 ? "Jatobá está consultando as informações para você" : "Jatobá está escrevendo"}<span className="animate-pulse">…</span></div>
                     </div>
                   )}
+                  </div>
+                  </div>
+                  {bookingFormOpen && <div ref={bookingFormRef} className={`min-h-0 overflow-y-auto border-t border-[#dfe8dc] p-3 sm:p-4 ${fullScreen ? "sm:border-l sm:border-t-0" : ""}`}><div className="mx-auto max-w-[720px]"><SiteBookingForm sessionId={sessionId} sending={loading} onClose={() => setBookingFormOpen(false)} onStepChange={showCurrentBookingStep} onStep={send} /></div></div>}
                 </div>
                 <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                   {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
                   {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
+                  {!bookingFormOpen && !humanMode && <button type="button" onClick={() => setBookingFormOpen(true)} className="mb-2 rounded-full border border-[#bfd8c5] bg-[#eff7ef] px-3 py-1.5 text-xs font-semibold text-[#20745a] hover:bg-[#e5f1e7]">📅 Planejar reserva com campos</button>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
                     <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
                     <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
