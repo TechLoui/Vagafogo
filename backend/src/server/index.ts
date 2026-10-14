@@ -228,10 +228,10 @@ app.get('/atendimento/site/catalogo', async (_req, res) => {
     res.json({
       tiposClientes: catalogo.tiposClientes.map(({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima }) =>
         ({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima })),
-      pacotes: catalogo.pacotes.map(({ id, nome, descricao, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo }) =>
-        ({ id, nome, descricao, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo })),
-      combos: catalogo.combos.map(({ id, nome, pacoteIds, precosPorTipo, preco, desconto }) =>
-        ({ id, nome, pacoteIds, precosPorTipo, preco, desconto })),
+      pacotes: catalogo.pacotes.map(({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo }) =>
+        ({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo })),
+      combos: catalogo.combos.map(({ id, nome, descricao, iconeUrl, emoji, pacoteIds, precosPorTipo, preco, desconto }) =>
+        ({ id, nome, descricao, iconeUrl, emoji, pacoteIds, precosPorTipo, preco, desconto })),
     });
   } catch {
     res.status(503).json({ error: 'SITE_CHAT_CATALOG_UNAVAILABLE' });
