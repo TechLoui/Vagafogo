@@ -508,7 +508,7 @@ const loadCatalogRecords = async () => {
   return { db, types, packages, combos };
 };
 
-const serializePackage = (record: PackageRecord, types: CustomerType[]) => {
+const serializePackage = (record: PackageRecord, types: CustomerType[], includeVisuals = false) => {
   const { id, raw } = record;
   const name = clean(raw.nome, 160);
   const prices = Object.fromEntries(types.map((type) => [typeKey(type), priceForType(raw, type)]));
@@ -519,8 +519,7 @@ const serializePackage = (record: PackageRecord, types: CustomerType[]) => {
     ativo: raw.ativo !== false,
     tipo: clean(raw.tipo, 120),
     descricao: clean(raw.descricao, 800),
-    iconeUrl: clean(raw.iconeUrl, 2000),
-    emoji: clean(raw.emoji, 12),
+    ...(includeVisuals ? { iconeUrl: clean(raw.iconeUrl, 2000), emoji: clean(raw.emoji, 12) } : {}),
     aviso: clean(raw.aviso, 800),
     aceitaPet: raw.aceitaPet === true,
     modoHorario: clean(raw.modoHorario, 30) || "lista",
@@ -544,9 +543,9 @@ const serializePackage = (record: PackageRecord, types: CustomerType[]) => {
   };
 };
 
-export const listarCatalogoAgente = async () => {
+export const listarCatalogoAgente = async (includeVisuals = false) => {
   const { types, packages, combos } = await loadCatalogRecords();
-  const activePackages = packages.map((record) => serializePackage(record, types))
+  const activePackages = packages.map((record) => serializePackage(record, types, includeVisuals))
     .filter((item) => item.nome && item.ativo)
     .sort((left, right) => left.nome.localeCompare(right.nome, "pt-BR"));
   const packageById = new Map(activePackages.map((item) => [item.id, item]));
@@ -561,8 +560,7 @@ export const listarCatalogoAgente = async () => {
       nome: clean(raw.nome, 160),
       ativo: raw.ativo !== false,
       descricao: clean(raw.descricao, 800) || `Inclui ${included.map((item) => item.nome).join(" + ")}`,
-      iconeUrl: clean(raw.iconeUrl, 2000),
-      emoji: clean(raw.emoji, 12),
+      ...(includeVisuals ? { iconeUrl: clean(raw.iconeUrl, 2000), emoji: clean(raw.emoji, 12) } : {}),
       pacoteIds: packageIds,
       inclui: included.map((item) => ({ id: item.id, nome: item.nome, modoHorario: item.modoHorario, horarios: item.horarios, horarioInicio: item.horarioInicio, horarioFim: item.horarioFim, aviso: item.aviso })),
       horarios: scheduled?.horarios ?? [],

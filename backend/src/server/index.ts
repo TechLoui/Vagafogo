@@ -223,7 +223,7 @@ const consumeSiteChatRateLimit = (key: string, windowMs = SITE_CHAT_WINDOW_MS, m
 // cerebro usado pelo atendimento assistido e pelo CRM.
 app.get('/atendimento/site/catalogo', async (_req, res) => {
   try {
-    const catalogo = await listarCatalogoAgente();
+    const catalogo = await listarCatalogoAgente(true);
     res.set('Cache-Control', 'public, max-age=60');
     res.json({
       tiposClientes: catalogo.tiposClientes.map(({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima }) =>
