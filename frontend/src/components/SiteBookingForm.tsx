@@ -209,7 +209,9 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const needsPet = fields.includes("presenca de pet") && selected.some((item) => item.aceitaPet);
   const petRestricted = selected.some((item) => !item.aceitaPet);
   const brunchHasScheduledTime = scheduled.some((item) => /brunch|gastron/i.test(item.nome));
-  const stage = step === "time" && brunchHasScheduledTime
+  const stage = step === "date" && selected.length
+    ? { ...stages.date, hint: combo?.nome || selected.map((item) => item.nome).join(" + ") }
+    : step === "time" && brunchHasScheduledTime
     ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
     : stages[step];
   const StageIcon = stage.icon;
@@ -293,7 +295,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
       </div>
       <div className="space-y-3 p-3.5 sm:p-4">
         {step === "phone" && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
-        {step !== "experiences" && selected.length > 0 && (
+        {step !== "experiences" && step !== "date" && selected.length > 0 && (
           <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#e3ebdf] bg-[#f8faf5] p-2.5">
             <OfferIcon small name={combo?.nome || selected[0].nome} url={combo?.iconeUrl || selected[0].iconeUrl} emoji={combo?.emoji || selected[0].emoji} combo={Boolean(combo)} />
             <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-[#315b43]">{combo?.nome || selected.map((item) => item.nome).join(" + ")}</p>{date && <p className="mt-0.5 text-[11px] text-[#6e7d70]">{readableDate(date)}</p>}</div>
@@ -302,11 +304,10 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         )}
 
         {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
-          <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2.5 text-xs leading-relaxed text-[#3d6147]">
-            <strong className="block">{item.nome}: faixa de horário, sem agendamento de hora</strong>
-            <span>Você pode fazer a trilha {item.horarioInicio && item.horarioFim ? `das ${displayHour(item.horarioInicio)} às ${displayHour(item.horarioFim)}` : "na faixa de funcionamento"}{scheduled.length ? ", antes ou depois do brunch." : "."}</span>
-            <span className="mt-1 block">Entrada até 15h e saída até 16h. Não são permitidos pets nem alimentos na trilha; água é permitida.</span>
-            {item.aviso && <span className="mt-1 block">{item.aviso}</span>}
+          <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2 text-[11px] leading-[1.45] text-[#3d6147]">
+            <strong className="block text-xs">{item.nome} · {item.horarioInicio && item.horarioFim ? `${displayHour(item.horarioInicio)}–${displayHour(item.horarioFim)}` : "faixa de funcionamento"}</strong>
+            <span>Sem hora marcada{scheduled.length ? ": faça antes ou depois do brunch" : ""}. Entrada até 15h; saída até 16h. Sem pets ou alimentos; água permitida.</span>
+            {item.aviso && <span className="mt-0.5 block">{item.aviso}</span>}
           </div>
         ))}
 
@@ -325,8 +326,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
                 className="rdp-vagafogo site-chat-calendar"
               />
             </div>
-            {date && <p className="mt-2 text-center text-xs font-medium text-[#287457]">Data escolhida: {new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" }).format(dateFromKey(date))}</p>}
-            <p className="mt-2 text-center text-[11px] text-[#718075]">Dias indisponíveis não podem ser selecionados. A Jatobá confirmará as vagas.</p>
+            <p className="mt-1.5 text-center text-[11px] text-[#718075]">Dias cinzas: indisponíveis. Vagas a confirmar.</p>
           </div>
         )}
 
@@ -397,8 +397,8 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         {step === "payment" && <div className="grid gap-2.5" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por PIX. Pode enviar o QR Code e o copia e cola?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] p-3 text-left transition hover:border-[#20745a] hover:bg-[#e9f4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8ecdc] text-[#20745a]"><FaQrcode aria-hidden="true" /></span><span><strong className="block text-sm text-[#245139]">PIX</strong><small className="mt-0.5 block text-[11px] text-[#607965]">QR Code e copia e cola</small></span></button><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por cartão de crédito. Pode enviar o link seguro?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#e4d5c3] bg-[#fffaf3] p-3 text-left transition hover:border-[#b28b64] hover:bg-[#fdf4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f4e9d6] text-[#8a5a2f]"><FaCreditCard aria-hidden="true" /></span><span><strong className="block text-sm text-[#58412d]">Cartão</strong><small className="mt-0.5 block text-[11px] text-[#806c56]">Página segura</small></span></button></div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
-        <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>
+        {!["summary", "payment"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {step !== "date" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>
   );

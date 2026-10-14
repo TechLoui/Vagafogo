@@ -477,7 +477,8 @@ export function SiteChatWidget() {
       const latestRect = latest.getBoundingClientRect();
       const lastRect = form?.getBoundingClientRect() || latestRect;
       if (lastRect.bottom - latestRect.top > scroller.clientHeight - 16) {
-        target = Math.max(0, Math.min(bottom, scroller.scrollTop + latestRect.top - scrollerRect.top - 8));
+        const focusTop = form ? lastRect.top : latestRect.top;
+        target = Math.max(0, Math.min(bottom, scroller.scrollTop + focusTop - scrollerRect.top - 8));
         mode = "latest";
       }
     }
