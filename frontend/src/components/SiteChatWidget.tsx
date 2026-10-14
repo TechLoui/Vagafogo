@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import logo from "../assets/logo.jpg";
+import jatobaIcon from "../assets/jatoba-assistant.png";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
 const STORAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nComo posso te ajudar?";
+const OFFICIAL_CHECKOUT_HOSTS = new Set(["vagafogo.com.br", "www.vagafogo.com.br"]);
 
 type ChatMedia = {
   type?: string;
@@ -69,15 +70,66 @@ const safeStoredChat = (): StoredChat | null => {
   }
 };
 
-function RichText({ children }: { children: string }) {
+const cleanUrl = (value: string) => value
+  .replace(/\\&/g, "&")
+  .replace(/&amp;/g, "&")
+  .replace(/[),.;]+$/, "");
+
+const isOfficialCardCheckout = (value: string) => {
+  try {
+    const url = new URL(cleanUrl(value));
+    return OFFICIAL_CHECKOUT_HOSTS.has(url.hostname.toLowerCase())
+      && url.pathname.replace(/\/+$/, "") === "/reservar"
+      && url.searchParams.has("agent_checkout");
+  } catch {
+    return false;
+  }
+};
+
+const extractOfficialCardCheckout = (text: string) => {
+  const urls = text.match(/https?:\/\/[^\s<>\]]+/g) || [];
+  return urls.map(cleanUrl).find(isOfficialCardCheckout) || "";
+};
+
+const checkoutModalUrl = (value: string) => {
+  const url = new URL(value);
+  url.searchParams.set("checkout_modal", "1");
+  return url.toString();
+};
+
+function PaymentLink({ href, label, onOpen }: { href: string; label: string; onOpen: (url: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(cleanUrl(href))}
+      className="my-1 inline-flex items-center gap-2 rounded-xl bg-[#20745a] px-3.5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-[#195e49] focus:outline-none focus:ring-2 focus:ring-[#20745a]/30"
+    >
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M3 10h18M7 15h3" />
+      </svg>
+      {label}
+    </button>
+  );
+}
+
+function RichText({ children, onOpenCheckout }: { children: string; onOpenCheckout: (url: string) => void }) {
   const parts = children.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
   return (
     <>
       {parts.map((part, index): ReactNode => {
         const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
-        if (markdownLink) return <a key={index} href={markdownLink[2]} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{markdownLink[1]}</a>;
+        if (markdownLink) {
+          if (isOfficialCardCheckout(markdownLink[2])) {
+            return <PaymentLink key={index} href={markdownLink[2]} label={markdownLink[1] || "Abrir pagamento seguro"} onOpen={onOpenCheckout} />;
+          }
+          return <a key={index} href={cleanUrl(markdownLink[2])} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{markdownLink[1]}</a>;
+        }
         if (part.startsWith("http")) {
-          const url = part.replace(/[),.;]+$/, "");
+          const url = cleanUrl(part);
+          if (isOfficialCardCheckout(url)) {
+            return <PaymentLink key={`${part}-${index}`} href={url} label="Abrir pagamento seguro" onOpen={onOpenCheckout} />;
+          }
           return <a key={`${part}-${index}`} href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{url}</a>;
         }
         if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("*") && part.endsWith("*"))) {
@@ -130,13 +182,81 @@ function MediaBlock({ media }: { media?: ChatMedia | null }) {
   return null;
 }
 
+function SecureCheckoutModal({ url, onClose }: { url: string; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, url]);
+
+  return (
+    <div className="fixed inset-0 z-[110] bg-[#13271f]/70 p-2 backdrop-blur-sm sm:p-5" role="dialog" aria-modal="true" aria-label="Pagamento seguro da Fazenda Vagafogo">
+      <section className="mx-auto flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl sm:h-[calc(100dvh-2.5rem)] sm:rounded-[30px]">
+        <header className="border-b border-[#dce6da] bg-[#f8faf5] px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#e7f2ea] text-[#20745a]">
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Z" />
+                <path d="m9 12 2 2 4-5" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-display text-lg leading-tight text-[#263d31] sm:text-xl">Pagamento seguro</h2>
+              <p className="mt-1 text-xs leading-relaxed text-[#5f6d63] sm:text-sm">
+                Você continuará no ambiente oficial da Fazenda Vagafogo. Os dados do cartão são preenchidos somente nesta página e nunca ficam registrados no chat.
+              </p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Fechar pagamento" className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#425149] transition hover:bg-[#e7eee4]">
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <div className="relative min-h-0 flex-1 bg-white">
+          {loading && (
+            <div className="absolute inset-0 z-10 grid place-items-center bg-white">
+              <div className="text-center text-sm text-[#5f6d63]">
+                <span className="mx-auto mb-3 block h-8 w-8 animate-spin rounded-full border-2 border-[#cddbcf] border-t-[#20745a]" />
+                Abrindo o checkout seguro…
+              </div>
+            </div>
+          )}
+          <iframe
+            key={url}
+            src={checkoutModalUrl(url)}
+            title="Checkout seguro da Fazenda Vagafogo"
+            className="h-full w-full border-0"
+            allow="payment *; clipboard-write 'self'"
+            referrerPolicy="strict-origin-when-cross-origin"
+            onLoad={() => setLoading(false)}
+          />
+        </div>
+
+        <footer className="flex items-center justify-between gap-3 border-t border-[#dce6da] bg-white px-4 py-2.5 pb-[max(.625rem,env(safe-area-inset-bottom))] text-[11px] text-[#69766d] sm:px-6 sm:text-xs">
+          <span className="inline-flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-[#20745a]" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+            vagafogo.com.br
+          </span>
+          <a href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">Abrir em tela cheia</a>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 export function openSiteChat() {
   window.dispatchEvent(new CustomEvent("vagafogo:open-chat"));
 }
 
 export function SiteChatWidget() {
   const location = useLocation();
-  const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname);
+  const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
+    || new URLSearchParams(location.search).get("checkout_modal") === "1";
   const initial = useMemo(safeStoredChat, []);
   const [open, setOpen] = useState(false);
   const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
@@ -147,6 +267,7 @@ export function SiteChatWidget() {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [checkoutUrl, setCheckoutUrl] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
 
@@ -159,6 +280,13 @@ export function SiteChatWidget() {
   useEffect(() => {
     if (new URLSearchParams(location.search).get("atendimento") === "1") setOpen(true);
   }, [location.search]);
+
+  useEffect(() => {
+    if (!open || !window.matchMedia("(max-width: 639px)").matches) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [open]);
 
   useEffect(() => {
     if (!started) return;
@@ -211,14 +339,19 @@ export function SiteChatWidget() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.resposta) throw new Error(result.mensagem || "Não foi possível responder agora.");
       if (result.session_id) setSessionId(String(result.session_id));
-      setMessages((current) => [...current, {
+      const assistantMessage: ChatMessage = {
         id: createId(),
         role: "assistant",
         content: String(result.resposta),
         media: result.media || null,
         additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
         createdAt: Date.now(),
-      }]);
+      };
+      setMessages((current) => [...current, assistantMessage]);
+      const checkout = [assistantMessage.content, ...(assistantMessage.additional || [])]
+        .map(extractOfficialCardCheckout)
+        .find(Boolean);
+      if (checkout) setCheckoutUrl(checkout);
     } catch (cause) {
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(content);
@@ -239,69 +372,98 @@ export function SiteChatWidget() {
   if (hidden) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[80] sm:bottom-6 sm:right-6">
-      {open && (
-        <section aria-label="Atendimento com a Jatobá" className="fixed inset-0 flex flex-col overflow-hidden bg-[#f8faf5] shadow-2xl sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(650px,calc(100vh-7rem))] sm:w-[390px] sm:rounded-[28px] sm:border sm:border-[#dfe7d9]">
-          <header className="flex items-center gap-3 bg-[#214f3e] px-4 py-3.5 text-white">
-            <img src={logo} alt="Fazenda Vagafogo" className="h-11 w-11 rounded-full border-2 border-white/30 object-cover" />
-            <div className="min-w-0 flex-1">
-              <h2 className="font-display text-lg leading-tight">Jatobá</h2>
-              <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
-            </div>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
-            </button>
-          </header>
+    <>
+      <div className="fixed bottom-4 right-4 z-[80] sm:bottom-6 sm:right-6">
+        {open && (
+          <section
+            aria-label="Atendimento com a Jatobá"
+            className="fixed bottom-2 left-2 right-2 flex h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-[26px] border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px] sm:rounded-[28px]"
+          >
+            <header className="flex items-center gap-3 bg-[#214f3e] px-4 py-3.5 text-white">
+              <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full border-2 border-white/30 bg-[#f4eddd]">
+                <img src={jatobaIcon} alt="Ícone da Jatobá" className="h-full w-full object-contain p-0.5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="font-display text-lg leading-tight">Jatobá</h2>
+                <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </header>
 
-          {!started ? (
-            <form onSubmit={begin} className="flex flex-1 flex-col justify-center px-6 py-8">
-              <span className="mb-4 text-4xl">🌿</span>
-              <h3 className="font-display text-2xl text-[#263d31]">Vamos começar?</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#657066]">Informe seu nome e WhatsApp para mantermos o atendimento e sua reserva organizados. Esses dados não autorizam campanhas.</p>
-              <label className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome</label>
-              <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} placeholder="Como podemos chamar você?" className="mt-1 rounded-xl border border-[#d6dfd1] bg-white px-4 py-3 outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
-              <label className="mt-4 text-xs font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label>
-              <input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 rounded-xl border border-[#d6dfd1] bg-white px-4 py-3 outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
-              {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-              <button type="submit" className="mt-6 rounded-xl bg-[#8b4f23] px-5 py-3 font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">Iniciar atendimento</button>
-              <p className="mt-4 text-center text-[11px] leading-relaxed text-[#7b837c]">O histórico fica disponível neste aparelho por até 7 dias.</p>
-            </form>
-          ) : (
-            <>
-              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
-                {messages.map((message) => (
-                  <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[88%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                      <p className="whitespace-pre-wrap"><RichText>{message.content}</RichText></p>
-                      <MediaBlock media={message.media} />
-                      {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText>{extra}</RichText></p>)}
-                    </div>
+            {!started ? (
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
+                <div className="flex items-end gap-2">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
+                    <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
+                  </span>
+                  <div className="max-w-[86%] rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-3 text-sm leading-relaxed text-[#2d382f] shadow-sm">
+                    <p className="whitespace-pre-wrap">{WELCOME}</p>
                   </div>
-                ))}
-                {loading && <div className="flex justify-start"><div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">Jatobá está escrevendo<span className="animate-pulse">…</span></div></div>}
-              </div>
-              <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
-                {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
-                <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
-                  <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
-                  <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
-                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
-                  </button>
                 </div>
-              </div>
-            </>
-          )}
-        </section>
-      )}
 
-      {!open && (
-        <button type="button" onClick={() => setOpen(true)} aria-label="Abrir atendimento com a Jatobá" className="group flex items-center gap-3">
-          <span className="hidden rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg sm:block">Fale com a Jatobá</span>
-          <span className="grid h-16 w-16 place-items-center rounded-full border-2 border-white bg-[#20745a] text-white shadow-xl shadow-[#214f3e]/30 transition-transform group-hover:scale-105">
-            <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.5-4A7.5 7.5 0 0 1 3 13.5v-3A6.5 6.5 0 0 1 9.5 4h5A6.5 6.5 0 0 1 21 10.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></svg>
-          </span>
-        </button>
-      )}
-    </div>
+                <form onSubmit={begin} className="ml-10 mt-3 rounded-2xl border border-[#dfe7d9] bg-white p-4 shadow-sm">
+                  <h3 className="font-display text-lg text-[#263d31]">Antes de começarmos</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-[#657066]">Informe seu WhatsApp para manter o atendimento e a reserva organizados. Isso não autoriza o envio de campanhas.</p>
+                  <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome <span className="normal-case font-normal text-[#7d877f]">(opcional)</span></label>
+                  <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} placeholder="Como podemos chamar você?" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+                  <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label>
+                  <input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
+                  {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+                  <button type="submit" className="mt-4 w-full rounded-xl bg-[#8b4f23] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">Continuar no chat</button>
+                  <p className="mt-3 text-center text-[10px] leading-relaxed text-[#7b837c]">O histórico fica disponível neste aparelho por até 7 dias.</p>
+                </form>
+              </div>
+            ) : (
+              <>
+                <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
+                  {messages.map((message) => (
+                    <div key={message.id} className={`flex items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {message.role === "assistant" && (
+                        <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
+                          <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
+                        </span>
+                      )}
+                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                        <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
+                        <MediaBlock media={message.media} />
+                        {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>)}
+                      </div>
+                    </div>
+                  ))}
+                  {loading && (
+                    <div className="flex items-end gap-2">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
+                      <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">Jatobá está escrevendo<span className="animate-pulse">…</span></div>
+                    </div>
+                  )}
+                </div>
+                <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+                  {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
+                  <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
+                    <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
+                    <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {!open && (
+          <button type="button" onClick={() => setOpen(true)} aria-label="Abrir atendimento com a Jatobá" className="group flex items-center gap-3">
+            <span className="hidden rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg sm:block">Fale com a Jatobá</span>
+            <span className="grid h-16 w-16 place-items-center overflow-hidden rounded-full border-2 border-white bg-[#f4eddd] shadow-xl shadow-[#214f3e]/30 transition-transform group-hover:scale-105">
+              <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-1" />
+            </span>
+          </button>
+        )}
+      </div>
+
+      {checkoutUrl && <SecureCheckoutModal url={checkoutUrl} onClose={() => setCheckoutUrl("")} />}
+    </>
   );
 }
