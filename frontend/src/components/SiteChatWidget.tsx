@@ -360,7 +360,6 @@ export function SiteChatWidget() {
   const [photoPreview, setPhotoPreview] = useState<PhotoPreviewState | null>(null);
   const [humanMode, setHumanMode] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
-  const [waitingSeconds, setWaitingSeconds] = useState(0);
   const [viewport, setViewport] = useState<ViewportBounds>(readViewportBounds);
   const [showNewMessages, setShowNewMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -511,13 +510,6 @@ export function SiteChatWidget() {
     composer.style.height = "auto";
     composer.style.height = `${Math.min(composer.scrollHeight, Math.max(40, Math.min(112, viewport.height * 0.25)))}px`;
   }, [draft, open, viewport.height]);
-
-  useEffect(() => {
-    if (!loading) { setWaitingSeconds(0); return; }
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => setWaitingSeconds(Math.floor((Date.now() - startedAt) / 1000)), 500);
-    return () => window.clearInterval(timer);
-  }, [loading]);
 
   useEffect(() => {
     if (!sessionRegistered || !sessionId) return;
@@ -712,7 +704,12 @@ export function SiteChatWidget() {
                   {loading && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
-                      <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">{waitingSeconds >= 3 ? "Jatobá está consultando as informações para você" : "Jatobá está escrevendo"}<span className="animate-pulse">…</span></div>
+                      <div role="status" className="flex items-end rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">
+                        <span>Jatobá está escrevendo</span>
+                        <span aria-hidden="true" className="ml-1 inline-flex items-end">
+                          {[0, 1, 2].map((index) => <span key={index} className="inline-block motion-safe:animate-bounce motion-reduce:animate-none" style={{ animationDelay: `${index * 160}ms`, animationDuration: "900ms" }}>.</span>)}
+                        </span>
+                      </div>
                     </div>
                   )}
                   {!loading && !humanMode && bookingUi && <div ref={bookingFormRef} className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px]"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
