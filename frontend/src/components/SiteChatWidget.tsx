@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import jatobaIcon from "../assets/jatoba-assistant.png";
+import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
@@ -566,7 +566,7 @@ export function SiteChatWidget() {
 
         {!open && (
           <button type="button" onClick={() => setOpen(true)} aria-label="Abrir atendimento com a Jatobá" className="group flex items-center gap-3">
-            <span className="hidden rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg sm:block">Fale com a Jatobá</span>
+            <span className="hidden rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg sm:block">Fale Conosco</span>
             <span className="grid h-16 w-16 place-items-center overflow-hidden rounded-full border-2 border-white bg-[#f4eddd] shadow-xl shadow-[#214f3e]/30 transition-transform group-hover:scale-105">
               <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-1" />
             </span>
