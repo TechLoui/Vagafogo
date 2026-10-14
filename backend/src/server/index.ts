@@ -377,6 +377,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     mensagens_adicionais: mensagensAdicionais,
     atendimento_humano: Boolean(body.handoff),
     handoff: body.handoff && typeof body.handoff === "object" ? body.handoff : null,
+    booking_ui: body.booking_ui && typeof body.booking_ui === "object" ? body.booking_ui : null,
   });
 });
 

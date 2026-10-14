@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
+import type { BookingUi } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -32,6 +33,7 @@ type StoredChat = {
   name: string;
   phone: string;
   messages: ChatMessage[];
+  bookingUi?: BookingUi | null;
 };
 
 type SiteManualMessage = {
@@ -283,6 +285,7 @@ export function SiteChatWidget() {
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [started, setStarted] = useState(Boolean(initial?.phone && (!redirectedPhone || initial.name)));
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : []);
+  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi || null);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -290,14 +293,9 @@ export function SiteChatWidget() {
   const [checkoutUrl, setCheckoutUrl] = useState("");
   const [humanMode, setHumanMode] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
-  const [bookingFormOpen, setBookingFormOpen] = useState(false);
   const [waitingSeconds, setWaitingSeconds] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bookingFormRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
-  const showCurrentBookingStep = useCallback(() => {
-    bookingFormRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
   const sendingRef = useRef(false);
   const manualCursorRef = useRef(0);
 
@@ -327,20 +325,16 @@ export function SiteChatWidget() {
       name,
       phone,
       messages: persistable,
+      bookingUi,
     } satisfies StoredChat));
-  }, [messages, name, phone, sessionId, started]);
+  }, [bookingUi, messages, name, phone, sessionId, started]);
 
   useEffect(() => {
     if (!open || !followMessagesRef.current) return;
     requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     });
-  }, [messages, loading, open, bookingFormOpen]);
-
-  useEffect(() => {
-    if (!bookingFormOpen) return;
-    requestAnimationFrame(showCurrentBookingStep);
-  }, [bookingFormOpen, showCurrentBookingStep]);
+  }, [bookingUi, messages, loading, open]);
 
   useEffect(() => {
     if (!loading) { setWaitingSeconds(0); return; }
@@ -365,6 +359,7 @@ export function SiteChatWidget() {
         if (!response.ok || disposed) return;
         const result = await response.json() as { mode?: string; messages?: SiteManualMessage[] };
         setHumanMode(result.mode === "human");
+        if (result.mode === "human" || result.mode === "blocked") setBookingUi(null);
         const incoming = Array.isArray(result.messages) ? result.messages : [];
         if (!incoming.length) return;
         manualCursorRef.current = Math.max(manualCursorRef.current, ...incoming.map((message) => Number(message.ts) || 0));
@@ -423,7 +418,6 @@ export function SiteChatWidget() {
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
     setMessages((current) => [...current, userMessage]);
     if (!override) setDraft("");
-    if (!override && /\b(quero|gostaria|vamos|pode|preciso|desejo).{0,40}\b(reservar|reserva)\b/i.test(content)) setBookingFormOpen(true);
     setLoading(true);
     setError("");
     try {
@@ -437,6 +431,7 @@ export function SiteChatWidget() {
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
+      setBookingUi(result.atendimento_humano ? null : result.booking_ui || null);
       if (result.resposta) {
         const assistantMessage: ChatMessage = {
           id: createId(),
@@ -521,8 +516,8 @@ export function SiteChatWidget() {
               </div>
             ) : (
               <>
-                <div className={`min-h-0 flex-1 ${bookingFormOpen ? `grid grid-rows-[minmax(145px,38%)_minmax(0,1fr)] ${fullScreen ? "sm:grid-cols-[minmax(0,1fr)_minmax(360px,46%)] sm:grid-rows-1" : ""}` : "flex flex-col"}`}>
-                  <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followMessagesRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 overflow-y-auto px-3 py-4 sm:px-4">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followMessagesRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
                   <div className="space-y-3">
                   {messages.map((message) => (
                     <div key={message.id} className={`flex items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -544,14 +539,13 @@ export function SiteChatWidget() {
                       <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">{waitingSeconds >= 3 ? "Jatobá está consultando as informações para você" : "Jatobá está escrevendo"}<span className="animate-pulse">…</span></div>
                     </div>
                   )}
+                  {!loading && !humanMode && bookingUi && <div className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px]"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
                   </div>
                   </div>
-                  {bookingFormOpen && <div ref={bookingFormRef} className={`min-h-0 overflow-y-auto border-t border-[#dfe8dc] p-3 sm:p-4 ${fullScreen ? "sm:border-l sm:border-t-0" : ""}`}><div className="mx-auto max-w-[720px]"><SiteBookingForm sessionId={sessionId} sending={loading} onClose={() => setBookingFormOpen(false)} onStepChange={showCurrentBookingStep} onStep={send} /></div></div>}
                 </div>
                 <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                   {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
                   {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
-                  {!bookingFormOpen && !humanMode && <button type="button" onClick={() => setBookingFormOpen(true)} className="mb-2 rounded-full border border-[#bfd8c5] bg-[#eff7ef] px-3 py-1.5 text-xs font-semibold text-[#20745a] hover:bg-[#e5f1e7]">📅 Planejar reserva com campos</button>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
                     <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
                     <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">

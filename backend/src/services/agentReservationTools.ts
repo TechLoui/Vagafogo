@@ -36,6 +36,7 @@ type AgentAvailabilityInput = {
 type AgentReservationDraftInput = AgentAvailabilityInput & {
   sessionId?: unknown;
   teste?: unknown;
+  siteBookingStarted?: unknown;
   nome?: unknown;
   email?: unknown;
   cpf?: unknown;
@@ -1306,6 +1307,9 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   if (owns(input, "canalConclusao")) {
     const value = clean(input.canalConclusao, 20);
     if (value === "whatsapp" || value === "site" || value === "site_chat") patch.canalConclusao = value;
+  }
+  if (owns(input, "siteBookingStarted") && typeof input.siteBookingStarted === "boolean") {
+    patch.siteBookingStarted = input.siteBookingStarted;
   }
   if (owns(input, "formaPagamento")) {
     const value = clean(input.formaPagamento, 30).toUpperCase();
