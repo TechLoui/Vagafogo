@@ -35,6 +35,14 @@ export type BookingUi = {
   };
 };
 
+export type SiteBookingSelection = {
+  step: "time";
+  tipoOferta: string;
+  ofertaId: string;
+  data: string;
+  horariosPorPacote: Record<string, string>;
+};
+
 const validCpf = (input: string) => {
   const cpf = input.replace(/\D/g, "");
   if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
@@ -117,7 +125,7 @@ const stages = {
   payment: { title: "Como prefere pagar?", hint: "Sua reserva é confirmada após a aprovação do pagamento.", icon: FaCreditCard },
 };
 
-export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; sending: boolean; onAnswer: (message: string, phone?: string) => Promise<boolean> }) {
+export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; sending: boolean; onAnswer: (message: string, phone?: string, selection?: SiteBookingSelection) => Promise<boolean> }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const [date, setDate] = useState(ui.draft?.data || "");
@@ -196,9 +204,9 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     : stages[step];
   const StageIcon = stage.icon;
 
-  const answer = async (message: string, contactPhone?: string) => {
+  const answer = async (message: string, contactPhone?: string, selection?: SiteBookingSelection) => {
     setError("");
-    const accepted = await onAnswer(message, contactPhone);
+    const accepted = await onAnswer(message, contactPhone, selection);
     if (!accepted) setError("Não consegui enviar esta resposta. Tente novamente ou escreva no chat.");
   };
 
@@ -217,10 +225,24 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
       await answer(`Quero reservar ${combo?.nome || selected.map((item) => item.nome).join(" e ")}.`);
     } else if (step === "time") {
       if (scheduled.some((item) => !times[item.id] && !knownTime(item))) { setError("Escolha o horário para continuar."); return; }
-      await answer(`Para a reserva, prefiro ${scheduled.map((item) => `${item.nome} às ${times[item.id] || knownTime(item)}`).join(" e ")}.`);
+      const selectedTimes = Object.fromEntries(scheduled.map((item) => [item.id, times[item.id] || knownTime(item)]));
+      await answer(
+        `Para a reserva, prefiro ${scheduled.map((item) => `${item.nome} às ${selectedTimes[item.id]}`).join(" e ")}.`,
+        undefined,
+        {
+          step: "time",
+          tipoOferta: ui.draft?.tipoOferta || "",
+          ofertaId: ui.draft?.ofertaId || "",
+          data: ui.draft?.data || "",
+          horariosPorPacote: selectedTimes,
+        },
+      );
     } else if (step === "participants") {
       if (!quote.length) { setError("Informe quantas pessoas vão participar."); return; }
-      await answer(`Seremos ${quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ")}. Pode conferir a vaga e o valor?`);
+      const timeReminder = scheduled.length && !missingTime
+        ? ` Horário escolhido: ${scheduled.map((item) => `${item.nome} às ${knownTime(item)}`).join(" e ")}.`
+        : "";
+      await answer(`Seremos ${quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ")}.${timeReminder} Pode conferir a vaga e o valor?`);
     } else if (step === "contact") {
       if ((needsName && fullName.trim().split(/\s+/).length < 2) || (needsEmail && !email.includes("@")) || (needsCpf && !validCpf(cpf)) || (needsPet && !pet)) {
         setError("Confira os dados solicitados para continuar."); return;

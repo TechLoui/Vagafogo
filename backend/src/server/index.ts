@@ -315,6 +315,9 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       telefone,
       nome_contato: nome,
       historico,
+      resposta_interativa: req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object" && !Array.isArray(req.body.respostaInterativa)
+        ? req.body.respostaInterativa
+        : null,
     },
     timeoutMs: 100_000,
   });

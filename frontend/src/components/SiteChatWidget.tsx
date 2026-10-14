@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
-import type { BookingUi } from "./SiteBookingForm";
+import type { BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -562,7 +562,7 @@ export function SiteChatWidget() {
     };
   }, [phone, resetConversation, sessionId, sessionRegistered]);
 
-  const send = async (override?: string, submittedPhone?: string): Promise<boolean> => {
+  const send = async (override?: string, submittedPhone?: string, selection?: SiteBookingSelection): Promise<boolean> => {
     const content = (override ?? draft).trim();
     if (!content || loading || sendingRef.current) return false;
     const answerPhone = !phone && bookingUi?.step === "phone" ? normalizePhone(submittedPhone || content) : "";
@@ -589,7 +589,7 @@ export function SiteChatWidget() {
       const response = await fetch(`${API_BASE}/atendimento/site/mensagem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history }),
+        body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history, ...(selection ? { respostaInterativa: selection } : {}) }),
       });
       if (generation !== generationRef.current) return false;
       if (response.status === 410) {
