@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
@@ -7,7 +7,7 @@ import type { BookingUi } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
-const STORAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const STORAGE_TTL_MS = 2 * 60 * 60 * 1000;
 const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nComo posso te ajudar?";
 const OFFICIAL_CHECKOUT_HOSTS = new Set(["vagafogo.com.br", "www.vagafogo.com.br"]);
 
@@ -66,12 +66,15 @@ const formatPhone = (value: string) => {
 const safeStoredChat = (): StoredChat | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as StoredChat | null;
-    if (!parsed || parsed.expiresAt < Date.now() || !String(parsed.sessionId).startsWith("site_")) {
+    const lastMessageAt = Math.max(0, ...(parsed?.messages || []).map((message) => Number(message.createdAt) || 0));
+    const expiresAt = Math.min(Number(parsed?.expiresAt) || 0, lastMessageAt + STORAGE_TTL_MS);
+    if (!parsed || expiresAt <= Date.now() || !String(parsed.sessionId).startsWith("site_")) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
     return {
       ...parsed,
+      expiresAt,
       messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null })) : [],
     };
   } catch {
@@ -259,10 +262,6 @@ function SecureCheckoutModal({ url, onClose }: { url: string; onClose: () => voi
   );
 }
 
-export function openSiteChat() {
-  window.dispatchEvent(new CustomEvent("vagafogo:open-chat"));
-}
-
 export function SiteChatWidget() {
   const location = useLocation();
   const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
@@ -287,6 +286,7 @@ export function SiteChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : []);
   const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi || null);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
+  const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || 0);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -298,6 +298,28 @@ export function SiteChatWidget() {
   const followMessagesRef = useRef(true);
   const sendingRef = useRef(false);
   const manualCursorRef = useRef(0);
+  const generationRef = useRef(0);
+
+  const resetConversation = useCallback(() => {
+    generationRef.current += 1;
+    localStorage.removeItem(STORAGE_KEY);
+    setSessionId(createSessionId());
+    setName("");
+    setPhone(redirectedPhone);
+    setStarted(false);
+    setMessages([]);
+    setBookingUi(null);
+    setSessionRegistered(false);
+    setExpiresAt(0);
+    setDraft("");
+    setLoading(false);
+    setError("");
+    setCheckoutUrl("");
+    setHumanMode(false);
+    manualCursorRef.current = 0;
+    sendingRef.current = false;
+    followMessagesRef.current = true;
+  }, [redirectedPhone]);
 
   useEffect(() => {
     const openChat = () => setOpen(true);
@@ -318,16 +340,22 @@ export function SiteChatWidget() {
 
   useEffect(() => {
     if (!started) return;
-    const persistable = messages.slice(-50).map(({ media: _media, ...message }) => message);
+    const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      expiresAt: Date.now() + STORAGE_TTL_MS,
+      expiresAt,
       sessionId,
       name,
       phone,
       messages: persistable,
       bookingUi,
     } satisfies StoredChat));
-  }, [bookingUi, messages, name, phone, sessionId, started]);
+  }, [bookingUi, expiresAt, messages, name, phone, sessionId, started]);
+
+  useEffect(() => {
+    if (!started || !expiresAt) return;
+    const timer = window.setTimeout(resetConversation, Math.max(0, expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [expiresAt, resetConversation, started]);
 
   useEffect(() => {
     if (!open || !followMessagesRef.current) return;
@@ -346,6 +374,7 @@ export function SiteChatWidget() {
   useEffect(() => {
     if (!started || !sessionRegistered || !sessionId || !phone) return;
     let disposed = false;
+    const generation = generationRef.current;
     const poll = async () => {
       try {
         const query = new URLSearchParams({
@@ -356,13 +385,19 @@ export function SiteChatWidget() {
           headers: { Accept: "application/json" },
           cache: "no-store",
         });
-        if (!response.ok || disposed) return;
+        if (response.status === 410 && !disposed && generation === generationRef.current) {
+          resetConversation();
+          return;
+        }
+        if (!response.ok || disposed || generation !== generationRef.current) return;
         const result = await response.json() as { mode?: string; messages?: SiteManualMessage[] };
+        if (disposed || generation !== generationRef.current) return;
         setHumanMode(result.mode === "human");
         if (result.mode === "human" || result.mode === "blocked") setBookingUi(null);
         const incoming = Array.isArray(result.messages) ? result.messages : [];
         if (!incoming.length) return;
         manualCursorRef.current = Math.max(manualCursorRef.current, ...incoming.map((message) => Number(message.ts) || 0));
+        if (incoming.some((message) => message.from === "agent")) setExpiresAt(Date.now() + STORAGE_TTL_MS);
         setMessages((current) => {
           const ids = new Set(current.map((message) => message.id));
           const additions = incoming
@@ -385,7 +420,7 @@ export function SiteChatWidget() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [phone, sessionId, sessionRegistered, started]);
+  }, [phone, resetConversation, sessionId, sessionRegistered, started]);
 
   const begin = (event: FormEvent) => {
     event.preventDefault();
@@ -400,6 +435,7 @@ export function SiteChatWidget() {
     }
     setPhone(normalized);
     setStarted(true);
+    setExpiresAt(Date.now() + STORAGE_TTL_MS);
     setError("");
     if (redirectedPhone) {
       const cleanLocation = new URL(window.location.href);
@@ -412,11 +448,13 @@ export function SiteChatWidget() {
   const send = async (override?: string): Promise<boolean> => {
     const content = (override ?? draft).trim();
     if (!content || loading || sendingRef.current) return false;
+    const generation = generationRef.current;
     sendingRef.current = true;
     followMessagesRef.current = true;
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
     setMessages((current) => [...current, userMessage]);
+    setExpiresAt(Date.now() + STORAGE_TTL_MS);
     if (!override) setDraft("");
     setLoading(true);
     setError("");
@@ -426,8 +464,15 @@ export function SiteChatWidget() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, messageId: userMessage.id, historico: history }),
       });
+      if (generation !== generationRef.current) return false;
+      if (response.status === 410) {
+        resetConversation();
+        setError("O atendimento anterior expirou após 2 horas. Vamos começar novamente por aqui.");
+        return false;
+      }
       if (response.ok) setSessionRegistered(true);
       const result = await response.json().catch(() => ({}));
+      if (generation !== generationRef.current) return false;
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
@@ -442,6 +487,7 @@ export function SiteChatWidget() {
           createdAt: Date.now(),
         };
         setMessages((current) => [...current, assistantMessage]);
+        setExpiresAt(Date.now() + STORAGE_TTL_MS);
         const checkout = [assistantMessage.content, ...(assistantMessage.additional || [])]
           .map(extractOfficialCardCheckout)
           .find(Boolean);
@@ -449,13 +495,16 @@ export function SiteChatWidget() {
       }
       return result.atendimento_humano !== true;
     } catch (cause) {
+      if (generation !== generationRef.current) return false;
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(content);
       setError(cause instanceof Error ? cause.message : "Não foi possível responder agora. Tente novamente.");
       return false;
     } finally {
-      sendingRef.current = false;
-      setLoading(false);
+      if (generation === generationRef.current) {
+        sendingRef.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -484,6 +533,9 @@ export function SiteChatWidget() {
                 <h2 className="font-display text-lg leading-tight">Jatobá</h2>
                 <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
               </div>
+              <button type="button" onClick={() => { if (window.confirm("Reiniciar o atendimento? A conversa exibida neste aparelho será limpa e você começará do início.")) resetConversation(); }} aria-label="Reiniciar atendimento" title="Reiniciar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.5 6.2M3 4v7h7" /></svg>
+              </button>
               <button type="button" onClick={() => setFullScreen((value) => !value)} aria-label={fullScreen ? "Reduzir atendimento" : "Abrir atendimento em tela cheia"} aria-pressed={fullScreen} title={fullScreen ? "Reduzir" : "Tela cheia"} className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={fullScreen ? "M8 3v5H3m13-5v5h5M3 16h5v5m13-5h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} /></svg>
               </button>
@@ -511,7 +563,7 @@ export function SiteChatWidget() {
                   {!redirectedPhone && <><label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label><input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" /></>}
                   {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
                   <button type="submit" className="mt-4 w-full rounded-xl bg-[#8b4f23] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">{redirectedPhone ? "Continuar com a Jatobá" : "Continuar no chat"}</button>
-                  <p className="mt-3 text-center text-[10px] leading-relaxed text-[#7b837c]">O histórico fica disponível neste aparelho por até 7 dias.</p>
+                  <p className="mt-3 text-center text-[10px] leading-relaxed text-[#7b837c]">Por privacidade, este chat recomeça após 2 horas sem atividade.</p>
                 </form>
               </div>
             ) : (
@@ -533,6 +585,13 @@ export function SiteChatWidget() {
                       </div>
                     </div>
                   ))}
+                  {messages.length === 1 && messages[0].role === "assistant" && !loading && (
+                    <div className="ml-9 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => void send("Quero consultar uma reserva que já fiz") } className="rounded-full border border-[#bfd6c8] bg-white px-3.5 py-2 text-xs font-semibold text-[#215a43] shadow-sm hover:bg-[#eef6f0]">
+                        Consultar minha reserva
+                      </button>
+                    </div>
+                  )}
                   {loading && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>

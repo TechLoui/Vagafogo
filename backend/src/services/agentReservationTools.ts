@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { reservaContaParaOcupacao } from "./reservaStatus";
+import { normalizarStatusReserva, reservaContaParaOcupacao, reservaEstaConfirmada } from "./reservaStatus";
 
 type AgentAvailabilityInput = {
   tipoOferta?: unknown;
@@ -216,6 +216,58 @@ export const canonicalLeadPhone = (value: unknown) => {
   return variants.find((phone) => phone.length === 13 && phone.startsWith("55") && phone[4] === "9")
     ?? variants[0]
     ?? "";
+};
+
+export const reservaClientePodeConsultar = (
+  reserva: { cpf?: unknown; telefone?: unknown },
+  input: { cpf?: unknown; telefone?: unknown; canal?: unknown },
+) => {
+  if (input.canal === "site") {
+    const cpf = String(input.cpf ?? "").replace(/\D/g, "");
+    return cpfValidoParaReservaAgente(cpf)
+      && String(reserva.cpf ?? "").replace(/\D/g, "") === cpf;
+  }
+  const phone = canonicalLeadPhone(input.telefone);
+  return Boolean(phone) && leadPhoneVariants(reserva.telefone).includes(phone);
+};
+
+export const consultarReservaClienteAgente = async (input: {
+  codigo?: unknown;
+  telefone?: unknown;
+  cpf?: unknown;
+  canal?: unknown;
+}) => {
+  const codigo = clean(input.codigo, 100);
+  const canal = clean(input.canal, 20);
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(codigo)) return { encontrada: false, motivo: "codigo_invalido" };
+  const phone = canonicalLeadPhone(input.telefone);
+  const cpf = String(input.cpf ?? "").replace(/\D/g, "");
+  if (canal === "site" && !cpfValidoParaReservaAgente(cpf)) {
+    return { encontrada: false, motivo: "cpf_necessario" };
+  }
+  if (canal !== "site" && !phone) return { encontrada: false, motivo: "telefone_indisponivel" };
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const snapshot = await db.collection("reservas").doc(codigo).get();
+  if (!snapshot.exists) return { encontrada: false, motivo: "nao_localizada" };
+  const reserva = snapshot.data() ?? {};
+  const authorized = reservaClientePodeConsultar(reserva, { canal, cpf, telefone: phone });
+  if (!authorized) return { encontrada: false, motivo: "nao_localizada" };
+  const status = normalizarStatusReserva(reserva.status);
+  const situacao = reservaEstaConfirmada(reserva)
+    ? "confirmada"
+    : /cancel|estorn|refund/.test(status) ? "cancelada"
+      : /aguard|pending|process|analise|pre.?reserva/.test(status) ? "aguardando_pagamento"
+        : "nao_confirmada";
+  return {
+    encontrada: true,
+    codigo,
+    situacao,
+    atividade: clean(reserva.atividade, 180),
+    data: clean(reserva.data, 20),
+    horario: clean(reserva.horario, 20),
+    participantes: Number.isFinite(Number(reserva.participantes)) ? Number(reserva.participantes) : null,
+  };
 };
 
 const agentLeadStageRank: Record<string, number> = {
@@ -1249,18 +1301,22 @@ const agentReservationDraftId = (isTest: boolean, sessionId: string, phone: stri
   .update(`agente-reserva-rascunho:v1\0${agentLeadIdentity(isTest, sessionId, phone)}`)
   .digest("hex");
 
-const reservationDraftIdentity = (input: AgentReservationDraftInput) => {
+export const reservationDraftIdentity = (input: AgentReservationDraftInput) => {
   const sessionId = clean(input.sessionId, 100);
   const isTest = input.teste === true;
+  const isSite = /^site_[A-Za-z0-9_-]{12,98}$/.test(sessionId);
   const rawPhone = normalizePhone(input.telefone);
   const phone = isTest ? rawPhone : canonicalLeadPhone(rawPhone);
   if (!sessionId || !phone) throw new Error("AGENT_RESERVATION_DRAFT_IDENTITY_REQUIRED");
-  const canonicalSessionId = isTest ? sessionId : `whatsapp_${phone}`;
+  const canonicalSessionId = isTest || isSite ? sessionId : `whatsapp_${phone}`;
   return {
     sessionId: canonicalSessionId,
     phone,
     isTest,
-    id: agentReservationDraftId(isTest, canonicalSessionId, phone),
+    isSite,
+    id: isSite
+      ? createHash("sha256").update(`agente-reserva-rascunho:site:v1\0${canonicalSessionId}`).digest("hex")
+      : agentReservationDraftId(isTest, canonicalSessionId, phone),
   };
 };
 
@@ -1269,7 +1325,7 @@ const reservationDraftAliasRefs = (
   input: AgentReservationDraftInput,
   identity: ReturnType<typeof reservationDraftIdentity>,
 ) => {
-  if (identity.isTest) return [] as FirebaseFirestore.DocumentReference[];
+  if (identity.isTest || identity.isSite) return [] as FirebaseFirestore.DocumentReference[];
   return leadPhoneVariants(input.telefone)
     .filter((phone) => phone !== identity.phone)
     .map((phone) => {

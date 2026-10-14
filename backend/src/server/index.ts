@@ -88,6 +88,7 @@ import {
 import {
   atualizarPreferenciasPosReservaAgente,
   atualizarLeadAgente,
+  consultarReservaClienteAgente,
   criarLinkCartaoAgente,
   criarLinkPixExistenteAgente,
   diagnosticarIntegridadeAgente,
@@ -192,6 +193,7 @@ const siteChatWindows = new Map<string, SiteChatWindow>();
 let siteChatRateChecks = 0;
 const SITE_CHAT_WINDOW_MS = 10 * 60 * 1000;
 const SITE_CHAT_MAX_MESSAGES = 30;
+const SITE_CHAT_INACTIVITY_MS = 2 * 60 * 60 * 1000;
 
 const normalizeSiteChatPhone = (value: unknown) => {
   const digits = String(value ?? "").replace(/\D/g, "").slice(0, 15);
@@ -267,6 +269,14 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const existingConversation = await obterConversaSite(sessionId);
+  if (existingConversation && existingConversation.phone !== telefone) {
+    res.status(403).json({ error: "SITE_CHAT_SESSION_PHONE_MISMATCH" });
+    return;
+  }
+  if (existingConversation && Date.now() - existingConversation.lastMessageAt >= SITE_CHAT_INACTIVITY_MS) {
+    res.status(410).json({ error: "SITE_CHAT_SESSION_EXPIRED", mensagem: "Este atendimento expirou após 2 horas sem atividade. Inicie um novo chat para continuar." });
+    return;
+  }
   if (existingConversation?.mode === "blocked") {
     res.status(403).json({
       error: "SITE_CHAT_SESSION_BLOCKED",
@@ -392,6 +402,10 @@ app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
   const conversation = await obterConversaSite(sessionId);
   if (!conversation || conversation.phone !== telefone) {
     res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
+    return;
+  }
+  if (Date.now() - conversation.lastMessageAt >= SITE_CHAT_INACTIVITY_MS) {
+    res.status(410).json({ error: "SITE_CHAT_SESSION_EXPIRED" });
     return;
   }
   res.set("Cache-Control", "no-store");
@@ -885,6 +899,15 @@ app.get('/crm/agente/diagnostico', exigirAdminCrm, async (_req, res) => {
 app.get('/internal/agente/ferramentas/pacotes', exigirServicoAgente, async (_req, res) => {
   try {
     res.json(await listarCatalogoAgente());
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post('/internal/agente/ferramentas/consultar-reserva', exigirServicoAgente, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(await consultarReservaClienteAgente(req.body ?? {}));
   } catch (error) {
     res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
   }
