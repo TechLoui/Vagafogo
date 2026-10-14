@@ -55,3 +55,25 @@ test("unifica o atendimento do site e entrega a resposta manual ao visitante", a
   await removerConversaSite(sessionId);
   assert.equal(await obterConversaSite(sessionId), null);
 });
+
+test("permite iniciar anonimamente e associar o WhatsApp quando a Jatobá o solicitar", async () => {
+  const sessionId = `site_test_${Date.now()}_phoneupgrade`;
+  await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: "Qual o valor do brunch?",
+    sourceId: "client:anonymous",
+    phone: "",
+  });
+  assert.equal((await obterConversaSite(sessionId)).phone, "");
+
+  await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: "Quero reservar. Meu WhatsApp é (62) 99999-9999.",
+    sourceId: "client:identified",
+    phone: "5562999999999",
+  });
+  const conversation = await obterConversaSite(sessionId);
+  assert.equal(conversation.phone, "5562999999999");
+  assert.equal(conversation.messages.length, 2);
+  await removerConversaSite(sessionId);
+});

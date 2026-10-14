@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
@@ -50,17 +50,6 @@ const normalizePhone = (value: string) => {
   const digits = value.replace(/\D/g, "").slice(0, 13);
   if (digits.startsWith("55")) return digits;
   return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
-};
-
-const formatPhone = (value: string) => {
-  let digits = value.replace(/\D/g, "");
-  if (digits.startsWith("55")) digits = digits.slice(2);
-  digits = digits.slice(0, 11);
-  if (!digits) return "";
-  if (digits.length <= 2) return `(${digits}`;
-  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-  const split = digits.length === 11 ? 7 : 6;
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, split)}-${digits.slice(split)}`;
 };
 
 const safeStoredChat = (): StoredChat | null => {
@@ -266,12 +255,12 @@ export function SiteChatWidget() {
   const location = useLocation();
   const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
-  const redirectedPhone = useMemo(() => {
+  const [redirectedPhone] = useState(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("origem") !== "whatsapp") return "";
     const normalized = normalizePhone(params.get("telefone") || "");
     return normalized.length >= 12 && normalized.length <= 13 ? normalized : "";
-  }, [location.search]);
+  });
   const stored = useMemo(safeStoredChat, []);
   const initial = useMemo(() => {
     if (!stored) return null;
@@ -282,11 +271,10 @@ export function SiteChatWidget() {
   const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
-  const [started, setStarted] = useState(Boolean(initial?.phone && (!redirectedPhone || initial.name)));
-  const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : []);
+  const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
   const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi || null);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
-  const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || 0);
+  const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -306,11 +294,10 @@ export function SiteChatWidget() {
     setSessionId(createSessionId());
     setName("");
     setPhone(redirectedPhone);
-    setStarted(false);
-    setMessages([]);
+    setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
     setBookingUi(null);
     setSessionRegistered(false);
-    setExpiresAt(0);
+    setExpiresAt(Date.now() + STORAGE_TTL_MS);
     setDraft("");
     setLoading(false);
     setError("");
@@ -332,6 +319,13 @@ export function SiteChatWidget() {
   }, [location.search]);
 
   useEffect(() => {
+    if (!redirectedPhone) return;
+    const cleanLocation = new URL(window.location.href);
+    cleanLocation.searchParams.delete("telefone");
+    window.history.replaceState(window.history.state, "", `${cleanLocation.pathname}${cleanLocation.search}${cleanLocation.hash}`);
+  }, [redirectedPhone]);
+
+  useEffect(() => {
     if (!open || !window.matchMedia("(max-width: 639px)").matches) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -339,7 +333,6 @@ export function SiteChatWidget() {
   }, [open]);
 
   useEffect(() => {
-    if (!started) return;
     const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       expiresAt,
@@ -349,13 +342,13 @@ export function SiteChatWidget() {
       messages: persistable,
       bookingUi,
     } satisfies StoredChat));
-  }, [bookingUi, expiresAt, messages, name, phone, sessionId, started]);
+  }, [bookingUi, expiresAt, messages, name, phone, sessionId]);
 
   useEffect(() => {
-    if (!started || !expiresAt) return;
+    if (!expiresAt) return;
     const timer = window.setTimeout(resetConversation, Math.max(0, expiresAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [expiresAt, resetConversation, started]);
+  }, [expiresAt, resetConversation]);
 
   useEffect(() => {
     if (!open || !followMessagesRef.current) return;
@@ -372,7 +365,7 @@ export function SiteChatWidget() {
   }, [loading]);
 
   useEffect(() => {
-    if (!started || !sessionRegistered || !sessionId || !phone) return;
+    if (!sessionRegistered || !sessionId) return;
     let disposed = false;
     const generation = generationRef.current;
     const poll = async () => {
@@ -420,34 +413,20 @@ export function SiteChatWidget() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [phone, resetConversation, sessionId, sessionRegistered, started]);
+  }, [phone, resetConversation, sessionId, sessionRegistered]);
 
-  const begin = (event: FormEvent) => {
-    event.preventDefault();
-    const normalized = normalizePhone(phone);
-    if (redirectedPhone && name.trim().length < 2) {
-      setError("Informe seu nome para iniciar o atendimento.");
-      return;
-    }
-    if (normalized.length < 12 || normalized.length > 13) {
-      setError("Informe um WhatsApp válido com DDD.");
-      return;
-    }
-    setPhone(normalized);
-    setStarted(true);
-    setExpiresAt(Date.now() + STORAGE_TTL_MS);
-    setError("");
-    if (redirectedPhone) {
-      const cleanLocation = new URL(window.location.href);
-      cleanLocation.searchParams.delete("telefone");
-      window.history.replaceState(window.history.state, "", `${cleanLocation.pathname}${cleanLocation.search}${cleanLocation.hash}`);
-    }
-    if (!messages.length) setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
-  };
-
-  const send = async (override?: string): Promise<boolean> => {
+  const send = async (override?: string, submittedPhone?: string): Promise<boolean> => {
     const content = (override ?? draft).trim();
     if (!content || loading || sendingRef.current) return false;
+    const answerPhone = !phone && bookingUi?.step === "phone" ? normalizePhone(submittedPhone || content) : "";
+    if (!phone && bookingUi?.step === "phone" && (answerPhone.length < 12 || answerPhone.length > 13)) {
+      setError("Informe um WhatsApp válido com DDD.");
+      return false;
+    }
+    const requestPhone = answerPhone || phone;
+    const answerName = bookingUi?.step === "contact" && bookingUi.fields?.includes("nome")
+      ? content.match(/Nome completo:\s*([^.]*)/i)?.[1]?.trim() || ""
+      : "";
     const generation = generationRef.current;
     sendingRef.current = true;
     followMessagesRef.current = true;
@@ -462,7 +441,7 @@ export function SiteChatWidget() {
       const response = await fetch(`${API_BASE}/atendimento/site/mensagem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, messageId: userMessage.id, historico: history }),
+        body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history }),
       });
       if (generation !== generationRef.current) return false;
       if (response.status === 410) {
@@ -470,7 +449,11 @@ export function SiteChatWidget() {
         setError("O atendimento anterior expirou após 2 horas. Vamos começar novamente por aqui.");
         return false;
       }
-      if (response.ok) setSessionRegistered(true);
+      if (response.ok) {
+        setSessionRegistered(true);
+        if (answerPhone) setPhone(answerPhone);
+        if (answerName) setName(answerName);
+      }
       const result = await response.json().catch(() => ({}));
       if (generation !== generationRef.current) return false;
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
@@ -544,30 +527,7 @@ export function SiteChatWidget() {
               </button>
             </header>
 
-            {!started ? (
-              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
-                <div className="flex items-end gap-2">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
-                    <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
-                  </span>
-                  <div className="max-w-[86%] rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-3 text-sm leading-relaxed text-[#2d382f] shadow-sm">
-                    <p className="whitespace-pre-wrap">{WELCOME}</p>
-                  </div>
-                </div>
-
-                <form onSubmit={begin} className="ml-10 mt-3 rounded-2xl border border-[#dfe7d9] bg-white p-4 shadow-sm">
-                  <h3 className="font-display text-lg text-[#263d31]">{redirectedPhone ? "Como podemos chamar você?" : "Antes de começarmos"}</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-[#657066]">{redirectedPhone ? "Seu WhatsApp já foi identificado. Informe seu nome para a Jatobá continuar o atendimento por aqui." : "Informe seu WhatsApp para manter o atendimento e a reserva organizados. Isso não autoriza o envio de campanhas."}</p>
-                  <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">Primeiro nome {!redirectedPhone && <span className="normal-case font-normal text-[#7d877f]">(opcional)</span>}</label>
-                  <input value={name} onChange={(event) => setName(event.target.value.slice(0, 120))} required={Boolean(redirectedPhone)} autoFocus={Boolean(redirectedPhone)} placeholder="Como podemos chamar você?" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" />
-                  {!redirectedPhone && <><label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#526057]">WhatsApp</label><input value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} inputMode="tel" autoComplete="tel" required placeholder="(62) 99999-9999" className="mt-1 w-full rounded-xl border border-[#d6dfd1] bg-[#fbfcfa] px-3.5 py-3 text-sm outline-none focus:border-[#4d856b] focus:ring-2 focus:ring-[#4d856b]/20" /></>}
-                  {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-                  <button type="submit" className="mt-4 w-full rounded-xl bg-[#8b4f23] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#8b4f23]/15 hover:bg-[#743f1b]">{redirectedPhone ? "Continuar com a Jatobá" : "Continuar no chat"}</button>
-                  <p className="mt-3 text-center text-[10px] leading-relaxed text-[#7b837c]">Por privacidade, este chat recomeça após 2 horas sem atividade.</p>
-                </form>
-              </div>
-            ) : (
-              <>
+            <>
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followMessagesRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
                   <div className="space-y-3">
@@ -612,8 +572,7 @@ export function SiteChatWidget() {
                     </button>
                   </div>
                 </div>
-              </>
-            )}
+            </>
           </section>
         )}
 

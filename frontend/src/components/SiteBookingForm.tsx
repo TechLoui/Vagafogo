@@ -23,7 +23,7 @@ type Combo = {
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
 
 export type BookingUi = {
-  step: "experiences" | "date" | "participants" | "contact" | "summary" | "payment" | "availability";
+  step: "phone" | "experiences" | "date" | "participants" | "contact" | "summary" | "payment" | "availability";
   fields?: string[];
   draft?: {
     tipoOferta?: string;
@@ -44,6 +44,23 @@ const validCpf = (input: string) => {
     if ((digit === 10 ? 0 : digit) !== Number(cpf[length])) return false;
   }
   return true;
+};
+
+const normalizePhone = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  if (digits.startsWith("55")) return digits.slice(0, 13);
+  return digits.length === 10 || digits.length === 11 ? `55${digits}` : "";
+};
+
+const formatPhone = (value: string) => {
+  let digits = value.replace(/\D/g, "");
+  if (digits.startsWith("55")) digits = digits.slice(2);
+  digits = digits.slice(0, 11);
+  if (!digits) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  const split = digits.length === 11 ? 7 : 6;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, split)}-${digits.slice(split)}`;
 };
 
 const quantityOf = (counts: Record<string, number>, id: string) => Math.max(0, Math.min(99, Number(counts[id]) || 0));
@@ -71,6 +88,7 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 }
 
 const stages = {
+  phone: { title: "Seu WhatsApp", hint: "Apenas para este atendimento e sua reserva; isso não autoriza campanhas.", icon: FaUser },
   experiences: { title: "Escolha a experiência", hint: "Você pode escolher um pacote ou o combo.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
   time: { title: "Escolha o horário", hint: "A Jatobá confirmará as vagas para você.", icon: FaClock },
@@ -80,7 +98,7 @@ const stages = {
   payment: { title: "Como prefere pagar?", hint: "Sua reserva é confirmada após a aprovação do pagamento.", icon: FaCreditCard },
 };
 
-export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; sending: boolean; onAnswer: (message: string) => Promise<boolean> }) {
+export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; sending: boolean; onAnswer: (message: string, phone?: string) => Promise<boolean> }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const [date, setDate] = useState(ui.draft?.data || "");
@@ -92,6 +110,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const [email, setEmail] = useState("");
   const [cpf, setCpf] = useState("");
   const [pet, setPet] = useState("");
+  const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -155,16 +174,20 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const stage = stages[step];
   const StageIcon = stage.icon;
 
-  const answer = async (message: string) => {
+  const answer = async (message: string, contactPhone?: string) => {
     setError("");
-    const accepted = await onAnswer(message);
+    const accepted = await onAnswer(message, contactPhone);
     if (!accepted) setError("Não consegui enviar esta resposta. Tente novamente ou escreva no chat.");
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (sending) return;
-    if (step === "date") {
+    if (step === "phone") {
+      const normalized = normalizePhone(phone);
+      if (normalized.length < 12 || normalized.length > 13) { setError("Informe um WhatsApp válido com DDD."); return; }
+      await answer(`Meu WhatsApp para a reserva é ${formatPhone(normalized)}.`, normalized);
+    } else if (step === "date") {
       if (!date || date < today()) { setError("Escolha uma data a partir de hoje."); return; }
       await answer(`Gostaria de reservar para ${readableDate(date)}.`);
     } else if (step === "experiences") {
@@ -215,6 +238,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         </div>
       </div>
       <div className="space-y-3 p-3.5 sm:p-4">
+        {step === "phone" && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
         {step !== "experiences" && selected.length > 0 && (
           <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#e3ebdf] bg-[#f8faf5] p-2.5">
             <OfferIcon small name={combo?.nome || selected[0].nome} url={combo?.iconeUrl || selected[0].iconeUrl} emoji={combo?.emoji || selected[0].emoji} combo={Boolean(combo)} />
@@ -265,7 +289,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         {step === "payment" && <div className="grid gap-2.5" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por PIX. Pode enviar o QR Code e o copia e cola?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] p-3 text-left transition hover:border-[#20745a] hover:bg-[#e9f4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8ecdc] text-[#20745a]"><FaQrcode aria-hidden="true" /></span><span><strong className="block text-sm text-[#245139]">PIX</strong><small className="mt-0.5 block text-[11px] text-[#607965]">QR Code e copia e cola</small></span></button><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por cartão de crédito. Pode enviar o link seguro?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#e4d5c3] bg-[#fffaf3] p-3 text-left transition hover:border-[#b28b64] hover:bg-[#fdf4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f4e9d6] text-[#8a5a2f]"><FaCreditCard aria-hidden="true" /></span><span><strong className="block text-sm text-[#58412d]">Cartão</strong><small className="mt-0.5 block text-[11px] text-[#806c56]">Página segura</small></span></button></div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button type="submit" disabled={sending || (step !== "date" && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {!["summary", "payment"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
         <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>
       </div>
     </form>

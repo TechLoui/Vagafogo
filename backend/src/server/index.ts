@@ -183,7 +183,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-14.3-unified-inbox',
+    build: '2026-10-14.4-conversational-site-chat',
     timestamp: new Date().toISOString(),
   });
 });
@@ -246,7 +246,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const telefone = normalizeSiteChatPhone(req.body?.telefone);
   const sessionId = String(req.body?.sessionId ?? "").trim().slice(0, 120);
   const messageId = String(req.body?.messageId ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 160);
-  if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || telefone.length < 12 || telefone.length > 13) {
+  if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || (telefone && (telefone.length < 12 || telefone.length > 13))) {
     res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
     return;
   }
@@ -269,7 +269,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const existingConversation = await obterConversaSite(sessionId);
-  if (existingConversation && existingConversation.phone !== telefone) {
+  if (existingConversation?.phone && existingConversation.phone !== telefone) {
     res.status(403).json({ error: "SITE_CHAT_SESSION_PHONE_MISMATCH" });
     return;
   }
@@ -370,14 +370,16 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     const sourceMessageId = createHash("sha256")
       .update(`site-chat\0${sessionId}\0${mensagem}`)
       .digest("hex");
-    void enfileirarAlertaAtendimentoHumano({
-      telefone,
-      nome,
-      motivo: body.handoff.motivo ?? "excecao_operacional",
-      resumo: body.handoff.resumo ?? mensagem,
-      ultimaMensagem: mensagem,
-      sourceMessageId,
-    }).catch((error) => console.error("[site-chat] Falha ao alertar equipe:", error));
+    if (telefone) {
+      void enfileirarAlertaAtendimentoHumano({
+        telefone,
+        nome,
+        motivo: body.handoff.motivo ?? "excecao_operacional",
+        resumo: body.handoff.resumo ?? mensagem,
+        ultimaMensagem: mensagem,
+        sourceMessageId,
+      }).catch((error) => console.error("[site-chat] Falha ao alertar equipe:", error));
+    }
   }
 
   res.json({
@@ -395,7 +397,7 @@ app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
   const sessionId = String(req.params.sessionId ?? "").trim().slice(0, 120);
   const telefone = normalizeSiteChatPhone(req.query.telefone);
   const after = Number.isFinite(Number(req.query.after)) ? Math.max(0, Number(req.query.after)) : 0;
-  if (!/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || telefone.length < 12 || telefone.length > 13) {
+  if (!/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || (telefone && (telefone.length < 12 || telefone.length > 13))) {
     res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
     return;
   }
