@@ -28,6 +28,7 @@ type ChatMessage = {
   content: string;
   media?: ChatMedia | null;
   additional?: string[];
+  visibleAdditional?: number;
   createdAt: number;
   animate?: boolean;
 };
@@ -74,7 +75,7 @@ const safeStoredChat = (): StoredChat | null => {
     return {
       ...parsed,
       expiresAt,
-      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null, animate: false })) : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null, visibleAdditional: message.additional?.length || 0, animate: false })) : [],
     };
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -438,7 +439,7 @@ export function SiteChatWidget() {
   }, [open]);
 
   useEffect(() => {
-    const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined, animate: undefined }));
+    const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined, visibleAdditional: undefined, animate: undefined }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       expiresAt,
       sessionId,
@@ -450,11 +451,17 @@ export function SiteChatWidget() {
   }, [bookingUi, expiresAt, messages, name, phone, sessionId]);
 
   useEffect(() => {
-    if (!messages.some((message) => message.animate)) return;
-    const longestSequence = Math.max(0, ...messages.filter((message) => message.animate).map((message) => message.additional?.length || 0));
+    const pending = messages.find((message) => message.animate && (message.visibleAdditional ?? message.additional?.length ?? 0) < (message.additional?.length || 0));
+    if (!pending && !messages.some((message) => message.animate)) return;
     const timer = window.setTimeout(() => {
-      setMessages((current) => current.map((message) => message.animate ? { ...message, animate: false } : message));
-    }, Math.max(1100, longestSequence * 180 + 450));
+      if (pending) {
+        setMessages((current) => current.map((message) => message.id === pending.id
+          ? { ...message, visibleAdditional: Math.min((message.visibleAdditional || 0) + 1, message.additional?.length || 0) }
+          : message));
+      } else {
+        setMessages((current) => current.map((message) => message.animate ? { ...message, animate: false } : message));
+      }
+    }, pending ? 460 : 380);
     return () => window.clearTimeout(timer);
   }, [messages]);
 
@@ -592,7 +599,9 @@ export function SiteChatWidget() {
     setShowNewMessages(false);
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now(), animate: true };
-    setMessages((current) => [...current, userMessage]);
+    setMessages((current) => [...current.map((message) => message.visibleAdditional !== undefined && message.visibleAdditional < (message.additional?.length || 0)
+      ? { ...message, visibleAdditional: message.additional?.length || 0, animate: false }
+      : message), userMessage]);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
     if (!override) setDraft("");
     setLoading(true);
@@ -627,6 +636,7 @@ export function SiteChatWidget() {
           content: String(result.resposta),
           media: result.media || null,
           additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
+          visibleAdditional: 0,
           createdAt: Date.now(),
           animate: true,
         };
@@ -695,7 +705,7 @@ export function SiteChatWidget() {
                   <div ref={scrollContentRef} className="space-y-3">
                   {messages.map((message, index) => (
                     <Fragment key={message.id}>
-                    <div ref={index === messages.length - 1 && !message.additional?.length ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
+                    <div ref={index === messages.length - 1 && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
@@ -706,8 +716,8 @@ export function SiteChatWidget() {
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                       </div>
                     </div>
-                    {message.additional?.map((extra, extraIndex) => (
-                      <div key={`${message.id}:extra:${extraIndex}`} ref={index === messages.length - 1 && extraIndex === (message.additional?.length || 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`} style={message.animate ? { animationDelay: `${(extraIndex + 1) * 180}ms` } : undefined}>
+                    {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
+                      <div key={`${message.id}:extra:${extraIndex}`} ref={index === messages.length - 1 && extraIndex === (message.visibleAdditional ?? message.additional?.length ?? 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`}>
                         <div className="min-w-0 max-w-[85%] rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-3 text-sm leading-relaxed text-[#2d382f] shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)]">
                           <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>
                         </div>
@@ -733,7 +743,7 @@ export function SiteChatWidget() {
                       </div>
                     </div>
                   )}
-                  {!loading && !humanMode && bookingUi && <div ref={bookingFormRef} className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px]"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
+                  {!loading && !humanMode && bookingUi && !messages.at(-1)?.animate && <div ref={bookingFormRef} className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px] site-chat-message-pop"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
                   </div>
                   </div>
                   {showNewMessages && <button type="button" onClick={scrollToLatest} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-[#214f3e] px-4 py-2 text-xs font-semibold text-white shadow-lg">Ver nova resposta ↓</button>}
