@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
@@ -20,6 +20,7 @@ type ChatMedia = {
 
 type ChatPhoto = { dataUrl: string; title: string; caption: string };
 type PhotoPreviewState = { items: ChatPhoto[]; index: number };
+type ViewportBounds = { mobile: boolean; height: number; top: number };
 
 type ChatMessage = {
   id: string;
@@ -48,6 +49,11 @@ type SiteManualMessage = {
 
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const createSessionId = () => `site_${createId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+const readViewportBounds = (): ViewportBounds => ({
+  mobile: window.innerWidth < 640,
+  height: window.visualViewport?.height || window.innerHeight,
+  top: window.visualViewport?.offsetTop || 0,
+});
 
 const normalizePhone = (value: string) => {
   const digits = value.replace(/\D/g, "").slice(0, 13);
@@ -196,8 +202,8 @@ function PhotoCarousel({ items, onOpenPreview }: { items: ChatPhoto[]; onOpenPre
   );
 }
 
-function PhotoPreview({ preview, onChange, onClose }: {
-  preview: PhotoPreviewState; onChange: (index: number) => void; onClose: () => void;
+function PhotoPreview({ preview, viewport, onChange, onClose }: {
+  preview: PhotoPreviewState; viewport: ViewportBounds; onChange: (index: number) => void; onClose: () => void;
 }) {
   const { items, index } = preview;
   const active = items[index];
@@ -212,7 +218,7 @@ function PhotoPreview({ preview, onChange, onClose }: {
   }, [index, items.length, onChange, onClose]);
   if (!active) return null;
   return (
-    <div className="fixed inset-0 z-[120] flex flex-col bg-[#10251d]/95 text-white" role="dialog" aria-modal="true" aria-label="Visualização das fotos da Fazenda Vagafogo">
+    <div className="fixed inset-0 z-[120] flex flex-col bg-[#10251d]/95 text-white" style={viewport.mobile ? { top: viewport.top, bottom: "auto", height: viewport.height } : undefined} role="dialog" aria-modal="true" aria-label="Visualização das fotos da Fazenda Vagafogo">
       <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <div className="min-w-0"><p className="truncate text-sm font-semibold">{active.title}</p>{items.length > 1 && <p className="text-xs text-white/65">{index + 1} de {items.length}</p>}</div>
         <button type="button" onClick={onClose} aria-label="Fechar foto ampliada" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/15 hover:bg-white/25"><svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
@@ -224,7 +230,7 @@ function PhotoPreview({ preview, onChange, onClose }: {
           <PhotoArrow direction="next" onClick={() => onChange((index + 1) % items.length)} label="Próxima foto" className="absolute right-2 top-1/2 -translate-y-1/2 sm:right-6" />
         </>}
       </div>
-      {active.caption && <p className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 text-center text-sm text-white/85 sm:px-6">{active.caption}</p>}
+      {active.caption && <p className="max-h-[30%] shrink-0 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 text-center text-sm text-white/85 [overflow-wrap:anywhere] sm:px-6">{active.caption}</p>}
     </div>
   );
 }
@@ -256,7 +262,7 @@ function MediaBlock({ media, onOpenPreview }: { media?: ChatMedia | null; onOpen
   return null;
 }
 
-function SecureCheckoutModal({ url, onClose }: { url: string; onClose: () => void }) {
+function SecureCheckoutModal({ url, viewport, onClose }: { url: string; viewport: ViewportBounds; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -269,8 +275,8 @@ function SecureCheckoutModal({ url, onClose }: { url: string; onClose: () => voi
   }, [onClose, url]);
 
   return (
-    <div className="fixed inset-0 z-[110] bg-[#13271f]/70 p-2 backdrop-blur-sm sm:p-5" role="dialog" aria-modal="true" aria-label="Pagamento seguro da Fazenda Vagafogo">
-      <section className="mx-auto flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl sm:h-[calc(100dvh-2.5rem)] sm:rounded-[30px]">
+    <div className="fixed inset-0 z-[110] bg-[#13271f]/70 p-2 backdrop-blur-sm sm:p-5" style={viewport.mobile ? { top: viewport.top, bottom: "auto", height: viewport.height } : undefined} role="dialog" aria-modal="true" aria-label="Pagamento seguro da Fazenda Vagafogo">
+      <section className="mx-auto flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl sm:h-[calc(100dvh-2.5rem)] sm:rounded-[30px]" style={viewport.mobile ? { height: Math.max(0, viewport.height - 16) } : undefined}>
         <header className="border-b border-[#dce6da] bg-[#f8faf5] px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex items-start gap-3">
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#e7f2ea] text-[#20745a]">
@@ -355,8 +361,17 @@ export function SiteChatWidget() {
   const [humanMode, setHumanMode] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const [viewport, setViewport] = useState<ViewportBounds>(readViewportBounds);
+  const [showNewMessages, setShowNewMessages] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const followMessagesRef = useRef(true);
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
+  const bookingFormRef = useRef<HTMLDivElement>(null);
+  const scrollModeRef = useRef<"bottom" | "latest" | "free">("bottom");
+  const autoScrollingRef = useRef(false);
+  const wasOpenRef = useRef(false);
+  const lastPresentedMessageIdRef = useRef(messages.at(-1)?.id || "");
   const sendingRef = useRef(false);
   const manualCursorRef = useRef(0);
   const generationRef = useRef(0);
@@ -379,8 +394,24 @@ export function SiteChatWidget() {
     setHumanMode(false);
     manualCursorRef.current = 0;
     sendingRef.current = false;
-    followMessagesRef.current = true;
+    scrollModeRef.current = "bottom";
+    setShowNewMessages(false);
   }, [redirectedPhone]);
+
+  useEffect(() => {
+    const updateViewport = () => {
+      const next = readViewportBounds();
+      setViewport((current) => current.mobile === next.mobile && Math.abs(current.height - next.height) < 1 && Math.abs(current.top - next.top) < 1 ? current : next);
+    };
+    window.addEventListener("resize", updateViewport);
+    window.visualViewport?.addEventListener("resize", updateViewport);
+    window.visualViewport?.addEventListener("scroll", updateViewport);
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+      window.visualViewport?.removeEventListener("resize", updateViewport);
+      window.visualViewport?.removeEventListener("scroll", updateViewport);
+    };
+  }, []);
 
   useEffect(() => {
     const openChat = () => setOpen(true);
@@ -424,12 +455,62 @@ export function SiteChatWidget() {
     return () => window.clearTimeout(timer);
   }, [expiresAt, resetConversation]);
 
+  const scrollToLatest = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const latest = latestMessageRef.current;
+    const form = bookingFormRef.current;
+    const bottom = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    let target = bottom;
+    let mode: "bottom" | "latest" = "bottom";
+    if (latest && !loading && messages.at(-1)?.role === "assistant") {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const latestRect = latest.getBoundingClientRect();
+      const lastRect = form?.getBoundingClientRect() || latestRect;
+      if (lastRect.bottom - latestRect.top > scroller.clientHeight - 16) {
+        target = Math.max(0, Math.min(bottom, scroller.scrollTop + latestRect.top - scrollerRect.top - 8));
+        mode = "latest";
+      }
+    }
+    autoScrollingRef.current = true;
+    scroller.scrollTop = target;
+    scrollModeRef.current = mode;
+    setShowNewMessages(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => { autoScrollingRef.current = false; }));
+  }, [loading, messages]);
+
+  useLayoutEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!open) return;
+    if (justOpened) scrollModeRef.current = "bottom";
+    const newest = messages.at(-1);
+    const hasNewMessage = newest?.id !== lastPresentedMessageIdRef.current;
+    lastPresentedMessageIdRef.current = newest?.id || "";
+    if (scrollModeRef.current === "free") {
+      if (hasNewMessage && newest?.role === "assistant") setShowNewMessages(true);
+      return;
+    }
+    const frame = requestAnimationFrame(scrollToLatest);
+    return () => cancelAnimationFrame(frame);
+  }, [bookingUi, fullScreen, loading, messages, open, scrollToLatest, viewport.height, viewport.top]);
+
   useEffect(() => {
-    if (!open || !followMessagesRef.current) return;
-    requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!open || !scrollContentRef.current || !scrollRef.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (scrollModeRef.current !== "free") scrollToLatest();
     });
-  }, [bookingUi, messages, loading, open]);
+    observer.observe(scrollContentRef.current);
+    observer.observe(scrollRef.current);
+    return () => observer.disconnect();
+  }, [open, scrollToLatest]);
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, Math.max(40, Math.min(112, viewport.height * 0.25)))}px`;
+  }, [draft, open, viewport.height]);
 
   useEffect(() => {
     if (!loading) { setWaitingSeconds(0); return; }
@@ -503,7 +584,8 @@ export function SiteChatWidget() {
       : "";
     const generation = generationRef.current;
     sendingRef.current = true;
-    followMessagesRef.current = true;
+    scrollModeRef.current = "bottom";
+    setShowNewMessages(false);
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
     setMessages((current) => [...current, userMessage]);
@@ -581,38 +663,39 @@ export function SiteChatWidget() {
           <section
             aria-label="Atendimento com a Jatobá"
             className={`flex flex-col overflow-hidden border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl ${fullScreen ? "fixed inset-0 h-[100dvh] w-screen rounded-none sm:inset-4 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-[28px]" : "fixed bottom-2 left-2 right-2 h-[calc(100dvh-1rem)] rounded-[26px] sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px] sm:rounded-[28px]"}`}
+            style={viewport.mobile ? { top: viewport.top + (fullScreen ? 0 : 8), bottom: "auto", height: Math.max(0, viewport.height - (fullScreen ? 0 : 16)) } : undefined}
           >
-            <header className="flex items-center gap-3 bg-[#214f3e] px-4 py-3.5 text-white">
-              <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full border-2 border-white/30 bg-[#f4eddd]">
+            <header className="flex shrink-0 items-center gap-1.5 bg-[#214f3e] px-2.5 py-2.5 text-white sm:gap-3 sm:px-4 sm:py-3.5">
+              <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full border-2 border-white/30 bg-[#f4eddd] sm:h-11 sm:w-11">
                 <img src={jatobaIcon} alt="Ícone da Jatobá" className="h-full w-full object-contain p-0.5" />
               </span>
               <div className="min-w-0 flex-1">
                 <h2 className="font-display text-lg leading-tight">Jatobá</h2>
-                <p className="text-xs text-white/80">Atendimento da Fazenda Vagafogo</p>
+                <p className="text-[10px] leading-tight text-white/80 sm:text-xs">Atendimento da Fazenda Vagafogo</p>
               </div>
-              <button type="button" onClick={() => { if (window.confirm("Reiniciar o atendimento? A conversa exibida neste aparelho será limpa e você começará do início.")) resetConversation(); }} aria-label="Reiniciar atendimento" title="Reiniciar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+              <button type="button" onClick={() => { if (window.confirm("Reiniciar o atendimento? A conversa exibida neste aparelho será limpa e você começará do início.")) resetConversation(); }} aria-label="Reiniciar atendimento" title="Reiniciar atendimento" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 sm:h-10 sm:w-10">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.5 6.2M3 4v7h7" /></svg>
               </button>
-              <button type="button" onClick={() => setFullScreen((value) => !value)} aria-label={fullScreen ? "Reduzir atendimento" : "Abrir atendimento em tela cheia"} aria-pressed={fullScreen} title={fullScreen ? "Reduzir" : "Tela cheia"} className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+              <button type="button" onClick={() => setFullScreen((value) => !value)} aria-label={fullScreen ? "Reduzir atendimento" : "Abrir atendimento em tela cheia"} aria-pressed={fullScreen} title={fullScreen ? "Reduzir" : "Tela cheia"} className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 sm:h-10 sm:w-10">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={fullScreen ? "M8 3v5H3m13-5v5h5M3 16h5v5m13-5h-5v5" : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"} /></svg>
               </button>
-              <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-10 w-10 place-items-center rounded-full hover:bg-white/10">
+              <button type="button" onClick={() => setOpen(false)} aria-label="Fechar atendimento" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 sm:h-10 sm:w-10">
                 <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 6 12 12M18 6 6 18" /></svg>
               </button>
             </header>
 
             <>
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <div ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; followMessagesRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
-                  <div className="space-y-3">
-                  {messages.map((message) => (
-                    <div key={message.id} className={`flex items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className="relative flex min-h-0 flex-1 flex-col">
+                  <div ref={scrollRef} onScroll={(event) => { if (autoScrollingRef.current) return; const node = event.currentTarget; const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; scrollModeRef.current = nearBottom ? "bottom" : "free"; if (nearBottom) setShowNewMessages(false); }} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
+                  <div ref={scrollContentRef} className="space-y-3">
+                  {messages.map((message, index) => (
+                    <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
                         </span>
                       )}
-                      <div className={`max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                      <div className={`min-w-0 max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
                         <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>)}
@@ -632,15 +715,16 @@ export function SiteChatWidget() {
                       <div className="rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">{waitingSeconds >= 3 ? "Jatobá está consultando as informações para você" : "Jatobá está escrevendo"}<span className="animate-pulse">…</span></div>
                     </div>
                   )}
-                  {!loading && !humanMode && bookingUi && <div className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px]"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
+                  {!loading && !humanMode && bookingUi && <div ref={bookingFormRef} className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px]"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
                   </div>
                   </div>
+                  {showNewMessages && <button type="button" onClick={scrollToLatest} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-[#214f3e] px-4 py-2 text-xs font-semibold text-white shadow-lg">Ver nova resposta ↓</button>}
                 </div>
-                <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+                <div className="shrink-0 border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                   {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
                   {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
-                    <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />
+                    <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm outline-none" />
                     <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
                     </button>
@@ -660,8 +744,8 @@ export function SiteChatWidget() {
         )}
       </div>
 
-      {checkoutUrl && <SecureCheckoutModal url={checkoutUrl} onClose={() => setCheckoutUrl("")} />}
-      {photoPreview && <PhotoPreview preview={photoPreview} onChange={(index) => setPhotoPreview((current) => current ? { ...current, index } : null)} onClose={() => setPhotoPreview(null)} />}
+      {checkoutUrl && <SecureCheckoutModal url={checkoutUrl} viewport={viewport} onClose={() => setCheckoutUrl("")} />}
+      {photoPreview && <PhotoPreview preview={photoPreview} viewport={viewport} onChange={(index) => setPhotoPreview((current) => current ? { ...current, index } : null)} onClose={() => setPhotoPreview(null)} />}
     </>
   );
 }
