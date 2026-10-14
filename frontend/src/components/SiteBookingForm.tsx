@@ -10,7 +10,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
-type VisitorType = { id: string; nome: string; descricao?: string };
+type VisitorType = { id: string; nome: string; descricao?: string; idadeMinima?: number; idadeMaxima?: number };
 type Package = {
   id: string; nome: string; descricao?: string; iconeUrl?: string; emoji?: string;
   modoHorario: string; horarios: string[]; diasSemana: number[]; datasBloqueadas: string[];
@@ -68,6 +68,25 @@ const readableDate = (date: string) => date ? date.split("-").reverse().join("/"
 const cardColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" };
 const choiceColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))" };
 const inputClass = "mt-1.5 w-full rounded-xl border border-[#d4ded1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#20745a] focus:ring-2 focus:ring-[#20745a]/15";
+
+const participantHint = (type: VisitorType) => {
+  const description = type.descricao?.trim() || "";
+  const name = type.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const minimum = typeof type.idadeMinima === "number" && Number.isFinite(type.idadeMinima) ? type.idadeMinima : undefined;
+  const maximum = typeof type.idadeMaxima === "number" && Number.isFinite(type.idadeMaxima) ? type.idadeMaxima : undefined;
+  const age = minimum !== undefined && maximum !== undefined
+    ? `De ${minimum} a ${maximum} anos`
+    : minimum !== undefined ? `A partir de ${minimum} anos`
+      : maximum !== undefined ? `Até ${maximum} anos` : "";
+  if (description) return age && !/\d+\s*(?:a|até|anos?)/i.test(description) ? `${age} · ${description}` : description;
+  if (age) return name.includes("nao pagante") || name.includes("isento") ? `${age} · sem cobrança` : age;
+  if (name.includes("nao pagante") || name.includes("isento")) return "Crianças de 0 a 4 anos · isentas de pagamento";
+  if (name.includes("crianca")) return "Crianças de 5 a 12 anos";
+  if (name.includes("idos")) return "Pessoas a partir de 60 anos";
+  if (name.includes("adult")) return "Pessoas a partir de 13 anos";
+  if (name.includes("bariat")) return "Categoria bariátrica, com valor próprio";
+  return "";
+};
 
 function OfferIcon({ name, url, emoji, combo = false, small = false }: {
   name: string; url?: string; emoji?: string; combo?: boolean; small?: boolean;
@@ -171,7 +190,10 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const needsCpf = fields.length === 0 || fields.some((field) => field.toLowerCase().includes("cpf"));
   const needsPet = fields.includes("presenca de pet") && selected.some((item) => item.aceitaPet);
   const petRestricted = selected.some((item) => !item.aceitaPet);
-  const stage = stages[step];
+  const brunchHasScheduledTime = scheduled.some((item) => /brunch|gastron/i.test(item.nome));
+  const stage = step === "time" && brunchHasScheduledTime
+    ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
+    : stages[step];
   const StageIcon = stage.icon;
 
   const answer = async (message: string, contactPhone?: string) => {
@@ -278,9 +300,23 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
           </div>
         ))}
 
-        {step === "time" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe o horário por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando horários…</p> : <div className="space-y-2.5">{scheduled.map((item) => <label key={item.id} className="block text-xs font-semibold text-[#425c49]">{item.nome}<select value={times[item.id] || knownTime(item)} onChange={(event) => setTimes((current) => ({ ...current, [item.id]: event.target.value }))} required className={inputClass}><option value="">Selecione um horário</option>{item.horarios.map((hour) => <option key={hour} value={hour}>{hour}</option>)}</select></label>)}</div>)}
+        {step === "time" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe o horário por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando horários…</p> : <div className="space-y-2.5">{scheduled.map((item) => <label key={item.id} className="block text-xs font-semibold text-[#425c49]">{/brunch|gastron/i.test(item.nome) ? "Horário do brunch" : `Horário de ${item.nome}`}<select value={times[item.id] || knownTime(item)} onChange={(event) => setTimes((current) => ({ ...current, [item.id]: event.target.value }))} required className={inputClass}><option value="">Selecione um horário</option>{item.horarios.map((hour) => <option key={hour} value={hour}>{hour}</option>)}</select></label>)}</div>)}
 
-        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{catalog.tiposClientes.map((type) => { const count = quantityOf(counts, type.id); return <div key={type.id} className="flex items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2"><span className="min-w-0 text-xs font-medium">{type.nome}</span><div className="flex shrink-0 items-center gap-2"><button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.max(0, count - 1) }))} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button><output className="w-5 text-center text-sm font-bold">{count}</output><button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.min(99, count + 1) }))} disabled={count >= 99} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button></div></div>; })}{quote.length > 0 && <div className="rounded-xl bg-[#f3f7ef] p-3 text-xs"><div className="space-y-1">{quote.map(({ type, quantity, unit, subtotal }) => <div key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome} · {money.format(unit)}</span><span className="shrink-0">{money.format(subtotal)}</span></div>)}</div><div className="mt-2 flex justify-between border-t border-[#dbe7d7] pt-2 font-bold"><span>Estimativa</span><span>{money.format(quote.reduce((sum, item) => sum + item.subtotal, 0))}</span></div><p className="mt-1 text-[#657368]">A Jatobá confirmará vaga e valor antes de reservar.</p></div>}</div>)}
+        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{catalog.tiposClientes.map((type) => {
+          const count = quantityOf(counts, type.id);
+          const hint = participantHint(type);
+          return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2.5">
+            <div className="min-w-0 flex-1">
+              <span className="block text-xs font-semibold text-[#33483a]">{type.nome}</span>
+              {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e]">{hint}</span>}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.max(0, count - 1) }))} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
+              <output className="w-5 text-center text-sm font-bold">{count}</output>
+              <button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.min(99, count + 1) }))} disabled={count >= 99} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
+            </div>
+          </div>;
+        })}{quote.length > 0 && <div className="rounded-xl bg-[#f3f7ef] p-3 text-xs"><div className="space-y-1">{quote.map(({ type, quantity, unit, subtotal }) => <div key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome} · {money.format(unit)}</span><span className="shrink-0">{money.format(subtotal)}</span></div>)}</div><div className="mt-2 flex justify-between border-t border-[#dbe7d7] pt-2 font-bold"><span>Estimativa</span><span>{money.format(quote.reduce((sum, item) => sum + item.subtotal, 0))}</span></div><p className="mt-1 text-[#657368]">A Jatobá confirmará vaga e valor antes de reservar.</p></div>}</div>)}
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <label className="block text-xs font-semibold">Vai levar pet?<select value={pet} onChange={(event) => setPet(event.target.value)} required className={inputClass}><option value="">Selecione</option><option value="no">Não</option><option value="yes">Sim</option></select>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</label>}</div>}
 
