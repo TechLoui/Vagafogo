@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -80,7 +80,7 @@ const readableDate = (date: string) => date ? date.split("-").reverse().join("/"
 const dateFromKey = (key: string) => /^\d{4}-\d{2}-\d{2}$/.test(key) ? new Date(`${key}T12:00:00`) : undefined;
 const keyFromDate = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
 const displayHour = (value: string) => value.replace(/:00$/, "h");
-const cardColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" };
+const cardColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))" };
 const choiceColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))" };
 const inputClass = "mt-1.5 w-full rounded-xl border border-[#d4ded1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#20745a] focus:ring-2 focus:ring-[#20745a]/15";
 
@@ -146,6 +146,8 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const [pet, setPet] = useState("");
   const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const revealContinue = () => requestAnimationFrame(() => submitButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -286,14 +288,14 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   };
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="min-w-0 overflow-hidden rounded-[22px] border border-[#d5e2d2] bg-white text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Responder à Jatobá">
-      <div className="border-b border-[#e6ecdf] bg-gradient-to-r from-[#f3f8ee] via-[#fbfcf8] to-white px-3.5 py-3.5 sm:px-4">
+    <form onSubmit={(event) => void submit(event)} className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Responder à Jatobá">
+      <div className="rounded-t-[21px] border-b border-[#e6ecdf] bg-gradient-to-r from-[#f3f8ee] via-[#fbfcf8] to-white px-3.5 py-3 sm:px-4">
         <div className="flex items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#dfeee0] text-[#20745a]"><StageIcon aria-hidden="true" /></span>
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#dfeee0] text-[#20745a]"><StageIcon aria-hidden="true" /></span>
           <div className="min-w-0"><p className="text-sm font-bold leading-snug text-[#244b38]">{stage.title}</p><p className="mt-0.5 text-xs leading-relaxed text-[#65766a]">{stage.hint}</p></div>
         </div>
       </div>
-      <div className="space-y-3 p-3.5 sm:p-4">
+      <div className="space-y-2.5 p-3 sm:p-3.5">
         {step === "phone" && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
         {step !== "experiences" && step !== "date" && selected.length > 0 && (
           <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#e3ebdf] bg-[#f8faf5] p-2.5">
@@ -319,7 +321,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
                 mode="single"
                 selected={dateFromKey(date)}
                 defaultMonth={dateFromKey(date || today())}
-                onSelect={(day) => { setDate(day ? keyFromDate(day) : ""); setError(""); }}
+                onSelect={(day) => { setDate(day ? keyFromDate(day) : ""); setError(""); if (day) revealContinue(); }}
                 disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())); }}
                 today={dateFromKey(today())}
                 locale={ptBR}
@@ -365,7 +367,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
             <div className="grid grid-cols-3 gap-2">
               {item.horarios.map((hour) => {
                 const selected = (times[item.id] || knownTime(item)) === hour;
-                return <button key={hour} type="button" disabled={sending} aria-pressed={selected} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${selected ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                return <button key={hour} type="button" disabled={sending} aria-pressed={selected} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${selected ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
                   <span className="block text-base font-bold">{displayHour(hour)}</span>
                   <span className={`mt-0.5 block text-[10px] ${selected ? "text-white/85" : "text-[#718075]"}`}>{/brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
                 </button>;
@@ -397,7 +399,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         {step === "payment" && <div className="grid gap-2.5" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por PIX. Pode enviar o QR Code e o copia e cola?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] p-3 text-left transition hover:border-[#20745a] hover:bg-[#e9f4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8ecdc] text-[#20745a]"><FaQrcode aria-hidden="true" /></span><span><strong className="block text-sm text-[#245139]">PIX</strong><small className="mt-0.5 block text-[11px] text-[#607965]">QR Code e copia e cola</small></span></button><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por cartão de crédito. Pode enviar o link seguro?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#e4d5c3] bg-[#fffaf3] p-3 text-left transition hover:border-[#b28b64] hover:bg-[#fdf4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f4e9d6] text-[#8a5a2f]"><FaCreditCard aria-hidden="true" /></span><span><strong className="block text-sm text-[#58412d]">Cartão</strong><small className="mt-0.5 block text-[11px] text-[#806c56]">Página segura</small></span></button></div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
         {step !== "date" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>

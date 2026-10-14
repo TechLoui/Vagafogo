@@ -364,6 +364,8 @@ export function SiteChatWidget() {
   const [fullScreen, setFullScreen] = useState(false);
   const [viewport, setViewport] = useState<ViewportBounds>(readViewportBounds);
   const [showNewMessages, setShowNewMessages] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [expandedMessageId, setExpandedMessageId] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -397,6 +399,8 @@ export function SiteChatWidget() {
     sendingRef.current = false;
     scrollModeRef.current = "bottom";
     setShowNewMessages(false);
+    setShowHistory(false);
+    setExpandedMessageId("");
   }, [redirectedPhone]);
 
   useEffect(() => {
@@ -484,8 +488,7 @@ export function SiteChatWidget() {
       const latestRect = latest.getBoundingClientRect();
       const lastRect = form?.getBoundingClientRect() || latestRect;
       if (lastRect.bottom - latestRect.top > scroller.clientHeight - 16) {
-        const focusTop = form ? lastRect.top : latestRect.top;
-        target = Math.max(0, Math.min(bottom, scroller.scrollTop + focusTop - scrollerRect.top - 8));
+        target = Math.max(0, Math.min(bottom, scroller.scrollTop + latestRect.top - scrollerRect.top - 8));
         mode = "latest";
       }
     }
@@ -511,6 +514,12 @@ export function SiteChatWidget() {
     const frame = requestAnimationFrame(scrollToLatest);
     return () => cancelAnimationFrame(frame);
   }, [bookingUi, fullScreen, loading, messages, open, scrollToLatest, viewport.height, viewport.top]);
+
+  useLayoutEffect(() => {
+    if (!open || !showHistory || !bookingUi || !scrollRef.current) return;
+    scrollModeRef.current = "free";
+    scrollRef.current.scrollTop = 0;
+  }, [bookingUi, open, showHistory]);
 
   useEffect(() => {
     if (!open || !scrollContentRef.current || !scrollRef.current || typeof ResizeObserver === "undefined") return;
@@ -597,6 +606,8 @@ export function SiteChatWidget() {
     sendingRef.current = true;
     scrollModeRef.current = "bottom";
     setShowNewMessages(false);
+    setShowHistory(false);
+    setExpandedMessageId("");
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
     const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now(), animate: true };
     setMessages((current) => [...current.map((message) => message.visibleAdditional !== undefined && message.visibleAdditional < (message.additional?.length || 0)
@@ -669,6 +680,15 @@ export function SiteChatWidget() {
     }
   };
 
+  const focusedHistory = Boolean(bookingUi && !humanMode && !showHistory && messages.length > 1);
+  const visibleMessages = focusedHistory ? messages.slice(-1) : messages;
+  const olderMessageCount = bookingUi && !humanMode ? Math.max(0, messages.length - 1) : 0;
+  const isCompactReply = (message: ChatMessage) => message.role === "assistant"
+    && message.id === messages.at(-1)?.id
+    && Boolean(bookingUi && ["phone", "experiences", "date", "participants"].includes(bookingUi.step))
+    && message.content.length > 420
+    && !extractOfficialCardCheckout(message.content);
+
   if (hidden) return null;
 
   return (
@@ -677,7 +697,7 @@ export function SiteChatWidget() {
         {open && (
           <section
             aria-label="Atendimento com a Jatobá"
-            className={`flex flex-col overflow-hidden border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl ${fullScreen ? "fixed inset-0 h-[100dvh] w-screen rounded-none sm:inset-4 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-[28px]" : "fixed bottom-2 left-2 right-2 h-[calc(100dvh-1rem)] rounded-[26px] sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px] sm:rounded-[28px]"}`}
+            className={`flex flex-col overflow-hidden border border-[#dfe7d9] bg-[#f8faf5] shadow-2xl ${fullScreen ? "fixed inset-0 h-[100dvh] w-screen rounded-none sm:inset-4 sm:h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-[28px]" : "fixed bottom-2 left-2 right-2 h-[calc(100dvh-1rem)] rounded-[26px] sm:absolute sm:inset-auto sm:bottom-20 sm:right-0 sm:h-[min(720px,calc(100dvh-7rem))] sm:w-[460px] sm:max-w-[calc(100vw-2rem)] sm:rounded-[28px]"}`}
             style={viewport.mobile ? { top: viewport.top + (fullScreen ? 0 : 8), bottom: "auto", height: Math.max(0, viewport.height - (fullScreen ? 0 : 16)) } : undefined}
           >
             <header className="flex shrink-0 items-center gap-1.5 bg-[#214f3e] px-2.5 py-2.5 text-white sm:gap-3 sm:px-4 sm:py-3.5">
@@ -703,22 +723,26 @@ export function SiteChatWidget() {
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   <div ref={scrollRef} onScroll={(event) => { if (autoScrollingRef.current) return; const node = event.currentTarget; const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; scrollModeRef.current = nearBottom ? "bottom" : "free"; if (nearBottom) setShowNewMessages(false); }} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
                   <div ref={scrollContentRef} className="space-y-3">
-                  {messages.map((message, index) => (
+                  {olderMessageCount > 0 && <button type="button" aria-expanded={showHistory} onClick={() => { setShowHistory((value) => !value); if (showHistory) { scrollModeRef.current = "bottom"; requestAnimationFrame(scrollToLatest); } }} className="mx-auto flex items-center gap-2 rounded-full border border-[#dbe6d8] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b6d58] shadow-sm transition hover:border-[#a8c8ac] hover:bg-[#f1f7ee] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">
+                    <span aria-hidden="true">{showHistory ? "⌃" : "⌄"}</span>{showHistory ? "Ocultar conversa anterior" : `Ver conversa anterior (${olderMessageCount})`}
+                  </button>}
+                  {visibleMessages.map((message, index) => (
                     <Fragment key={message.id}>
-                    <div ref={index === messages.length - 1 && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
+                    <div ref={index === visibleMessages.length - 1 && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
                         </span>
                       )}
-                      <div className={`min-w-0 max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                        <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
+                      <div className={`min-w-0 max-w-[calc(100%-2.25rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(88%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                        <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? "line-clamp-2" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
+                        {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => setExpandedMessageId((current) => current === message.id ? "" : message.id)} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                       </div>
                     </div>
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
-                      <div key={`${message.id}:extra:${extraIndex}`} ref={index === messages.length - 1 && extraIndex === (message.visibleAdditional ?? message.additional?.length ?? 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`}>
-                        <div className="min-w-0 max-w-[85%] rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-3 text-sm leading-relaxed text-[#2d382f] shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)]">
+                      <div key={`${message.id}:extra:${extraIndex}`} ref={index === visibleMessages.length - 1 && extraIndex === (message.visibleAdditional ?? message.additional?.length ?? 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`}>
+                        <div className="min-w-0 max-w-full rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-2.5 text-sm leading-relaxed text-[#2d382f] shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(88%,720px)]">
                           <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>
                         </div>
                       </div>
