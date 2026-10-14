@@ -256,6 +256,10 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
       message,
       `lembrete-dia:${today}:${normalizePhone(reservation.telefone ?? reservation.Telefone)}`,
       reservation.nome ?? reservation.Nome,
+      {
+        dataLimite: today,
+        tipoDisparo: "lembrete_reserva_dia",
+      },
     ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
     const nextGlobalAt = Timestamp.fromMillis(Date.now() + randomDelayMs(config));
     if (result.enviado) {

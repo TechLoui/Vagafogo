@@ -2,6 +2,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { obterStorageBucketAdmin } from "./firebaseAdmin";
 import { requestAgentService } from "./agentGateway";
+import { classificarDataDisparo, normalizarDataDisparo } from "./whatsappDispatchDate";
 
 type WhatsappStatus =
   | "idle"
@@ -161,16 +162,26 @@ const enviarTransacional = async (
   mensagem: string,
   requestId: string,
   nomeContato?: unknown,
-) => resultadoGateway(await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
-  method: "POST",
-  body: {
-    phone: telefone,
-    text: mensagem,
-    requestId: requestId.slice(0, 160),
-    contactName: String(nomeContato ?? "").trim().slice(0, 120),
-  },
-  timeoutMs: 30_000,
-}), telefone, mensagem);
+  dataLimite?: unknown,
+  tipoDisparo?: string,
+) => {
+  const normalizedLimit = dataLimite === undefined ? "" : normalizarDataDisparo(dataLimite);
+  if (dataLimite !== undefined && !normalizedLimit) {
+    return { enviado: false, motivo: "data_disparo_invalida", telefone };
+  }
+  return resultadoGateway(await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
+    method: "POST",
+    body: {
+      phone: telefone,
+      text: mensagem,
+      requestId: requestId.slice(0, 160),
+      contactName: String(nomeContato ?? "").trim().slice(0, 120),
+      ...(normalizedLimit ? { notAfterDate: normalizedLimit } : {}),
+      ...(tipoDisparo ? { dispatchKind: tipoDisparo.slice(0, 80) } : {}),
+    },
+    timeoutMs: 30_000,
+  }), telefone, mensagem);
+};
 
 export async function obterStatusWhatsApp(): Promise<WhatsappStatusPayload> {
   const response = await requestAgentService("gateway", "/api/whatsapp/status", { timeoutMs: 15_000 });
@@ -277,6 +288,10 @@ export async function enviarBoasVindasWhatsapp(
   reserva: Record<string, any>,
   configOverride?: WhatsappConfig,
 ): Promise<ResultadoEnvio> {
+  const dateValidity = classificarDataDisparo(reserva?.data ?? reserva?.Data);
+  if (dateValidity !== "valido") {
+    return { enviado: false, motivo: dateValidity === "expirado" ? "reserva_passada" : "data_reserva_invalida" };
+  }
   const prepared = await prepararBoasVindasWhatsapp(reservaId, reserva, configOverride);
   if (!prepared.enviado || !prepared.telefone || !prepared.mensagem) return prepared;
   return enviarTransacional(
@@ -284,6 +299,8 @@ export async function enviarBoasVindasWhatsapp(
     prepared.mensagem,
     `boas-vindas:${reservaId}:${prepared.telefone}`,
     reserva?.nome ?? reserva?.Nome,
+    reserva?.data ?? reserva?.Data,
+    "boas_vindas_reserva",
   );
 }
 
@@ -310,6 +327,10 @@ export async function enviarConfirmacaoWhatsapp(
   reserva: Record<string, any>,
   configOverride?: WhatsappConfig,
 ): Promise<ResultadoEnvio> {
+  const dateValidity = classificarDataDisparo(reserva?.data ?? reserva?.Data);
+  if (dateValidity !== "valido") {
+    return { enviado: false, motivo: dateValidity === "expirado" ? "reserva_passada" : "data_reserva_invalida" };
+  }
   const prepared = await prepararConfirmacaoWhatsapp(reservaId, reserva, configOverride);
   if (!prepared.enviado || !prepared.telefone || !prepared.mensagem) return prepared;
   return enviarTransacional(
@@ -317,5 +338,7 @@ export async function enviarConfirmacaoWhatsapp(
     prepared.mensagem,
     `reserva-confirmada:${reservaId}:${prepared.telefone}`,
     reserva?.nome ?? reserva?.Nome,
+    reserva?.data ?? reserva?.Data,
+    "confirmacao_reserva",
   );
 }

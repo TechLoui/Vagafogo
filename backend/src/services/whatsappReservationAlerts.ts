@@ -227,6 +227,11 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
     destination,
     message,
     `resumo-reservas-dia:${today}:${destination}`,
+    undefined,
+    {
+      dataLimite: today,
+      tipoDisparo: "resumo_reservas_dia",
+    },
   ).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),
@@ -429,6 +434,11 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     destination,
     message,
     `aviso-reserva:${today}:${clean(acquired.data.reservaId, 100)}`,
+    undefined,
+    {
+      dataLimite: today,
+      tipoDisparo: "aviso_reserva_dia",
+    },
   ).catch((error): ResultadoEnvio => ({
     enviado: false,
     motivo: error instanceof Error ? error.message : String(error),

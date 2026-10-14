@@ -10,6 +10,7 @@ import {
 import { registrarResultadoCampanhaReserva } from "../services/whatsappCampaigns";
 import { requestAgentService } from "../services/agentGateway";
 import { concluirLeadAgenteComReserva } from "../services/agentReservationTools";
+import { classificarDataDisparo, normalizarDataDisparo } from "../services/whatsappDispatchDate";
 
 type WebhookPayment = {
   id?: string;
@@ -189,6 +190,8 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
 const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<string, any>, requestSuffix = "") => {
   const phone = telefoneSessaoAgente(reserva);
   if (!phone) return { enviado: false, motivo: "telefone_ausente" };
+  const reservationDate = normalizarDataDisparo(reserva.data ?? reserva.Data);
+  if (!reservationDate) return { enviado: false, motivo: "data_reserva_invalida" };
   const response = await requestAgentService("gateway", "/api/whatsapp/transactional-send", {
     method: "POST",
     body: {
@@ -196,6 +199,8 @@ const enviarConfirmacaoPeloAgente = async (reservaId: string, reserva: Record<st
       text: await mensagemConfirmacaoAgente(reservaId, reserva),
       requestId: `reserva-confirmada:${reservaId}:${phone}${requestSuffix}`,
       contactName: String(reserva.nome ?? reserva.Nome ?? "").trim().slice(0, 120),
+      notAfterDate: reservationDate,
+      dispatchKind: "confirmacao_reserva_agente",
     },
     timeoutMs: 30_000,
   });
@@ -223,6 +228,21 @@ export const processarConfirmacaoReservaAgente = async (reservaId: string, force
   if (!reservaVeioDoAgente(reserva) || reserva.status !== "pago" || reserva.confirmada !== true) {
     await updateDoc(reservaRef, { whatsappAgenteConfirmacaoPagamentoPendente: false }).catch(() => undefined);
     return { enviado: false, motivo: "reserva_nao_elegivel" };
+  }
+  const dateValidity = classificarDataDisparo(reserva.data ?? reserva.Data);
+  if (dateValidity !== "valido") {
+    await updateDoc(reservaRef, {
+      whatsappAgenteConfirmacaoPagamentoPendente: false,
+      whatsappAgenteConfirmacaoPagamentoStatus: "expirado",
+      whatsappAgenteConfirmacaoPagamentoErro: dateValidity === "expirado"
+        ? "reserva_passada"
+        : "data_reserva_invalida",
+      whatsappAgenteConfirmacaoPagamentoProximaTentativaEm: null,
+    }).catch(() => undefined);
+    return {
+      enviado: false,
+      motivo: dateValidity === "expirado" ? "reserva_passada" : "data_reserva_invalida",
+    };
   }
   const phone = telefoneSessaoAgente(reserva);
   if (!phone) return { enviado: false, motivo: "telefone_ausente" };

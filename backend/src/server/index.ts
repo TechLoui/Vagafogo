@@ -50,6 +50,11 @@ import {
   processarConfirmacaoReservaWhatsapp,
 } from "../services/whatsappReservationConfirmations";
 import { iniciarProcessadorLembretesWhatsappDoDia } from "../services/whatsappDailyReminders";
+import { classificarDataDisparo, normalizarDataDisparo } from "../services/whatsappDispatchDate";
+import {
+  iniciarLimpezaFilasWhatsappVencidas,
+  limparFilasWhatsappVencidas,
+} from "../services/whatsappDispatchQueueCleanup";
 import { garantirConfiguracaoAutomacoesWhatsapp } from "../services/whatsappAutomationConfig";
 import {
   enfileirarAlertaAtendimentoHumano,
@@ -1132,6 +1137,14 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
 
     const reserva = reservaSnap.data() as Record<string, any>;
 
+    const validadeData = classificarDataDisparo(reserva.data ?? reserva.Data);
+    if (validadeData !== "valido") {
+      return res.status(409).json({
+        enviado: false,
+        motivo: validadeData === "expirado" ? "reserva_passada" : "data_reserva_invalida",
+      });
+    }
+
     if (reserva.whatsappBoasVindasEnviado === true) {
       return res.json({ enviado: false, motivo: 'ja_enviado' });
     }
@@ -1143,6 +1156,10 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
         prepared.mensagem,
         `boas-vindas:${String(reserva.data ?? reserva.Data ?? "sem-data")}:${prepared.telefone}`,
         reserva.nome ?? reserva.Nome,
+        {
+          dataLimite: normalizarDataDisparo(reserva.data ?? reserva.Data),
+          tipoDisparo: "boas_vindas_reserva",
+        },
       )
       : prepared;
 
@@ -1265,6 +1282,15 @@ app.listen(port, async () => {
   } catch (error) {
     console.error("[whatsapp] Falha ao garantir configuracao das automacoes:", error);
   }
+  try {
+    const limpeza = await limparFilasWhatsappVencidas();
+    if (limpeza.total > 0) {
+      console.log(`[whatsapp][filas] ${limpeza.total} disparo(s) vencido(s) retirado(s) antes de iniciar os processadores.`);
+    }
+  } catch (error) {
+    console.error("[whatsapp][filas] Falha na limpeza inicial de disparos vencidos:", error);
+  }
+  iniciarLimpezaFilasWhatsappVencidas();
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorConfirmacoesReservaWhatsapp();
   iniciarProcessadorLembretesWhatsappDoDia();

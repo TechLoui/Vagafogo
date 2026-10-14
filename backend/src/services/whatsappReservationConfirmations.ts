@@ -152,6 +152,10 @@ export const processarConfirmacaoReservaWhatsapp = async (reservaId: string, for
       prepared.mensagem,
       `reserva-confirmada:${reservaId}:${prepared.telefone}${force ? `:manual:${Date.now()}` : ""}`,
       acquired.data.nome ?? acquired.data.Nome,
+      {
+        dataLimite: reservationDateKey(acquired.data),
+        tipoDisparo: "confirmacao_reserva",
+      },
     ).catch((error): ResultadoEnvio => ({
       enviado: false,
       motivo: error instanceof Error ? error.message : String(error),
