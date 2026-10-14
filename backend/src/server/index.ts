@@ -65,6 +65,18 @@ import { exigirAdminCrm, obterIdentidadeAdminCrm } from "../middleware/crmAdminA
 import { limitarEventosJornada } from "../middleware/crmJourneyRateLimit";
 import { registrarEventoJornada } from "../services/crmJourneys";
 import { agentServiceConfigured, requestAgentService, type AgentResponse } from "../services/agentGateway";
+import {
+  alterarModoConversaSite,
+  isSiteConversationJid,
+  listarConversasSite,
+  listarMensagensConversaSite,
+  marcarConversaSiteLida,
+  obterConversaSite,
+  registrarMensagemConversaSite,
+  removerConversaSite,
+  siteSessionIdFromJid,
+  type SiteConversationMode,
+} from "../services/siteChatConversations";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -170,7 +182,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-14.2-site-chat',
+    build: '2026-10-14.3-unified-inbox',
     timestamp: new Date().toISOString(),
   });
 });
@@ -214,6 +226,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const nome = String(req.body?.nome ?? "").trim().slice(0, 120);
   const telefone = normalizeSiteChatPhone(req.body?.telefone);
   const sessionId = String(req.body?.sessionId ?? "").trim().slice(0, 120);
+  const messageId = String(req.body?.messageId ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 160);
   if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || telefone.length < 12 || telefone.length > 13) {
     res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
     return;
@@ -233,6 +246,36 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const withinIpLimit = consumeSiteChatRateLimit(`ip:${clientIp}`, 60 * 60 * 1000, 120);
   if (!withinSessionLimit || !withinIpLimit) {
     res.status(429).json({ error: "SITE_CHAT_RATE_LIMIT", mensagem: "Aguarde alguns minutos antes de enviar outra mensagem." });
+    return;
+  }
+
+  const existingConversation = await obterConversaSite(sessionId);
+  if (existingConversation?.mode === "blocked") {
+    res.status(403).json({
+      error: "SITE_CHAT_SESSION_BLOCKED",
+      mensagem: "Este atendimento está indisponível no momento.",
+    });
+    return;
+  }
+
+  const clientSourceId = `client:${messageId || createHash("sha256").update(`${sessionId}\0${mensagem}`).digest("hex")}`;
+  const storedClientMessage = await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: mensagem,
+    sourceId: clientSourceId,
+    name: nome,
+    phone: telefone,
+    incrementUnread: true,
+  });
+  if (storedClientMessage.conversation.mode === "human") {
+    res.json({
+      resposta: "",
+      session_id: sessionId,
+      atendimento_humano: true,
+      media: null,
+      mensagens_adicionais: [],
+      handoff: null,
+    });
     return;
   }
 
@@ -256,7 +299,47 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const body = response.body as Record<string, any>;
+  const currentConversation = await obterConversaSite(sessionId);
+  if (currentConversation?.mode === "human" && !body.handoff) {
+    res.json({
+      resposta: "",
+      session_id: sessionId,
+      atendimento_humano: true,
+      media: null,
+      mensagens_adicionais: [],
+      handoff: null,
+    });
+    return;
+  }
+  const resposta = String(body.resposta ?? "").slice(0, 12_000);
+  const mensagensAdicionais = Array.isArray(body.mensagens_adicionais)
+    ? body.mensagens_adicionais.map((item: unknown) => String(item ?? "").slice(0, 4096)).filter(Boolean).slice(0, 3)
+    : [];
+  if (resposta) {
+    await registrarMensagemConversaSite(sessionId, {
+      from: "bot",
+      text: resposta,
+      sourceId: `bot:${clientSourceId}:main`,
+      name: nome,
+      phone: telefone,
+      mediaType: body.media?.type,
+    });
+  }
+  for (let index = 0; index < mensagensAdicionais.length; index += 1) {
+    await registrarMensagemConversaSite(sessionId, {
+      from: "bot",
+      text: mensagensAdicionais[index],
+      sourceId: `bot:${clientSourceId}:extra:${index}`,
+      name: nome,
+      phone: telefone,
+    });
+  }
   if (body.handoff && typeof body.handoff === "object") {
+    await alterarModoConversaSite(sessionId, {
+      mode: "human",
+      reason: String(body.handoff.motivo ?? "excecao_operacional"),
+      updatedBy: "jatoba",
+    });
     const sourceMessageId = createHash("sha256")
       .update(`site-chat\0${sessionId}\0${mensagem}`)
       .digest("hex");
@@ -271,13 +354,33 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   res.json({
-    resposta: String(body.resposta ?? "").slice(0, 12_000),
+    resposta,
     session_id: String(body.session_id ?? sessionId).slice(0, 120),
     media: body.media && typeof body.media === "object" ? body.media : null,
-    mensagens_adicionais: Array.isArray(body.mensagens_adicionais)
-      ? body.mensagens_adicionais.map((item: unknown) => String(item ?? "").slice(0, 4096)).slice(0, 3)
-      : [],
+    mensagens_adicionais: mensagensAdicionais,
+    atendimento_humano: Boolean(body.handoff),
     handoff: body.handoff && typeof body.handoff === "object" ? body.handoff : null,
+  });
+});
+
+app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
+  const sessionId = String(req.params.sessionId ?? "").trim().slice(0, 120);
+  const telefone = normalizeSiteChatPhone(req.query.telefone);
+  const after = Number.isFinite(Number(req.query.after)) ? Math.max(0, Number(req.query.after)) : 0;
+  if (!/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || telefone.length < 12 || telefone.length > 13) {
+    res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
+    return;
+  }
+  const conversation = await obterConversaSite(sessionId);
+  if (!conversation || conversation.phone !== telefone) {
+    res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
+    return;
+  }
+  res.set("Cache-Control", "no-store");
+  res.json({
+    session_id: sessionId,
+    mode: conversation.mode,
+    messages: await listarMensagensConversaSite(sessionId, after, true),
   });
 });
 
@@ -462,11 +565,41 @@ app.post('/crm/agente/teste-whatsapp', exigirAdminCrm, async (req, res) => {
 });
 
 app.get('/crm/agente/contatos', exigirAdminCrm, async (_req, res) => {
-  responderProxyAgente(res, await requestAgentService("gateway", "/api/contacts"));
+  const [gatewayResponse, siteContacts] = await Promise.all([
+    requestAgentService("gateway", "/api/contacts").catch(() => null),
+    listarConversasSite(),
+  ]);
+  const gatewayBody = gatewayResponse?.body && typeof gatewayResponse.body === "object" && !Array.isArray(gatewayResponse.body)
+    ? gatewayResponse.body as Record<string, unknown>
+    : {};
+  const whatsappContacts = Array.isArray(gatewayBody.contacts)
+    ? gatewayBody.contacts.map((contact) => ({ ...(contact as Record<string, unknown>), channel: "whatsapp" }))
+    : [];
+  const contacts = ([...whatsappContacts, ...siteContacts] as Array<Record<string, unknown> & { lastMessageAt?: number }>)
+    .sort((a, b) => Number(b.lastMessageAt ?? 0) - Number(a.lastMessageAt ?? 0));
+  res.json({
+    contacts,
+    channels: {
+      whatsapp: Boolean(gatewayResponse && gatewayResponse.status >= 200 && gatewayResponse.status < 300),
+      site: true,
+    },
+  });
 });
 
 app.get('/crm/agente/contatos/:jid/mensagens', exigirAdminCrm, async (req, res) => {
   const after = Number.isFinite(Number(req.query.after)) ? Math.max(0, Number(req.query.after)) : 0;
+  if (isSiteConversationJid(req.params.jid)) {
+    const sessionId = siteSessionIdFromJid(req.params.jid);
+    const conversation = await obterConversaSite(sessionId);
+    if (!conversation) {
+      res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
+      return;
+    }
+    const messages = await listarMensagensConversaSite(sessionId, after);
+    await marcarConversaSiteLida(sessionId);
+    res.json({ messages });
+    return;
+  }
   responderProxyAgente(res, await requestAgentService(
     "gateway",
     `/api/contacts/${encodeURIComponent(req.params.jid)}/messages?after=${after}`,
@@ -480,6 +613,20 @@ app.post('/crm/agente/contatos/:jid/modo', exigirAdminCrm, async (req, res) => {
     return;
   }
   const identity = obterIdentidadeAdminCrm(res);
+  if (isSiteConversationJid(req.params.jid)) {
+    try {
+      const conversation = await alterarModoConversaSite(siteSessionIdFromJid(req.params.jid), {
+        mode: mode as SiteConversationMode,
+        reason: String(req.body?.reason ?? "").trim().slice(0, 250),
+        updatedBy: identity.email ?? identity.uid,
+      });
+      res.json({ success: true, contact: conversation });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(message === "SITE_CHAT_SESSION_NOT_FOUND" ? 404 : 400).json({ error: message });
+    }
+    return;
+  }
   responderProxyAgente(res, await requestAgentService(
     "gateway",
     `/api/contacts/${encodeURIComponent(req.params.jid)}/mode`,
@@ -497,6 +644,10 @@ app.post('/crm/agente/contatos/:jid/modo', exigirAdminCrm, async (req, res) => {
 });
 
 app.post('/crm/agente/contatos/:jid/reprocessar', exigirAdminCrm, async (req, res) => {
+  if (isSiteConversationJid(req.params.jid)) {
+    res.status(409).json({ error: "No chat do site, envie a resposta manualmente ou devolva o atendimento à Jatobá." });
+    return;
+  }
   responderProxyAgente(res, await requestAgentService(
     "gateway",
     `/api/contacts/${encodeURIComponent(req.params.jid)}/reprocess`,
@@ -509,6 +660,27 @@ app.post('/crm/agente/contatos/:jid/enviar', exigirAdminCrm, async (req, res) =>
   const requestId = String(req.body?.requestId ?? "").trim().slice(0, 160);
   if (!text) {
     res.status(400).json({ error: "Mensagem vazia." });
+    return;
+  }
+  if (isSiteConversationJid(req.params.jid)) {
+    const sessionId = siteSessionIdFromJid(req.params.jid);
+    const conversation = await obterConversaSite(sessionId);
+    if (!conversation) {
+      res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
+      return;
+    }
+    if (conversation.mode !== "human") {
+      res.status(409).json({ error: "Assuma o atendimento antes de responder." });
+      return;
+    }
+    const stored = await registrarMensagemConversaSite(sessionId, {
+      from: "agent",
+      text,
+      sourceId: `manual:${requestId || createHash("sha256").update(`${sessionId}\0${text}`).digest("hex")}`,
+      name: conversation.name,
+      phone: conversation.phone,
+    });
+    res.json({ success: true, message: stored.message });
     return;
   }
   responderProxyAgente(res, await requestAgentService("gateway", "/api/whatsapp/send", {
@@ -527,6 +699,25 @@ app.post('/crm/agente/reservas/:id/reenviar-confirmacao', exigirAdminCrm, async 
 });
 
 app.delete('/crm/agente/contatos/:jid/sessao', exigirAdminCrm, async (req, res) => {
+  if (isSiteConversationJid(req.params.jid)) {
+    const sessionId = siteSessionIdFromJid(req.params.jid);
+    const conversation = await obterConversaSite(sessionId);
+    if (!conversation) {
+      res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
+      return;
+    }
+    await removerConversaSite(sessionId);
+    await finalizarLeadAgentePorEncerramento(conversation.phone).catch((error) => {
+      console.error("[agent-leads] Falha ao finalizar lead do site apos encerramento manual:", error);
+    });
+    await requestAgentService("ai", `/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    }).catch((error) => {
+      console.error("[agent] Falha ao descartar contexto do site apos encerramento manual:", error);
+    });
+    res.json({ success: true });
+    return;
+  }
   const response = await requestAgentService(
     "gateway",
     `/api/contacts/${encodeURIComponent(req.params.jid)}/session`,

@@ -33,6 +33,13 @@ type StoredChat = {
   messages: ChatMessage[];
 };
 
+type SiteManualMessage = {
+  id: string;
+  from: "agent";
+  text: string;
+  ts: number;
+};
+
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const createSessionId = () => `site_${createId().replace(/[^A-Za-z0-9_-]/g, "")}`;
 
@@ -268,8 +275,10 @@ export function SiteChatWidget() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [humanMode, setHumanMode] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
+  const manualCursorRef = useRef(0);
 
   useEffect(() => {
     const openChat = () => setOpen(true);
@@ -307,6 +316,49 @@ export function SiteChatWidget() {
     });
   }, [messages, loading, open]);
 
+  useEffect(() => {
+    if (!started || !sessionId || !phone) return;
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const query = new URLSearchParams({
+          telefone: normalizePhone(phone),
+          after: String(manualCursorRef.current),
+        });
+        const response = await fetch(`${API_BASE}/atendimento/site/sessao/${encodeURIComponent(sessionId)}/mensagens?${query.toString()}`, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok || disposed) return;
+        const result = await response.json() as { mode?: string; messages?: SiteManualMessage[] };
+        setHumanMode(result.mode === "human");
+        const incoming = Array.isArray(result.messages) ? result.messages : [];
+        if (!incoming.length) return;
+        manualCursorRef.current = Math.max(manualCursorRef.current, ...incoming.map((message) => Number(message.ts) || 0));
+        setMessages((current) => {
+          const ids = new Set(current.map((message) => message.id));
+          const additions = incoming
+            .filter((message) => message.from === "agent" && message.text && !ids.has(message.id))
+            .map((message): ChatMessage => ({
+              id: message.id,
+              role: "assistant",
+              content: message.text,
+              createdAt: Number(message.ts) || Date.now(),
+            }));
+          return additions.length ? [...current, ...additions] : current;
+        });
+      } catch {
+        // O polling é silencioso para não interromper a conversa do visitante.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 3_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [phone, sessionId, started]);
+
   const begin = (event: FormEvent) => {
     event.preventDefault();
     const normalized = normalizePhone(phone);
@@ -334,24 +386,27 @@ export function SiteChatWidget() {
       const response = await fetch(`${API_BASE}/atendimento/site/mensagem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, historico: history }),
+        body: JSON.stringify({ mensagem: content, nome: name.trim(), telefone: phone, sessionId, messageId: userMessage.id, historico: history }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.resposta) throw new Error(result.mensagem || "Não foi possível responder agora.");
+      if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
       if (result.session_id) setSessionId(String(result.session_id));
-      const assistantMessage: ChatMessage = {
-        id: createId(),
-        role: "assistant",
-        content: String(result.resposta),
-        media: result.media || null,
-        additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
-        createdAt: Date.now(),
-      };
-      setMessages((current) => [...current, assistantMessage]);
-      const checkout = [assistantMessage.content, ...(assistantMessage.additional || [])]
-        .map(extractOfficialCardCheckout)
-        .find(Boolean);
-      if (checkout) setCheckoutUrl(checkout);
+      setHumanMode(result.atendimento_humano === true);
+      if (result.resposta) {
+        const assistantMessage: ChatMessage = {
+          id: createId(),
+          role: "assistant",
+          content: String(result.resposta),
+          media: result.media || null,
+          additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
+          createdAt: Date.now(),
+        };
+        setMessages((current) => [...current, assistantMessage]);
+        const checkout = [assistantMessage.content, ...(assistantMessage.additional || [])]
+          .map(extractOfficialCardCheckout)
+          .find(Boolean);
+        if (checkout) setCheckoutUrl(checkout);
+      }
     } catch (cause) {
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(content);
@@ -440,6 +495,7 @@ export function SiteChatWidget() {
                   )}
                 </div>
                 <div className="border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+                  {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
                   {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
                     <textarea value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" />

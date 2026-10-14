@@ -63,6 +63,8 @@ type Contact = {
   unread?: number;
   blockReason?: string | null;
   controlUpdatedAt?: number | null;
+  channel?: "whatsapp" | "site";
+  sessionId?: string;
 };
 
 type Message = {
@@ -182,8 +184,8 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconType }> = [
 ];
 
 const titles: Record<TabKey, { title: string; subtitle: string }> = {
-  overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp em um só lugar." },
-  sessions: { title: "Atendimentos ativos", subtitle: "Assuma, devolva ao bot ou bloqueie contatos específicos." },
+  overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp e do site em um só lugar." },
+  sessions: { title: "Atendimentos ativos", subtitle: "Acompanhe WhatsApp e site, assuma conversas ou devolva-as à Jatobá." },
   internal: { title: "Acessos internos", subtitle: "Autorize números da equipe a consultar e operar o sistema pelo WhatsApp." },
   leads: { title: "Leads em acompanhamento", subtitle: "Acompanhe a coleta desde o primeiro interesse até o encerramento, sem armazenar a conversa." },
   gallery: { title: "Galeria do agente", subtitle: "Cadastre as fotos que a Jatobá pode enviar durante o atendimento." },
@@ -211,6 +213,7 @@ async function api(path: string, options: RequestInit = {}) {
 }
 
 const contactMode = (contact?: Contact | null): ContactMode => contact?.mode || contact?.status || "bot";
+const contactChannel = (contact?: Contact | null): "whatsapp" | "site" => contact?.channel === "site" || contact?.jid?.startsWith("site:") ? "site" : "whatsapp";
 const contactPhone = (contact?: Contact | null) => contact?.phone || contact?.jid?.split("@")[0]?.split(":")[0] || "";
 const contactName = (contact?: Contact | null) => contact?.name || contactPhone(contact) || "Contato";
 const timeLabel = (value?: number) => value ? new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
@@ -933,6 +936,7 @@ type SessionsProps = {
 
 function Sessions(props: SessionsProps) {
   const [search, setSearch] = useState("");
+  const [channel, setChannel] = useState<"all" | "whatsapp" | "site">("all");
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [phone, setPhone] = useState(() => formatPhone("55"));
   const [name, setName] = useState("");
@@ -968,7 +972,7 @@ function Sessions(props: SessionsProps) {
 
   const filtered = props.contacts.filter((item) => {
     const haystack = `${contactName(item)} ${contactPhone(item)} ${item.lastMessage || ""}`.toLowerCase();
-    return haystack.includes(search.trim().toLowerCase());
+    return (channel === "all" || contactChannel(item) === channel) && haystack.includes(search.trim().toLowerCase());
   });
 
   const submitBlock = (event: FormEvent) => {
@@ -998,19 +1002,19 @@ function Sessions(props: SessionsProps) {
 
   return <section className="agent-sessions">
     <aside className={`agent-contact-list ${props.selected ? "has-selection" : ""}`}>
-      <div className="agent-contact-tools"><label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome ou telefone" /></label><button onClick={() => setShowBlockForm((value) => !value)}><FaBan /> Bloquear número</button></div>
+      <div className="agent-contact-tools"><label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome ou telefone" /></label><div className="agent-channel-filter"><button className={channel === "all" ? "is-active" : ""} onClick={() => setChannel("all")}>Todos</button><button className={channel === "whatsapp" ? "is-active" : ""} onClick={() => setChannel("whatsapp")}><FaWhatsapp /> WhatsApp</button><button className={channel === "site" ? "is-active" : ""} onClick={() => setChannel("site")}><FaComments /> Site</button></div><button onClick={() => setShowBlockForm((value) => !value)}><FaBan /> Bloquear número</button></div>
       {showBlockForm ? <form className="agent-block-form" onSubmit={submitBlock}><strong>Novo bloqueio</strong><input type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} placeholder="+55 (62) 99999-9999" /><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome opcional" /><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Motivo opcional" /><div><button type="button" onClick={() => setShowBlockForm(false)}>Cancelar</button><button type="submit">Bloquear</button></div></form> : null}
       <div className="agent-contact-scroll">
         {props.loading ? <p className="agent-empty">Carregando contatos…</p> : filtered.length === 0 ? <p className="agent-empty">Nenhum contato ativo ou bloqueado.</p> : filtered.map((item) => {
           const mode = contactMode(item);
-          return <button key={item.jid} className={props.selected?.jid === item.jid ? "is-active" : ""} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || formatPhone(contactPhone(item))}</small><em className={`mode-${mode}`}>{mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
+          return <button key={item.jid} className={props.selected?.jid === item.jid ? "is-active" : ""} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || formatPhone(contactPhone(item))}</small><span className="agent-contact-chips"><em className={`channel-${contactChannel(item)}`}>{contactChannel(item) === "site" ? "Site" : "WhatsApp"}</em><em className={`mode-${mode}`}>{mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
         })}
       </div>
     </aside>
     <div className={`agent-thread ${props.selected ? "has-selection" : ""}`}>
       {!props.selected ? <div className="agent-thread-empty"><FaComments /><strong>Selecione um atendimento</strong><span>As mensagens aparecem somente enquanto a sessão estiver ativa.</span></div> : <>
-        <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>{formatPhone(contactPhone(props.selected))}</small></div><div className="agent-thread-actions">
-          {props.selected.lastFrom === "client" && contactMode(props.selected) !== "blocked" ? <button className="is-bot" title="Reunir as duas últimas mensagens sem resposta e pedir uma única resposta ao bot" onClick={() => props.onReprocess(props.selected!)}><FaSyncAlt /> Responder últimas</button> : null}
+        <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>{contactChannel(props.selected) === "site" ? "Chat do site" : "WhatsApp"} · {formatPhone(contactPhone(props.selected))}</small></div><div className="agent-thread-actions">
+          {contactChannel(props.selected) === "whatsapp" && props.selected.lastFrom === "client" && contactMode(props.selected) !== "blocked" ? <button className="is-bot" title="Reunir as duas últimas mensagens sem resposta e pedir uma única resposta ao bot" onClick={() => props.onReprocess(props.selected!)}><FaSyncAlt /> Responder últimas</button> : null}
           {contactMode(props.selected) === "blocked" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Desbloquear e devolver ao bot</button> : <>
             {contactMode(props.selected) === "human" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Devolver ao bot</button> : <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button>}
             <button className="is-block" onClick={() => props.onMode(props.selected!, "blocked", "Bloqueado pelo painel do agente")}><FaBan /> Bloquear</button>
