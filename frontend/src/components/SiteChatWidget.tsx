@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import jatobaIcon from "../assets/jatoba-crest.webp";
@@ -29,6 +29,7 @@ type ChatMessage = {
   media?: ChatMedia | null;
   additional?: string[];
   createdAt: number;
+  animate?: boolean;
 };
 
 type StoredChat = {
@@ -73,7 +74,7 @@ const safeStoredChat = (): StoredChat | null => {
     return {
       ...parsed,
       expiresAt,
-      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null })) : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null, animate: false })) : [],
     };
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -349,7 +350,7 @@ export function SiteChatWidget() {
   const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
-  const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
   const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi || null);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
@@ -381,7 +382,7 @@ export function SiteChatWidget() {
     setSessionId(createSessionId());
     setName("");
     setPhone(redirectedPhone);
-    setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now() }]);
+    setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
     setBookingUi(null);
     setSessionRegistered(false);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
@@ -437,7 +438,7 @@ export function SiteChatWidget() {
   }, [open]);
 
   useEffect(() => {
-    const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined }));
+    const persistable = messages.slice(-50).map((message) => ({ ...message, media: undefined, animate: undefined }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       expiresAt,
       sessionId,
@@ -447,6 +448,15 @@ export function SiteChatWidget() {
       bookingUi,
     } satisfies StoredChat));
   }, [bookingUi, expiresAt, messages, name, phone, sessionId]);
+
+  useEffect(() => {
+    if (!messages.some((message) => message.animate)) return;
+    const longestSequence = Math.max(0, ...messages.filter((message) => message.animate).map((message) => message.additional?.length || 0));
+    const timer = window.setTimeout(() => {
+      setMessages((current) => current.map((message) => message.animate ? { ...message, animate: false } : message));
+    }, Math.max(1100, longestSequence * 180 + 450));
+    return () => window.clearTimeout(timer);
+  }, [messages]);
 
   useEffect(() => {
     if (!expiresAt) return;
@@ -547,6 +557,7 @@ export function SiteChatWidget() {
               role: "assistant",
               content: message.text,
               createdAt: Number(message.ts) || Date.now(),
+              animate: true,
             }));
           return additions.length ? [...current, ...additions] : current;
         });
@@ -579,7 +590,7 @@ export function SiteChatWidget() {
     scrollModeRef.current = "bottom";
     setShowNewMessages(false);
     const history = messages.map((message) => ({ role: message.role, content: message.content })).slice(-50);
-    const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now() };
+    const userMessage: ChatMessage = { id: createId(), role: "user", content, createdAt: Date.now(), animate: true };
     setMessages((current) => [...current, userMessage]);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
     if (!override) setDraft("");
@@ -616,6 +627,7 @@ export function SiteChatWidget() {
           media: result.media || null,
           additional: Array.isArray(result.mensagens_adicionais) ? result.mensagens_adicionais : [],
           createdAt: Date.now(),
+          animate: true,
         };
         setMessages((current) => [...current, assistantMessage]);
         setExpiresAt(Date.now() + STORAGE_TTL_MS);
@@ -681,7 +693,8 @@ export function SiteChatWidget() {
                   <div ref={scrollRef} onScroll={(event) => { if (autoScrollingRef.current) return; const node = event.currentTarget; const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; scrollModeRef.current = nearBottom ? "bottom" : "free"; if (nearBottom) setShowNewMessages(false); }} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
                   <div ref={scrollContentRef} className="space-y-3">
                   {messages.map((message, index) => (
-                    <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <Fragment key={message.id}>
+                    <div ref={index === messages.length - 1 && !message.additional?.length ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
@@ -690,9 +703,16 @@ export function SiteChatWidget() {
                       <div className={`min-w-0 max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
                         <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
-                        {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>)}
                       </div>
                     </div>
+                    {message.additional?.map((extra, extraIndex) => (
+                      <div key={`${message.id}:extra:${extraIndex}`} ref={index === messages.length - 1 && extraIndex === (message.additional?.length || 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`} style={message.animate ? { animationDelay: `${(extraIndex + 1) * 180}ms` } : undefined}>
+                        <div className="min-w-0 max-w-[85%] rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-3 text-sm leading-relaxed text-[#2d382f] shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(78%,720px)]">
+                          <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>
+                        </div>
+                      </div>
+                    ))}
+                    </Fragment>
                   ))}
                   {messages.length === 1 && messages[0].role === "assistant" && !loading && (
                     <div className="ml-9 flex flex-wrap gap-2">

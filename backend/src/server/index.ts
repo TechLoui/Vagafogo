@@ -230,8 +230,8 @@ app.get('/atendimento/site/catalogo', async (_req, res) => {
     res.json({
       tiposClientes: catalogo.tiposClientes.map(({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima }) =>
         ({ id, nome, descricao, perguntarIdade, idadeMinima, idadeMaxima })),
-      pacotes: catalogo.pacotes.map(({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo }) =>
-        ({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo })),
+      pacotes: catalogo.pacotes.map(({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, horarioInicio, horarioFim, aviso, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo }) =>
+        ({ id, nome, descricao, iconeUrl, emoji, modoHorario, horarios, horarioInicio, horarioFim, aviso, diasSemana, datasBloqueadas, aceitaPet, precosPorTipo })),
       combos: catalogo.combos.map(({ id, nome, descricao, iconeUrl, emoji, pacoteIds, precosPorTipo, preco, desconto }) =>
         ({ id, nome, descricao, iconeUrl, emoji, pacoteIds, precosPorTipo, preco, desconto })),
     });

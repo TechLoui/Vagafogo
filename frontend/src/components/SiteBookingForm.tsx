@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { DayPicker } from "react-day-picker";
+import "react-day-picker/dist/style.css";
+import { ptBR } from "date-fns/locale";
 import {
   FaArrowRight, FaCalendarAlt, FaCheck, FaClock, FaCreditCard,
   FaHiking, FaLeaf, FaQrcode, FaRegCheckCircle, FaUser,
@@ -14,6 +17,7 @@ type VisitorType = { id: string; nome: string; descricao?: string; idadeMinima?:
 type Package = {
   id: string; nome: string; descricao?: string; iconeUrl?: string; emoji?: string;
   modoHorario: string; horarios: string[]; diasSemana: number[]; datasBloqueadas: string[];
+  horarioInicio?: string; horarioFim?: string; aviso?: string;
   aceitaPet: boolean; precosPorTipo: Record<string, number>;
 };
 type Combo = {
@@ -73,6 +77,9 @@ const formatPhone = (value: string) => {
 
 const quantityOf = (counts: Record<string, number>, id: string) => Math.max(0, Math.min(99, Number(counts[id]) || 0));
 const readableDate = (date: string) => date ? date.split("-").reverse().join("/") : "";
+const dateFromKey = (key: string) => /^\d{4}-\d{2}-\d{2}$/.test(key) ? new Date(`${key}T12:00:00`) : undefined;
+const keyFromDate = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+const displayHour = (value: string) => value.replace(/:00$/, "h");
 const cardColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" };
 const choiceColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))" };
 const inputClass = "mt-1.5 w-full rounded-xl border border-[#d4ded1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#20745a] focus:ring-2 focus:ring-[#20745a]/15";
@@ -178,8 +185,11 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   if (step === "availability") return null;
 
   const weekday = date ? new Date(`${date}T12:00:00Z`).getUTCDay() : -1;
-  const unavailableIds = new Set((catalog?.pacotes || []).filter((item) => date && ((item.diasSemana?.length > 0 && !item.diasSemana.includes(weekday)) || item.datasBloqueadas?.includes(date))).map((item) => item.id));
+  const packageUnavailableOn = (item: Package, day: string, dayOfWeek: number) =>
+    (item.diasSemana?.length > 0 && !item.diasSemana.includes(dayOfWeek)) || item.datasBloqueadas?.includes(day);
+  const unavailableIds = new Set((catalog?.pacotes || []).filter((item) => date && packageUnavailableOn(item, date, weekday)).map((item) => item.id));
   const unavailable = selected.filter((item) => unavailableIds.has(item.id));
+  const trailPackages = selected.filter((item) => item.modoHorario === "intervalo");
   const adultType = catalog?.tiposClientes.find((item) => /adult/i.test(item.nome));
   const adultPrice = (offer: Package | Combo) => adultType ? Number(offer.precosPorTipo?.[adultType.id]) || 0 : 0;
   const quote = catalog?.tiposClientes.map((type) => {
@@ -218,7 +228,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
       if (normalized.length < 12 || normalized.length > 13) { setError("Informe um WhatsApp válido com DDD."); return; }
       await answer(`Meu WhatsApp para a reserva é ${formatPhone(normalized)}.`, normalized);
     } else if (step === "date") {
-      if (!date || date < today()) { setError("Escolha uma data a partir de hoje."); return; }
+      if (!date || date < today() || unavailable.length) { setError("Escolha uma data disponível para a experiência."); return; }
       await answer(`Gostaria de reservar para ${readableDate(date)}.`);
     } else if (step === "experiences") {
       if (!selected.length || unavailable.length) { setError("Escolha uma experiência disponível para a data informada."); return; }
@@ -291,7 +301,34 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
           </div>
         )}
 
-        {step === "date" && <label className="block text-xs font-semibold text-[#425c49]">Data da visita<input type="date" min={today()} value={date} onChange={(event) => setDate(event.target.value)} required className={inputClass} /></label>}
+        {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
+          <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2.5 text-xs leading-relaxed text-[#3d6147]">
+            <strong className="block">{item.nome}: faixa de horário, sem agendamento de hora</strong>
+            <span>Você pode fazer a trilha {item.horarioInicio && item.horarioFim ? `das ${displayHour(item.horarioInicio)} às ${displayHour(item.horarioFim)}` : "na faixa de funcionamento"}{scheduled.length ? ", antes ou depois do brunch." : "."}</span>
+            <span className="mt-1 block">Entrada até 15h e saída até 16h. Não são permitidos pets nem alimentos na trilha; água é permitida.</span>
+            {item.aviso && <span className="mt-1 block">{item.aviso}</span>}
+          </div>
+        ))}
+
+        {step === "date" && (
+          <div className="min-w-0">
+            <p className="mb-2 text-xs font-semibold text-[#425c49]">Data da visita</p>
+            <div className="overflow-hidden rounded-2xl border border-[#dce6d8] bg-white p-1.5 sm:p-2">
+              <DayPicker
+                mode="single"
+                selected={dateFromKey(date)}
+                defaultMonth={dateFromKey(date || today())}
+                onSelect={(day) => { setDate(day ? keyFromDate(day) : ""); setError(""); }}
+                disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())); }}
+                today={dateFromKey(today())}
+                locale={ptBR}
+                className="rdp-vagafogo site-chat-calendar"
+              />
+            </div>
+            {date && <p className="mt-2 text-center text-xs font-medium text-[#287457]">Data escolhida: {new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" }).format(dateFromKey(date))}</p>}
+            <p className="mt-2 text-center text-[11px] text-[#718075]">Dias indisponíveis não podem ser selecionados. A Jatobá confirmará as vagas.</p>
+          </div>
+        )}
 
         {step === "experiences" && (catalogError ? <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{catalogError} Você pode responder por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando experiências…</p> : (
           <div className="space-y-3.5">
@@ -322,7 +359,20 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
           </div>
         ))}
 
-        {step === "time" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe o horário por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando horários…</p> : <div className="space-y-2.5">{scheduled.map((item) => <label key={item.id} className="block text-xs font-semibold text-[#425c49]">{/brunch|gastron/i.test(item.nome) ? "Horário do brunch" : `Horário de ${item.nome}`}<select value={times[item.id] || knownTime(item)} onChange={(event) => setTimes((current) => ({ ...current, [item.id]: event.target.value }))} required className={inputClass}><option value="">Selecione um horário</option>{item.horarios.map((hour) => <option key={hour} value={hour}>{hour}</option>)}</select></label>)}</div>)}
+        {step === "time" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe o horário por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando horários…</p> : <div className="space-y-3">{scheduled.map((item) => (
+          <div key={item.id} role="group" aria-label={/brunch|gastron/i.test(item.nome) ? "Horário do brunch" : `Horário de ${item.nome}`}>
+            <p className="mb-2 text-xs font-semibold text-[#425c49]">{/brunch|gastron/i.test(item.nome) ? "Escolha o horário do brunch" : `Escolha o horário de ${item.nome}`}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {item.horarios.map((hour) => {
+                const selected = (times[item.id] || knownTime(item)) === hour;
+                return <button key={hour} type="button" disabled={sending} aria-pressed={selected} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${selected ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                  <span className="block text-base font-bold">{displayHour(hour)}</span>
+                  <span className={`mt-0.5 block text-[10px] ${selected ? "text-white/85" : "text-[#718075]"}`}>{/brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
+                </button>;
+              })}
+            </div>
+          </div>
+        ))}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
         {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{catalog.tiposClientes.map((type) => {
           const count = quantityOf(counts, type.id);

@@ -466,3 +466,41 @@ textarea.booking-input {
     margin-bottom: -2rem;
   }
 }
+
+.site-chat-calendar {
+  --rdp-accent-color: #20745a;
+  --rdp-day-width: min(40px, calc((100vw - 112px) / 7));
+  --rdp-day-height: 40px;
+  --rdp-day_button-width: var(--rdp-day-width);
+  --rdp-day_button-height: var(--rdp-day-width);
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  transform: none;
+}
+
+.site-chat-calendar .rdp-months,
+.site-chat-calendar .rdp-month,
+.site-chat-calendar .rdp-month_grid {
+  width: 100%;
+  max-width: 100%;
+}
+
+.site-chat-calendar .rdp-month_grid {
+  table-layout: fixed;
+}
+
+.site-chat-message-pop {
+  animation: site-chat-pop 340ms cubic-bezier(.2, .85, .25, 1.1) both;
+}
+
+@keyframes site-chat-pop {
+  from { opacity: 0; transform: translateY(9px) scale(.96); }
+  75% { opacity: 1; transform: translateY(-1px) scale(1.01); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-chat-message-pop { animation: none; }
+}
