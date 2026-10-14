@@ -18,6 +18,9 @@ type ChatMedia = {
   items?: Array<{ dataUrl?: string; titulo?: string; legenda?: string }>;
 };
 
+type ChatPhoto = { dataUrl: string; title: string; caption: string };
+type PhotoPreviewState = { items: ChatPhoto[]; index: number };
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -143,21 +146,93 @@ function RichText({ children, onOpenCheckout }: { children: string; onOpenChecko
   );
 }
 
-function MediaBlock({ media }: { media?: ChatMedia | null }) {
+const photosFromMedia = (media?: ChatMedia | null): ChatPhoto[] => {
+  if (media?.type === "gallery") {
+    return (media.items || [])
+      .filter((item): item is { dataUrl: string; titulo?: string; legenda?: string } => Boolean(item.dataUrl))
+      .map((item) => ({
+        dataUrl: item.dataUrl,
+        title: item.titulo || "Foto da Fazenda Vagafogo",
+        caption: item.legenda || item.titulo || "",
+      }));
+  }
+  if (media?.type === "image" && media.dataUrl) {
+    return [{ dataUrl: media.dataUrl, title: "Foto da Fazenda Vagafogo", caption: "" }];
+  }
+  return [];
+};
+
+function PhotoArrow({ direction, onClick, label, className = "" }: {
+  direction: "previous" | "next"; onClick: () => void; label: string; className?: string;
+}) {
+  return (
+    <button type="button" onClick={onClick} aria-label={label} className={`grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/95 text-[#214f3e] shadow-md transition hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${className}`}>
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={direction === "previous" ? "m15 18-6-6 6-6" : "m9 18 6-6-6-6"} /></svg>
+    </button>
+  );
+}
+
+function PhotoCarousel({ items, onOpenPreview }: { items: ChatPhoto[]; onOpenPreview: (items: ChatPhoto[], index: number) => void }) {
+  const [index, setIndex] = useState(0);
+  const active = items[Math.min(index, items.length - 1)];
+  if (!active) return null;
+  const move = (direction: number) => setIndex((current) => (current + direction + items.length) % items.length);
+  return (
+    <div className="mt-3 min-w-0 overflow-hidden rounded-2xl border border-[#dfe8dc] bg-[#f7faf5]" aria-label="Fotos enviadas pela Jatobá">
+      <div className="relative">
+        <button type="button" onClick={() => onOpenPreview(items, index)} aria-label={`Ampliar ${active.title}`} className="block w-full overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#20745a]">
+          <img src={active.dataUrl} alt={active.title} loading="lazy" className="h-48 w-full object-cover sm:h-56" />
+        </button>
+        {items.length > 1 && <>
+          <PhotoArrow direction="previous" onClick={() => move(-1)} label="Foto anterior" className="absolute left-2 top-1/2 -translate-y-1/2" />
+          <PhotoArrow direction="next" onClick={() => move(1)} label="Próxima foto" className="absolute right-2 top-1/2 -translate-y-1/2" />
+        </>}
+      </div>
+      <div className="flex min-h-10 items-center justify-between gap-2 px-3 py-2 text-xs text-[#526457]">
+        <span className="min-w-0 truncate">{active.caption || "Toque para ampliar"}</span>
+        {items.length > 1 && <span className="shrink-0 font-semibold tabular-nums">{index + 1} / {items.length}</span>}
+      </div>
+    </div>
+  );
+}
+
+function PhotoPreview({ preview, onChange, onClose }: {
+  preview: PhotoPreviewState; onChange: (index: number) => void; onClose: () => void;
+}) {
+  const { items, index } = preview;
+  const active = items[index];
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (items.length > 1 && event.key === "ArrowLeft") onChange((index - 1 + items.length) % items.length);
+      if (items.length > 1 && event.key === "ArrowRight") onChange((index + 1) % items.length);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [index, items.length, onChange, onClose]);
+  if (!active) return null;
+  return (
+    <div className="fixed inset-0 z-[120] flex flex-col bg-[#10251d]/95 text-white" role="dialog" aria-modal="true" aria-label="Visualização das fotos da Fazenda Vagafogo">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
+        <div className="min-w-0"><p className="truncate text-sm font-semibold">{active.title}</p>{items.length > 1 && <p className="text-xs text-white/65">{index + 1} de {items.length}</p>}</div>
+        <button type="button" onClick={onClose} aria-label="Fechar foto ampliada" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/15 hover:bg-white/25"><svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+      </div>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center px-12 py-3 sm:px-20">
+        <img src={active.dataUrl} alt={active.title} className="max-h-full max-w-full object-contain" />
+        {items.length > 1 && <>
+          <PhotoArrow direction="previous" onClick={() => onChange((index - 1 + items.length) % items.length)} label="Foto anterior" className="absolute left-2 top-1/2 -translate-y-1/2 sm:left-6" />
+          <PhotoArrow direction="next" onClick={() => onChange((index + 1) % items.length)} label="Próxima foto" className="absolute right-2 top-1/2 -translate-y-1/2 sm:right-6" />
+        </>}
+      </div>
+      {active.caption && <p className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 text-center text-sm text-white/85 sm:px-6">{active.caption}</p>}
+    </div>
+  );
+}
+
+function MediaBlock({ media, onOpenPreview }: { media?: ChatMedia | null; onOpenPreview: (items: ChatPhoto[], index: number) => void }) {
   const [copied, setCopied] = useState(false);
   if (!media) return null;
-  if (media.type === "gallery" && media.items?.length) {
-    return (
-      <div className="mt-3 grid gap-2">
-        {media.items.slice(0, 3).map((item, index) => item.dataUrl ? (
-          <figure key={index} className="overflow-hidden rounded-2xl bg-white">
-            <a href={item.dataUrl} target="_blank" rel="noreferrer" aria-label={`Ampliar ${item.titulo || "foto da Fazenda Vagafogo"}`}><img src={item.dataUrl} alt={item.titulo || item.legenda || "Foto da Fazenda Vagafogo"} loading="lazy" className="max-h-56 w-full object-cover" /></a>
-            {(item.legenda || item.titulo) && <figcaption className="px-3 py-2 text-xs text-[#5f574d]">{item.legenda || item.titulo}</figcaption>}
-          </figure>
-        ) : null)}
-      </div>
-    );
-  }
+  if (media.type === "gallery" || media.type === "image") return <PhotoCarousel items={photosFromMedia(media)} onOpenPreview={onOpenPreview} />;
   if (media.type === "pix") {
     return (
       <div className="mt-3 rounded-2xl border border-[#dbe7d3] bg-white p-3">
@@ -177,9 +252,6 @@ function MediaBlock({ media }: { media?: ChatMedia | null }) {
         )}
       </div>
     );
-  }
-  if (media.type === "image" && media.dataUrl) {
-    return <a href={media.dataUrl} target="_blank" rel="noreferrer" aria-label="Ampliar imagem enviada pela Jatobá"><img src={media.dataUrl} alt="Imagem enviada pela Jatobá" loading="lazy" className="mt-3 max-h-56 w-full rounded-2xl object-cover" /></a>;
   }
   return null;
 }
@@ -279,6 +351,7 @@ export function SiteChatWidget() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [photoPreview, setPhotoPreview] = useState<PhotoPreviewState | null>(null);
   const [humanMode, setHumanMode] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [waitingSeconds, setWaitingSeconds] = useState(0);
@@ -302,6 +375,7 @@ export function SiteChatWidget() {
     setLoading(false);
     setError("");
     setCheckoutUrl("");
+    setPhotoPreview(null);
     setHumanMode(false);
     manualCursorRef.current = 0;
     sendingRef.current = false;
@@ -540,7 +614,7 @@ export function SiteChatWidget() {
                       )}
                       <div className={`max-w-[85%] rounded-2xl px-3.5 py-3 text-sm leading-relaxed shadow-sm sm:max-w-[min(78%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
                         <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
-                        <MediaBlock media={message.media} />
+                        <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.additional?.map((extra, index) => <p key={index} className="mt-3 whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>)}
                       </div>
                     </div>
@@ -587,6 +661,7 @@ export function SiteChatWidget() {
       </div>
 
       {checkoutUrl && <SecureCheckoutModal url={checkoutUrl} onClose={() => setCheckoutUrl("")} />}
+      {photoPreview && <PhotoPreview preview={photoPreview} onChange={(index) => setPhotoPreview((current) => current ? { ...current, index } : null)} onClose={() => setPhotoPreview(null)} />}
     </>
   );
 }
