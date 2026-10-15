@@ -65,6 +65,7 @@ import {
   alterarModoConversaSite,
   isSiteConversationJid,
   listarConversasSite,
+  limparConversasSiteExpiradas,
   listarMensagensConversaSite,
   marcarConversaSiteLida,
   obterConversaSite,
@@ -179,7 +180,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-14.4-conversational-site-chat',
+    build: '2026-10-15.2-site-leads-history',
     timestamp: new Date().toISOString(),
   });
 });
@@ -290,6 +291,22 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     phone: telefone,
     incrementUnread: true,
   });
+  if (!existingConversation || (!existingConversation.phone && telefone)) {
+    try {
+      await registrarLeadAgente({
+        sessionId,
+        telefone,
+        canal: "site",
+        nome,
+        etapa: "contato_iniciado",
+        resultado: "em_andamento",
+        resumo: "Atendimento iniciado no chat do site; interesse em acompanhamento.",
+        proximaAcao: "Acompanhar atendimento no chat do site",
+      });
+    } catch (error) {
+      console.error("[site-chat] Nao foi possivel registrar o lead do site:", error);
+    }
+  }
   if (storedClientMessage.conversation.mode === "human") {
     res.json({
       resposta: "",
@@ -1600,6 +1617,12 @@ const port = process.env.PORT || 3001;
 
 app.listen(port, async () => {
   console.log(`Servidor rodando na porta ${port}`);
+  void limparConversasSiteExpiradas().catch((error) => console.error("[site-chat] Falha na limpeza inicial:", error));
+  const siteChatCleanupTimer = setInterval(
+    () => void limparConversasSiteExpiradas().catch((error) => console.error("[site-chat] Falha na limpeza periodica:", error)),
+    60 * 60 * 1000,
+  );
+  siteChatCleanupTimer.unref();
   iniciarLimpezaAutomaticaReservas();
   try {
     const migrada = await garantirConfiguracaoAutomacoesWhatsapp();

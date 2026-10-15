@@ -106,6 +106,7 @@ type AgentLead = {
   id: string;
   sessionId?: string;
   phone: string;
+  channels: string[];
   name?: string;
   stage: string;
   outcome: string;
@@ -192,7 +193,7 @@ const titles: Record<TabKey, { title: string; subtitle: string }> = {
   overview: { title: "Agente Vagafogo", subtitle: "Atendimento, privacidade e operação do WhatsApp e do site em um só lugar." },
   sessions: { title: "Atendimentos ativos", subtitle: "Acompanhe WhatsApp e site, assuma conversas ou devolva-as à Jatobá." },
   internal: { title: "Acessos internos", subtitle: "Autorize números da equipe a consultar e operar o sistema pelo WhatsApp." },
-  leads: { title: "Leads em acompanhamento", subtitle: "Acompanhe a coleta desde o primeiro interesse até o encerramento, sem armazenar a conversa." },
+  leads: { title: "Leads em acompanhamento", subtitle: "Leads do site e do WhatsApp ficam no CRM; as conversas são guardadas separadamente por até 7 dias." },
   gallery: { title: "Galeria do agente", subtitle: "Cadastre as fotos que a Jatobá pode enviar durante o atendimento." },
   whatsapp: { title: "Conexão do WhatsApp", subtitle: "Conecte o número do agente e valide o envio antes de operar." },
   prompt: { title: "Assistente e prompt", subtitle: "Ajuste o comportamento da IA e teste sem enviar mensagens reais." },
@@ -225,11 +226,6 @@ const contactPhone = (contact?: Contact | null) => contact?.phone || contact?.ji
 const contactName = (contact?: Contact | null) => contact?.name || contactPhone(contact) || "Contato";
 const timeLabel = (value?: number) => value ? new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
 const dateTimeLabel = (value?: string | number | null) => value ? new Date(value).toLocaleString("pt-BR") : "—";
-const durationLabel = (seconds?: number) => {
-  if (!seconds) return "12 horas";
-  if (seconds % 3600 === 0) return `${seconds / 3600} horas`;
-  return `${Math.round(seconds / 60)} minutos`;
-};
 const normalizeTimestamp = (value: unknown) => {
   if (!value) return undefined;
   if (typeof value === "string") return value;
@@ -440,6 +436,9 @@ export function Agente() {
         id: document.id,
         sessionId,
         phone: sessionPhone || (isLegacyLid ? "" : rawPhone),
+        channels: Array.isArray(raw.canaisAtendimento)
+          ? raw.canaisAtendimento.map(String)
+          : [String(raw.canal ?? (sessionId?.startsWith("site_") ? "site" : "whatsapp"))],
         name: raw.nome ? String(raw.nome) : undefined,
         stage,
         outcome,
@@ -468,7 +467,7 @@ export function Agente() {
     next.forEach((lead) => {
       const normalizedPhone = canonicalLeadPhoneKey(lead.phone);
       const nameAndIntent = `${normalizedLeadToken(lead.name)}:${lead.desiredDate || ""}:${lead.activities.map(normalizedLeadToken).sort().join(",")}`;
-      const key = normalizedPhone ? `telefone:${normalizedPhone}` : nameAndIntent !== "::" ? `contexto:${nameAndIntent}` : lead.sessionId || lead.id;
+      const key = normalizedPhone ? `telefone:${normalizedPhone}` : lead.sessionId?.startsWith("site_") ? `site:${lead.sessionId}` : nameAndIntent !== "::" ? `contexto:${nameAndIntent}` : lead.sessionId || lead.id;
       if (!unique.has(key)) unique.set(key, lead);
     });
     setLeads(Array.from(unique.values()));
@@ -681,8 +680,8 @@ function Overview({ status, contacts, counts, onOpen }: { status: AgentStatus; c
         <button onClick={() => onOpen("whatsapp")}>{status.ready ? "Gerenciar conexão" : "Conectar agora"}<FaArrowLeft /></button>
       </article>
       <article className="agent-card agent-privacy-card">
-        <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Privacidade das conversas</h2><p>Configuração aplicada no gateway.</p></div></div>
-        <ul><li><FaCheckCircle /><span><strong>Retenção temporária</strong>Mensagens de texto e marcadores de mídia sobrevivem a redeploys por até 7 dias.</span></li><li><FaCheckCircle /><span><strong>Expiração automática</strong>Remoção em {durationLabel(status.privacy?.ttlSeconds)}.</span></li><li><FaCheckCircle /><span><strong>Sem arquivo de mídia</strong>Áudios e imagens não são copiados para o banco.</span></li></ul>
+        <div className="agent-card__title"><span><FaShieldAlt /></span><div><h2>Privacidade das conversas</h2><p>Histórico temporário do site e do WhatsApp.</p></div></div>
+        <ul><li><FaCheckCircle /><span><strong>Retenção temporária</strong>Mensagens de texto e marcadores de mídia ficam disponíveis por até 7 dias.</span></li><li><FaCheckCircle /><span><strong>Expiração automática</strong>Mensagens antigas são removidas mesmo em conversas ainda ativas.</span></li><li><FaCheckCircle /><span><strong>Sem arquivo de mídia</strong>Áudios e imagens não são copiados para o banco.</span></li></ul>
       </article>
       <article className="agent-card agent-next-card">
         <div className="agent-card__title"><span><FaQrcode /></span><div><h2>Fluxo de reserva</h2><p>Integração preparada para homologação.</p></div></div>
@@ -919,6 +918,7 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
     if (outcome !== "all" && lead.outcome !== outcome) return false;
     if (origin === "real" && lead.isTest) return false;
     if (origin === "test" && !lead.isTest) return false;
+    if ((origin === "site" || origin === "whatsapp") && (lead.isTest || !lead.channels.includes(origin))) return false;
     if (recordState !== "all" && lead.recordState !== recordState) return false;
     const haystack = `${lead.name || ""} ${lead.phone} ${lead.activities.join(" ")} ${lead.summary || ""} ${lead.reservationId || ""}`.toLowerCase();
     return haystack.includes(search.trim().toLowerCase());
@@ -989,10 +989,10 @@ function LeadsPanel({ leads, loading, error, onMessage, onError }: { leads: Agen
         <label><FaSearch /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone, interesse ou reserva" /></label>
         <select value={recordState} onChange={(event) => setRecordState(event.target.value)}><option value="all">Todos os acompanhamentos</option><option value="em_atendimento">Em atendimento</option><option value="aguardando_pagamento">Aguardando pagamento</option><option value="finalizado">Finalizados</option></select>
         <select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="all">Todos os resultados</option>{outcomes.map((item) => <option key={item} value={item}>{readableLeadValue(item)}</option>)}</select>
-        <select value={origin} onChange={(event) => setOrigin(event.target.value)}><option value="all">Reais e testes</option><option value="real">Somente reais</option><option value="test">Somente testes</option></select>
+        <select value={origin} onChange={(event) => setOrigin(event.target.value)}><option value="all">Todos os canais</option><option value="site">Chat do site</option><option value="whatsapp">WhatsApp</option><option value="real">Somente reais</option><option value="test">Somente testes</option></select>
       </div>
       {loading ? <p className="agent-empty">Carregando leads estruturados…</p> : error ? <div className="agent-lead-error"><FaBan />{error}</div> : filtered.length === 0 ? <p className="agent-empty">Nenhum lead encontrado com esses filtros.</p> : <div className="agent-lead-list">{filtered.map((lead) => <article key={lead.id}>
-        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{formatPhone(lead.phone)}</small></div><div className="agent-lead-badges">{lead.isTest ? <em className="is-test">TESTE</em> : null}{lead.cycle > 1 ? <em>Ciclo {lead.cycle}</em> : null}{lead.followupAttempts > 0 && !lead.isFinalized ? <em>Retomada {lead.followupAttempts}/2</em> : null}<em className={`is-record-${lead.recordState}`}>{lead.recordState === "finalizado" ? "Finalizado" : lead.recordState === "aguardando_pagamento" ? "Aguardando pagamento" : "Em atendimento"}</em><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
+        <header><span className="agent-avatar">{(lead.name || lead.phone || "L").charAt(0).toUpperCase()}</span><div><strong>{lead.name || "Nome ainda não coletado"}</strong><small>{lead.phone ? formatPhone(lead.phone) : "WhatsApp ainda não informado"}</small></div><div className="agent-lead-badges">{lead.channels.includes("site") ? <em>Site</em> : null}{lead.channels.includes("whatsapp") ? <em>WhatsApp</em> : null}{lead.isTest ? <em className="is-test">TESTE</em> : null}{lead.cycle > 1 ? <em>Ciclo {lead.cycle}</em> : null}{lead.followupAttempts > 0 && !lead.isFinalized ? <em>Retomada {lead.followupAttempts}/2</em> : null}<em className={`is-record-${lead.recordState}`}>{lead.recordState === "finalizado" ? "Finalizado" : lead.recordState === "aguardando_pagamento" ? "Aguardando pagamento" : "Em atendimento"}</em><em className={lead.reservationId ? "is-converted" : ""}>{readableLeadValue(lead.outcome)}</em></div></header>
         <div className="agent-lead-data"><span><small>Etapa</small><strong>{readableLeadValue(lead.stage)}</strong></span><span><small>Interesse</small><strong>{lead.activities.length ? lead.activities.join(" + ") : "Não informado"}</strong></span><span><small>Data desejada</small><strong>{lead.desiredDate || "Não informada"}</strong></span><span><small>Participantes</small><strong>{lead.participants ?? "—"}</strong></span><span><small>Valor estimado</small><strong>{lead.estimatedValue == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(lead.estimatedValue)}</strong></span><span><small>Última atualização</small><strong>{dateTimeLabel(lead.updatedAt)}</strong></span><span><small>{lead.isFinalized ? "Finalização" : "Retomadas automáticas"}</small><strong>{lead.isFinalized ? dateTimeLabel(lead.finalizedAt) : `${lead.followupAttempts} de 2 realizadas`}</strong></span></div>
         {lead.summary ? <p>{lead.summary}</p> : null}
         <footer><span className={lead.marketingOptIn ? "is-allowed" : ""}>{lead.marketingOptIn ? "Opt-in confirmado" : "Sem opt-in"}</span>{lead.paymentMethod ? <span>Pagamento: {readableLeadValue(lead.paymentMethod)}</span> : null}{lead.reservationId ? <span>Reserva: {lead.reservationId}</span> : lead.nextAction ? <span>Próxima ação: {lead.nextAction}</span> : null}{lead.reservationId ? <button className="agent-link" disabled={resendingConfirmation === lead.id} onClick={() => void resendConfirmation(lead)}><FaPaperPlane /> {resendingConfirmation === lead.id ? "Reenviando…" : "Reenviar confirmação"}</button> : null}<button className="agent-link" onClick={() => setEditing({ ...lead })}><FaEdit /> Gerenciar</button><button className="agent-link is-danger" onClick={() => void deleteLead(lead)}><FaTrash /> Excluir</button></footer>

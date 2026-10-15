@@ -4,6 +4,23 @@ import { obterFirestoreAdmin } from "./firebaseAdmin";
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_MESSAGES = 120;
+const MAX_MESSAGE_BYTES = 700_000;
+
+export const filtrarMensagensSiteVigentes = <T extends { ts: number }>(messages: T[], now = Date.now()): T[] =>
+  messages.filter((message) => Number(message.ts) > now - TTL_MS);
+
+export const limitarHistoricoSite = <T extends { ts: number }>(messages: T[], now = Date.now()): T[] => {
+  const fresh = filtrarMensagensSiteVigentes(messages, now).slice(-MAX_MESSAGES);
+  const kept: T[] = [];
+  let bytes = 0;
+  for (let index = fresh.length - 1; index >= 0; index -= 1) {
+    const size = Buffer.byteLength(JSON.stringify(fresh[index]), "utf8");
+    if (bytes + size > MAX_MESSAGE_BYTES) break;
+    kept.push(fresh[index]);
+    bytes += size;
+  }
+  return kept.reverse();
+};
 
 export type SiteConversationMode = "bot" | "human" | "blocked";
 export type SiteConversationSender = "client" | "bot" | "agent";
@@ -77,14 +94,15 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
   if (!/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId)) return null;
   const messages = (Array.isArray(value.messages) ? value.messages : [])
     .map(normalizeMessage)
-    .filter((item): item is SiteConversationMessage => Boolean(item))
-    .slice(-MAX_MESSAGES);
-  const last = messages.length ? messages[messages.length - 1] : undefined;
+    .filter((item): item is SiteConversationMessage => Boolean(item));
+  const retained = limitarHistoricoSite(messages);
+  const last = retained.length ? retained[retained.length - 1] : undefined;
   const modeValue = String(value.mode ?? value.status ?? "bot");
   const mode: SiteConversationMode = ["bot", "human", "blocked"].includes(modeValue)
     ? modeValue as SiteConversationMode
     : "bot";
   const now = Date.now();
+  const lastMessageAt = normalizeTimestamp(value.lastMessageAt, last?.ts ?? now);
   return {
     id: sessionId,
     jid: `site:${sessionId}`,
@@ -95,9 +113,9 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     mode,
     status: mode,
     unread: Math.max(0, Math.floor(Number(value.unread) || 0)),
-    messages,
-    lastMessage: String(value.lastMessage ?? last?.text ?? "").slice(0, 12_000),
-    lastMessageAt: normalizeTimestamp(value.lastMessageAt, last?.ts ?? now),
+    messages: retained,
+    lastMessage: lastMessageAt > now - TTL_MS ? String(value.lastMessage ?? last?.text ?? "").slice(0, 12_000) : "",
+    lastMessageAt,
     lastFrom: (["client", "bot", "agent"].includes(String(value.lastFrom))
       ? String(value.lastFrom)
       : last?.from ?? "client") as SiteConversationSender,
@@ -130,10 +148,16 @@ const hydrate = async () => {
     if (!firestore) return;
     try {
       const snapshot = await firestore.collection(COLLECTION).where("expiresAt", ">", new Date()).get();
+      const stale: SiteConversation[] = [];
       snapshot.docs.forEach((document) => {
-        const conversation = normalizeConversation(document.id, document.data() as Record<string, unknown>);
-        if (conversation) conversations.set(conversation.sessionId, conversation);
+        const data = document.data() as Record<string, unknown>;
+        const conversation = normalizeConversation(document.id, data);
+        if (conversation) {
+          conversations.set(conversation.sessionId, conversation);
+          if (Array.isArray(data.messages) && data.messages.length !== conversation.messages.length) stale.push(conversation);
+        }
       });
+      if (stale.length) await Promise.all(stale.map(persist));
     } catch (error) {
       console.error("[site-chat] Nao foi possivel restaurar as conversas do site:", error);
     }
@@ -155,6 +179,16 @@ const removeExpired = async () => {
   const now = Date.now();
   const expired = Array.from(conversations.values()).filter((item) => item.expiresAt <= now);
   expired.forEach((item) => conversations.delete(item.sessionId));
+  const staleActive = Array.from(conversations.values()).filter((item) =>
+    item.messages.some((message) => message.ts <= now - TTL_MS)
+    || (Boolean(item.lastMessage) && item.lastMessageAt <= now - TTL_MS));
+  await Promise.all(staleActive.map((item) => mutate(item.sessionId, async () => {
+    const current = conversations.get(item.sessionId);
+    if (!current) return;
+    current.messages = limitarHistoricoSite(current.messages, now);
+    if (current.lastMessageAt <= now - TTL_MS) current.lastMessage = "";
+    await persist(current);
+  })));
   const firestore = obterFirestoreAdmin();
   if (!firestore) return;
   if (expired.length) {
@@ -172,6 +206,11 @@ const removeExpired = async () => {
   } catch (error) {
     console.error("[site-chat] Nao foi possivel limpar conversas expiradas:", error);
   }
+};
+
+export const limparConversasSiteExpiradas = async () => {
+  await hydrate();
+  await removeExpired();
 };
 
 const mutate = async <T>(sessionId: string, operation: () => Promise<T>): Promise<T> => {
@@ -234,7 +273,7 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
   };
   conversation.name = String(input.name ?? conversation.name).trim().slice(0, 120);
   conversation.phone = String(input.phone ?? conversation.phone).replace(/\D/g, "").slice(0, 15);
-  conversation.messages = [...conversation.messages, message].slice(-MAX_MESSAGES);
+  conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
   conversation.lastMessage = message.text;
   conversation.lastMessageAt = message.ts;
   conversation.lastFrom = message.from;

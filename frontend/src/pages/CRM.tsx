@@ -273,6 +273,7 @@ type AgentLeadRecord = {
   id: string;
   sessionId?: string;
   phone: string;
+  channels: string[];
   name?: string;
   email?: string;
   stage: string;
@@ -968,6 +969,9 @@ export function CRM() {
                 id: document.id,
                 sessionId,
                 phone: sessionPhone || (isLegacyLid ? "" : rawPhone),
+                channels: Array.isArray(raw.canaisAtendimento)
+                  ? raw.canaisAtendimento.map(String)
+                  : [String(raw.canal ?? (sessionId?.startsWith("site_") ? "site" : "whatsapp"))],
                 name: raw.nome ? String(raw.nome) : undefined,
                 email: raw.email ? String(raw.email) : undefined,
                 stage: String(raw.etapa ?? "contato_iniciado"),
@@ -1014,6 +1018,8 @@ export function CRM() {
             const nameAndIntent = `${normalizeText(lead.name)}:${lead.desiredDate || ""}:${lead.activities.map(normalizeText).sort().join(",")}`;
             const key = phoneDigits
               ? `telefone:${phoneDigits}`
+              : lead.sessionId?.startsWith("site_")
+                ? `site:${lead.sessionId}`
               : nameAndIntent !== "::"
                 ? `contexto:${nameAndIntent}`
                 : lead.sessionId || lead.id;
@@ -2865,6 +2871,7 @@ function JourneysSection({
   const [agentFilter, setAgentFilter] = useState<
     "all" | "open" | "lost" | "confirmed" | "closed"
   >("all");
+  const [agentChannelFilter, setAgentChannelFilter] = useState<"all" | "site" | "whatsapp">("all");
   const [segment, setSegment] = useState<"90" | "180" | "365">("180");
   const threshold = Number(segment);
   const inactive = customers
@@ -2881,6 +2888,7 @@ function JourneysSection({
   const realAgentLeads = agentLeads.filter((item) => !item.isTest);
   const lostAgentLeads = realAgentLeads.filter(agentLeadIsLost);
   const visibleAgentLeads = agentLeads.filter((item) => {
+    if (agentChannelFilter !== "all" && !item.channels.includes(agentChannelFilter)) return false;
     if (agentFilter === "open") return agentLeadIsOpen(item);
     if (agentFilter === "lost") return agentLeadIsLost(item);
     if (agentFilter === "confirmed") return agentLeadIsConfirmed(item);
@@ -2986,9 +2994,9 @@ function JourneysSection({
           <div>
             <h3>Agente integrado</h3>
             <p>
-              O atendimento envia apenas lead estruturado: etapa, resultado,
-              interesse, data, participantes, valor, reserva e próxima ação —
-              sem gravar a conversa.
+              Leads do site e do WhatsApp reúnem etapa, resultado, interesse,
+              data, participantes, valor, reserva e próxima ação. As conversas
+              ficam separadas e são apagadas após 7 dias.
             </p>
           </div>
         </article>
@@ -3000,8 +3008,8 @@ function JourneysSection({
               Leads estruturados do Agente
             </strong>
             <small className="crm-toolbar-caption">
-              {agentLeads.length} atualizado(s) no período · conversa bruta não
-              armazenada
+              {agentLeads.length} atualizado(s) no período · histórico de conversa
+              disponível por até 7 dias em Atendimentos
             </small>
           </div>
           <select
@@ -3017,6 +3025,11 @@ function JourneysSection({
             <option value="confirmed">Reservas confirmadas</option>
             <option value="closed">Encerrados sem oportunidade</option>
           </select>
+          <select aria-label="Filtrar canal dos leads do Agente" value={agentChannelFilter} onChange={(event) => setAgentChannelFilter(event.target.value as typeof agentChannelFilter)}>
+            <option value="all">Site e WhatsApp</option>
+            <option value="site">Chat do site</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
         </div>
         {visibleAgentLeads.length ? (
           <>
@@ -3025,6 +3038,7 @@ function JourneysSection({
                 <thead>
                   <tr>
                     <th>Contato</th>
+                    <th>Canal</th>
                     <th>Etapa</th>
                     <th>Resultado</th>
                     <th>Interesse</th>
@@ -3046,11 +3060,12 @@ function JourneysSection({
                           <div className="crm-person-cell">
                             <span>{initials(item.name ?? "Lead")}</span>
                             <div>
-                              <strong>{item.name ?? "Lead do WhatsApp"}</strong>
-                              <small>{formatPhone(item.phone)}{item.isTest ? " · TESTE PRIVADO" : ""}</small>
+                              <strong>{item.name ?? (item.channels.includes("site") ? "Visitante do site" : "Lead do WhatsApp")}</strong>
+                              <small>{item.phone ? formatPhone(item.phone) : "WhatsApp ainda não informado"}{item.isTest ? " · TESTE PRIVADO" : ""}</small>
                             </div>
                           </div>
                         </td>
+                        <td>{item.channels.includes("site") ? "Site" : ""}{item.channels.includes("site") && item.channels.includes("whatsapp") ? " + " : ""}{item.channels.includes("whatsapp") ? "WhatsApp" : ""}</td>
                         <td>
                           <span className="crm-pill crm-pill--aguardando-decisao">
                             {item.stage.replaceAll("_", " ")}
@@ -3108,7 +3123,7 @@ function JourneysSection({
           <EmptyState
             icon={FaRobot}
             title="Nenhum lead do Agente no período"
-            text="Os resumos estruturados aparecerão aqui ao final dos atendimentos do WhatsApp."
+            text="Os leads do site e do WhatsApp aparecerão aqui desde o início do atendimento."
           />
         )}
       </div>

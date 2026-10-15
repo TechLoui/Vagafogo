@@ -7,7 +7,57 @@ const {
   leadPhoneVariants,
   resolverRetornoLeadAgenteAoBot,
   resolverTransicaoLeadAgente,
+  siteAnonymousLeadId,
+  registrarLeadAgente,
 } = require("../dist/services/agentReservationTools.js");
+
+test("lead anonimo do site usa identidade estavel da sessao sem exigir telefone", () => {
+  assert.equal(siteAnonymousLeadId("site_sessao_123456789012"), siteAnonymousLeadId("site_sessao_123456789012"));
+  assert.notEqual(siteAnonymousLeadId("site_sessao_123456789012"), siteAnonymousLeadId("site_sessao_123456789013"));
+});
+
+test("lead do site sem telefone e unificado ao lead identificado sem duplicar", async () => {
+  const firebaseAdmin = require("../dist/services/firebaseAdmin.js");
+  const original = firebaseAdmin.obterFirestoreAdmin;
+  const records = new Map();
+  const reference = (collection, id) => {
+    const key = `${collection}/${id}`;
+    return {
+      id,
+      path: key,
+      get: async () => ({ exists: records.has(key), data: () => records.get(key) }),
+      set: async (value, options) => records.set(key, options?.merge ? { ...records.get(key), ...value } : value),
+      delete: async () => records.delete(key),
+    };
+  };
+  firebaseAdmin.obterFirestoreAdmin = () => ({
+    collection: (name) => ({ doc: (id) => reference(name, id) }),
+    batch: () => {
+      const operations = [];
+      return {
+        set: (ref, value, options) => operations.push(() => ref.set(value, options)),
+        delete: (ref) => operations.push(() => ref.delete()),
+        commit: async () => { for (const operation of operations) await operation(); },
+      };
+    },
+  });
+  try {
+    const sessionId = "site_leadmerge_123456789012";
+    const anonymous = await registrarLeadAgente({ sessionId, canal: "site", nome: "Maria", etapa: "contato_iniciado", resultado: "em_andamento" });
+    assert.equal(anonymous.id, siteAnonymousLeadId(sessionId));
+    assert.ok(records.has(`crm_leads_agente/${anonymous.id}`));
+
+    const identified = await registrarLeadAgente({ sessionId, canal: "site", telefone: "5562999999999", etapa: "interesse_identificado", resultado: "em_andamento" });
+    assert.notEqual(identified.id, anonymous.id);
+    assert.equal(records.has(`crm_leads_agente/${anonymous.id}`), false);
+    const merged = records.get(`crm_leads_agente/${identified.id}`);
+    assert.equal(merged.nome, "Maria");
+    assert.equal(merged.telefone, "5562999999999");
+    assert.deepEqual(merged.canaisAtendimento, ["site"]);
+  } finally {
+    firebaseAdmin.obterFirestoreAdmin = original;
+  }
+});
 
 test("duvida resolvida encerra o lead imediatamente", () => {
   assert.equal(leadAgenteEstaFinalizado("atendimento_concluido", "duvida_resolvida"), true);

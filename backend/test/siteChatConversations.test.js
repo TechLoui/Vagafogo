@@ -5,6 +5,8 @@ process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
 const {
   alterarModoConversaSite,
+  filtrarMensagensSiteVigentes,
+  limitarHistoricoSite,
   listarConversasSite,
   listarMensagensConversaSite,
   marcarConversaSiteLida,
@@ -12,6 +14,25 @@ const {
   registrarMensagemConversaSite,
   removerConversaSite,
 } = require("../dist/services/siteChatConversations");
+
+test("descarta mensagens com mais de sete dias mesmo em conversa ainda ativa", () => {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const messages = [
+    { id: "old", ts: now - 8 * day },
+    { id: "recent", ts: now - 6 * day },
+  ];
+  assert.deepEqual(filtrarMensagensSiteVigentes(messages, now).map((item) => item.id), ["recent"]);
+});
+
+test("limita o historico para caber em um documento sem perder as mensagens novas", () => {
+  const now = Date.now();
+  const messages = Array.from({ length: 120 }, (_, index) => ({ id: String(index), ts: now - 120 + index, text: "x".repeat(12_000) }));
+  const retained = limitarHistoricoSite(messages, now);
+  assert.ok(Buffer.byteLength(JSON.stringify(retained), "utf8") <= 700_000);
+  assert.equal(retained.at(-1).id, "119");
+  assert.ok(retained.length < messages.length);
+});
 
 test("unifica o atendimento do site e entrega a resposta manual ao visitante", async () => {
   const sessionId = `site_test_${Date.now()}_abcdef`;

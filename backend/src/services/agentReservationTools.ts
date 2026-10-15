@@ -1509,6 +1509,10 @@ const agentLeadId = (isTest: boolean, sessionId: string, phone: string) => creat
   .update(`agente-lead:v3\0${agentLeadIdentity(isTest, sessionId, phone)}`)
   .digest("hex");
 
+export const siteAnonymousLeadId = (sessionId: string) => createHash("sha256")
+  .update(`agente-lead:site-anonimo:v1\0${sessionId}`)
+  .digest("hex");
+
 const agentLeadDraftId = (isTest: boolean, sessionId: string, phone: string) => createHash("sha256")
   .update(`agente-lead-draft:v1\0${agentLeadIdentity(isTest, sessionId, phone)}`)
   .digest("hex");
@@ -1631,16 +1635,48 @@ const consolidateAgentLead = async (
 export const registrarLeadAgente = async (input: AgentLeadInput) => {
   const requestedSessionId = clean(input.sessionId, 100);
   const rawPhone = normalizePhone(input.telefone);
-  if (!requestedSessionId || !rawPhone) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
+  const isSiteSession = clean(input.canal, 30) === "site" && /^site_[A-Za-z0-9_-]{12,98}$/.test(requestedSessionId);
+  if (!requestedSessionId || (!rawPhone && !isSiteSession)) throw new Error("AGENT_LEAD_IDENTITY_REQUIRED");
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const isTest = input.teste === true;
+  if (isSiteSession && !rawPhone && !isTest) {
+    const id = siteAnonymousLeadId(requestedSessionId);
+    const ref = db.collection(AGENT_LEADS_COLLECTION).doc(id);
+    const snapshot = await ref.get();
+    const current = snapshot.data() ?? {};
+    const incoming = buildAgentLeadPatch(input, requestedSessionId, "", false);
+    const transition = resolverTransicaoLeadAgente(current, incoming);
+    const terminal = leadAgenteEstaFinalizado(transition.patch.etapa, transition.patch.resultado);
+    await ref.set({
+      ...transition.patch,
+      canal: "site",
+      origem: "agente_site",
+      primeiroCanal: current.primeiroCanal ?? "site",
+      canaisAtendimento: ["site"],
+      sessionId: requestedSessionId,
+      telefone: "",
+      cicloAtendimento: transition.patch.cicloAtendimento ?? Math.max(1, nonNegativeInteger(current.cicloAtendimento, 10_000) || 1),
+      estadoRegistro: terminal ? "finalizado" : "em_atendimento",
+      finalizado: terminal,
+      finalizadoEm: terminal ? FieldValue.serverTimestamp() : null,
+      ultimaInteracaoEm: new Date(),
+      atualizadoEm: FieldValue.serverTimestamp(),
+      ...(snapshot.exists ? {} : { criadoEm: FieldValue.serverTimestamp() }),
+    }, { merge: true });
+    return { id, registrado: true, rascunho: false, estadoRegistro: terminal ? "finalizado" : "em_atendimento", cicloAtendimento: transition.patch.cicloAtendimento ?? 1 };
+  }
   const phone = isTest ? rawPhone : canonicalLeadPhone(rawPhone);
   const sessionId = isTest ? requestedSessionId : `whatsapp_${phone}`;
   const draftId = agentLeadDraftId(isTest, sessionId, phone);
   const draftRef = db.collection(AGENT_LEAD_DRAFTS_COLLECTION).doc(draftId);
   const leadRef = db.collection(AGENT_LEADS_COLLECTION).doc(agentLeadId(isTest, sessionId, phone));
-  const [existing, existingLead] = await Promise.all([draftRef.get(), leadRef.get()]);
+  const anonymousRef = isSiteSession && !isTest
+    ? db.collection(AGENT_LEADS_COLLECTION).doc(siteAnonymousLeadId(requestedSessionId))
+    : null;
+  const [existing, existingLead, anonymousLead] = await Promise.all([
+    draftRef.get(), leadRef.get(), anonymousRef?.get() ?? Promise.resolve(null),
+  ]);
 
   const aliases = isTest ? [] : leadPhoneVariants(rawPhone).filter((candidate) => candidate !== phone);
   const aliasEntries = await Promise.all(aliases.map(async (aliasPhone) => {
@@ -1655,6 +1691,7 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
 
   const currentData: FirebaseFirestore.DocumentData = {};
   const sources = [
+    ...(anonymousLead?.exists ? [anonymousLead.data()!] : []),
     ...aliasEntries.flatMap((entry) => [
       ...(entry.aliasLead.exists ? [entry.aliasLead.data()!] : []),
       ...(entry.aliasDraft.exists ? [entry.aliasDraft.data()!] : []),
@@ -1667,10 +1704,15 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
 
   const incomingPatch = buildAgentLeadPatch(input, sessionId, phone, isTest);
   const transition = resolverTransicaoLeadAgente(currentData, incomingPatch);
+  const previousChannels = sources.flatMap((source) => Array.isArray(source.canaisAtendimento)
+    ? source.canaisAtendimento
+    : [source.canal]);
   const patch: FirebaseFirestore.DocumentData = {
     ...transition.patch,
     telefone: phone,
     sessionId,
+    primeiroCanal: currentData.primeiroCanal || currentData.canal || incomingPatch.canal,
+    canaisAtendimento: Array.from(new Set([...previousChannels, incomingPatch.canal].filter((channel) => channel === "site" || channel === "whatsapp"))),
     cicloAtendimento: transition.patch.cicloAtendimento
       ?? Math.max(1, nonNegativeInteger(currentData.cicloAtendimento, 10_000) || 1),
     inatividadeGerenciada: !isTest,
@@ -1710,6 +1752,7 @@ export const registrarLeadAgente = async (input: AgentLeadInput) => {
     ...(entry.aliasDraft.exists ? [entry.aliasDraftRef] : []),
     ...(entry.aliasLead.exists ? [entry.aliasLeadRef] : []),
   ]);
+  if (anonymousRef && anonymousLead?.exists) duplicateRefs.push(anonymousRef);
   if (duplicateRefs.length) {
     const batch = db.batch();
     duplicateRefs.forEach((ref) => batch.delete(ref));
