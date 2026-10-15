@@ -41,6 +41,7 @@
 .agent-topbar p { margin: 3px 0 0; color: #63798d; font-size: .7rem; }
 .agent-topbar__actions { display: flex; align-items: center; gap: 9px; }
 .agent-topbar__actions > button { width: 39px; height: 39px; display: grid; place-items: center; border: 1px solid #d3e2e8; border-radius: 11px; background: rgba(255,255,255,.85); color: #4c687c; }
+.agent-topbar__actions > button.agent-sound-toggle.is-on { border-color: #bce4d3; background: #edfaf3; color: #137c53; }
 .agent-live-status { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #ead8d9; border-radius: 999px; padding: 8px 12px; background: #fff6f6; color: #a64a52; font-size: .65rem; font-weight: 750; white-space: nowrap; }
 .agent-live-status i, .agent-connection-state i { width: 8px; height: 8px; border-radius: 50%; background: #e34b59; box-shadow: 0 0 0 4px rgba(227,75,89,.1); }
 .agent-live-status.is-online { border-color: #cde9dc; background: #f0fbf6; color: #178054; }
@@ -50,6 +51,14 @@
 .agent-alert.is-success { border: 1px solid #caeadb; background: #effaf5; color: #177e54; }
 .agent-alert.is-error { border: 1px solid #f0ccd0; background: #fff2f3; color: #b33340; }
 .agent-alert button { margin-left: auto; border: 0; background: transparent; color: inherit; }
+.agent-handoff-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; border: 1px solid #f3cb8d; border-radius: 13px; padding: 10px 13px; background: #fff8eb; color: #95550e; }
+.agent-handoff-banner > svg { flex: 0 0 auto; font-size: 1rem; }
+.agent-handoff-banner > span { flex: 1; min-width: 0; }
+.agent-handoff-banner strong, .agent-handoff-banner small { display: block; }
+.agent-handoff-banner strong { font-size: .72rem; }
+.agent-handoff-banner small { margin-top: 2px; font-size: .6rem; }
+.agent-handoff-banner button { flex: 0 0 auto; border: 1px solid #e4b66c; border-radius: 9px; padding: 8px 10px; background: #fff; color: #8b5114; font-size: .63rem; font-weight: 800; }
+.agent-handoff-banner__sound { display: inline-flex; align-items: center; gap: 5px; }
 .agent-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 13px; margin-bottom: 15px; }
 .agent-metrics article { min-height: 105px; display: flex; align-items: center; gap: 14px; border: 1px solid #dce7ec; border-radius: 15px; padding: 17px; background: white; box-shadow: 0 8px 20px rgba(22, 65, 84, .05); }
 .agent-metrics article > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; font-size: 1.05rem; }
@@ -111,6 +120,10 @@
 .agent-contact-scroll { max-height: calc(100vh - 270px); overflow-y: auto; }
 .agent-contact-scroll > button { position: relative; width: 100%; min-height: 84px; display: flex; align-items: flex-start; gap: 10px; border: 0; border-bottom: 1px solid #e8eff2; border-left: 3px solid transparent; padding: 12px 10px; background: transparent; color: #2a4355; text-align: left; }
 .agent-contact-scroll > button:hover, .agent-contact-scroll > button.is-active { border-left-color: var(--agent-blue); background: white; }
+.agent-contact-scroll > button.is-handoff-pending { border-left-color: #e99721; background: #fff7e9; animation: agent-handoff-pulse 1.8s ease-in-out infinite; }
+.agent-contact-scroll > button.is-handoff-pending:hover, .agent-contact-scroll > button.is-handoff-pending.is-active { background: #fff1d8; }
+@keyframes agent-handoff-pulse { 0%, 100% { box-shadow: inset 0 0 0 0 rgba(231, 148, 27, .18); } 50% { box-shadow: inset 0 0 0 3px rgba(231, 148, 27, .7), 0 0 13px rgba(231, 148, 27, .25); } }
+@media (prefers-reduced-motion: reduce) { .agent-contact-scroll > button.is-handoff-pending { animation: none; box-shadow: inset 0 0 0 2px #e99721; } }
 .agent-avatar { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; background: linear-gradient(135deg,#0da0d7,#197db8); color: white; font-size: .78rem; font-weight: 800; }
 .agent-contact-copy { min-width: 0; flex: 1; }
 .agent-contact-copy strong, .agent-contact-copy small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -122,6 +135,7 @@
 .agent-contact-copy .channel-whatsapp { background: #e8f8ef; color: #157b4e; }
 .agent-contact-copy .mode-bot { background: #e4f6ec; color: #138153; }
 .agent-contact-copy .mode-human { background: #fff0dc; color: #b66c0d; }
+.agent-contact-copy .mode-pending { background: #a65b04; color: #fff; }
 .agent-contact-copy .mode-blocked { background: #ffe6e8; color: #bd3341; }
 .agent-contact-scroll time { color: #98a6b0; font-size: .52rem; }
 .agent-contact-scroll > button > b { position: absolute; top: 37px; right: 10px; min-width: 18px; border-radius: 999px; padding: 3px 5px; background: var(--agent-blue); color: white; font-size: .51rem; text-align: center; }
@@ -142,6 +156,8 @@
 .agent-thread-actions .is-block { border-color: #efcdd0; color: #c53847; }
 .agent-thread-actions .is-close { width: 34px; padding: 0; justify-content: center; color: #8c9ba5; }
 .agent-thread-back { display: none; }
+.agent-pending-banner { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #f0d6a8; padding: 10px 15px; background: #fff8eb; color: #925a11; font-size: .62rem; }
+.agent-pending-banner svg { flex: 0 0 auto; }
 .agent-blocked-banner { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #f0ced1; padding: 10px 15px; background: #fff3f4; color: #c23846; }
 .agent-blocked-banner span, .agent-blocked-banner strong { display: block; }
 .agent-blocked-banner strong { font-size: .65rem; }
@@ -403,9 +419,13 @@
   .agent-shell { margin-left: 0; }
   .agent-topbar { min-height: 94px; padding: 14px 14px 14px 66px; }
   .agent-topbar p { display: none; }
+  .agent-topbar__actions { gap: 5px; }
+  .agent-topbar__actions > button { width: 34px; height: 34px; }
   .agent-topbar__actions .agent-live-status { width: 12px; height: 12px; overflow: hidden; border: 0; padding: 0; background: transparent; font-size: 0; }
   .agent-topbar__actions > button:last-child { display: none; }
   .agent-main { padding: 15px 12px 28px; }
+  .agent-handoff-banner { flex-wrap: wrap; }
+  .agent-handoff-banner > span { flex-basis: calc(100% - 32px); }
   .agent-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
   .agent-metrics article { min-height: 88px; padding: 12px; }
   .agent-overview-grid, .agent-two-columns, .agent-prompt-grid, .agent-reservation-tests { grid-template-columns: 1fr; }

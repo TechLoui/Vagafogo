@@ -57,10 +57,6 @@ import {
   limparFilasWhatsappVencidas,
 } from "../services/whatsappDispatchQueueCleanup";
 import { garantirConfiguracaoAutomacoesWhatsapp } from "../services/whatsappAutomationConfig";
-import {
-  enfileirarAlertaAtendimentoHumano,
-  iniciarProcessadorAlertasAtendimentoHumano,
-} from "../services/whatsappHumanHandoffAlerts";
 import { exigirAdminCrm, obterIdentidadeAdminCrm } from "../middleware/crmAdminAuth";
 import { limitarEventosJornada } from "../middleware/crmJourneyRateLimit";
 import { registrarEventoJornada } from "../services/crmJourneys";
@@ -370,19 +366,6 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       reason: String(body.handoff.motivo ?? "excecao_operacional"),
       updatedBy: "jatoba",
     });
-    const sourceMessageId = createHash("sha256")
-      .update(`site-chat\0${sessionId}\0${mensagem}`)
-      .digest("hex");
-    if (telefone) {
-      void enfileirarAlertaAtendimentoHumano({
-        telefone,
-        nome,
-        motivo: body.handoff.motivo ?? "excecao_operacional",
-        resumo: body.handoff.resumo ?? mensagem,
-        ultimaMensagem: mensagem,
-        sourceMessageId,
-      }).catch((error) => console.error("[site-chat] Falha ao alertar equipe:", error));
-    }
   }
 
   res.json({
@@ -1021,12 +1004,8 @@ app.post('/internal/agente/eventos/atendimento-resolvido', exigirServicoAgente, 
 });
 
 app.post('/internal/agente/eventos/atendimento-humano', exigirServicoAgente, async (req, res) => {
-  try {
-    res.status(202).json(await enfileirarAlertaAtendimentoHumano(req.body ?? {}));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
-  }
+  // Compatibilidade com versoes antigas do bot; o painel le o estado da conversa.
+  res.status(202).json({ recebido: true, notificacao: "painel" });
 });
 
 app.post('/internal/agente/eventos/retorno-bot', exigirServicoAgente, async (req, res) => {
@@ -1640,7 +1619,6 @@ app.listen(port, async () => {
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorConfirmacoesReservaWhatsapp();
   iniciarProcessadorLembretesWhatsappDoDia();
-  iniciarProcessadorAlertasAtendimentoHumano();
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();
   iniciarProcessadorConfirmacoesReservaAgente();

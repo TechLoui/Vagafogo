@@ -6,6 +6,7 @@ import {
   FaArrowLeft,
   FaBan,
   FaBars,
+  FaBell,
   FaChartLine,
   FaCheckCircle,
   FaCog,
@@ -28,6 +29,8 @@ import {
   FaTrash,
   FaUnlink,
   FaUser,
+  FaVolumeMute,
+  FaVolumeUp,
   FaWhatsapp,
 } from "react-icons/fa";
 import type { IconType } from "react-icons";
@@ -63,6 +66,8 @@ type Contact = {
   unread?: number;
   blockReason?: string | null;
   controlUpdatedAt?: number | null;
+  handoffPending?: boolean;
+  handoffRequestedAt?: number | null;
   channel?: "whatsapp" | "site";
   sessionId?: string;
 };
@@ -213,6 +218,8 @@ async function api(path: string, options: RequestInit = {}) {
 }
 
 const contactMode = (contact?: Contact | null): ContactMode => contact?.mode || contact?.status || "bot";
+const isPendingHandoff = (contact?: Contact | null) => Boolean(contact?.handoffPending && contactMode(contact) === "human");
+const handoffKey = (contact: Contact) => `${contact.jid}:${contact.handoffRequestedAt || contact.controlUpdatedAt || 0}`;
 const contactChannel = (contact?: Contact | null): "whatsapp" | "site" => contact?.channel === "site" || contact?.jid?.startsWith("site:") ? "site" : "whatsapp";
 const contactPhone = (contact?: Contact | null) => contact?.phone || contact?.jid?.split("@")[0]?.split(":")[0] || "";
 const contactName = (contact?: Contact | null) => contact?.name || contactPhone(contact) || "Contato";
@@ -302,9 +309,68 @@ export function Agente() {
   const selectedJidRef = useRef<string | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundReady, setSoundReady] = useState(false);
+  const soundEnabledRef = useRef(true);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const heardHandoffsRef = useRef(new Set<string>());
 
   const selected = useMemo(() => contacts.find((item) => item.jid === selectedJid) ?? null, [contacts, selectedJid]);
   const operational = Boolean(status.ready && status.contactControls?.ready !== false);
+  const pendingHandoffs = useMemo(() => contacts.filter(isPendingHandoff), [contacts]);
+
+  const playHandoffSound = useCallback(async (allowUnlock = false) => {
+    try {
+      const context = audioContextRef.current ?? new window.AudioContext();
+      audioContextRef.current = context;
+      if (context.state !== "running" && allowUnlock) await context.resume();
+      if (context.state !== "running") return;
+      setSoundReady(true);
+      const now = context.currentTime;
+      [0, 0.18].forEach((delay, index) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = index === 0 ? 660 : 880;
+        gain.gain.setValueAtTime(0.0001, now + delay);
+        gain.gain.exponentialRampToValueAtTime(0.11, now + delay + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.22);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(now + delay);
+        oscillator.stop(now + delay + 0.23);
+      });
+    } catch {
+      setSoundReady(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const unlockSound = () => {
+      if (!soundEnabledRef.current || !window.AudioContext) return;
+      try {
+        const context = audioContextRef.current ?? new window.AudioContext();
+        audioContextRef.current = context;
+        if (context.state !== "running") void context.resume().then(() => setSoundReady(true)).catch(() => setSoundReady(false));
+        else setSoundReady(true);
+      } catch { setSoundReady(false); }
+    };
+    window.addEventListener("pointerdown", unlockSound);
+    window.addEventListener("keydown", unlockSound);
+    return () => {
+      window.removeEventListener("pointerdown", unlockSound);
+      window.removeEventListener("keydown", unlockSound);
+      const context = audioContextRef.current;
+      audioContextRef.current = null;
+      void context?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingHandoffs.length) return;
+    const originalTitle = document.title;
+    document.title = `(${pendingHandoffs.length}) Atendimento humano · ${originalTitle}`;
+    return () => { document.title = originalTitle; };
+  }, [pendingHandoffs.length]);
 
   useEffect(() => {
     selectedJidRef.current = selectedJid;
@@ -326,13 +392,17 @@ export function Agente() {
     if (!quiet) setContactsLoading(true);
     try {
       const data = await api("/crm/agente/contatos") as { contacts?: Contact[] };
-      setContacts(Array.isArray(data.contacts) ? data.contacts : []);
+      const nextContacts = Array.isArray(data.contacts) ? data.contacts : [];
+      const newHandoffs = nextContacts.filter(isPendingHandoff).filter((contact) => !heardHandoffsRef.current.has(handoffKey(contact)));
+      newHandoffs.forEach((contact) => heardHandoffsRef.current.add(handoffKey(contact)));
+      setContacts(nextContacts);
+      if (newHandoffs.length && soundEnabledRef.current) void playHandoffSound();
     } catch (caught) {
       if (!quiet) setError(caught instanceof Error ? caught.message : "Não foi possível carregar os contatos.");
     } finally {
       setContactsLoading(false);
     }
-  }, []);
+  }, [playHandoffSound]);
 
   useEffect(() => {
     void loadStatus();
@@ -453,6 +523,18 @@ export function Agente() {
           <div><span>PAINEL OPERACIONAL</span><strong>{titles[tab].title}</strong><p>{titles[tab].subtitle}</p></div>
           <div className="agent-topbar__actions">
             <span className={`agent-live-status ${operational ? "is-online" : ""}`}><i />{statusLoading ? "Verificando" : operational ? "WhatsApp conectado" : status.ready ? "Envios protegidos" : "WhatsApp desconectado"}</span>
+            <button className={`agent-sound-toggle ${soundEnabled && soundReady ? "is-on" : ""}`} onClick={() => {
+              if (soundEnabled && soundReady) {
+                soundEnabledRef.current = false;
+                setSoundEnabled(false);
+                return;
+              }
+              soundEnabledRef.current = true;
+              setSoundEnabled(true);
+              void playHandoffSound(true);
+            }} title={soundEnabled && soundReady ? "Silenciar avisos de atendimento humano" : "Ativar som dos avisos de atendimento humano"} aria-label={soundEnabled && soundReady ? "Silenciar avisos" : "Ativar som dos avisos"}>
+              {soundEnabled && soundReady ? <FaVolumeUp /> : <FaVolumeMute />}
+            </button>
             <button onClick={() => { void loadStatus(); void loadContacts(); }} title="Atualizar"><FaSyncAlt /></button>
             <button onClick={() => void signOut(auth)} title="Sair"><FaSignOutAlt /></button>
           </div>
@@ -461,6 +543,7 @@ export function Agente() {
         <main className="agent-main">
           {notice ? <div className="agent-alert is-success"><FaCheckCircle />{notice}</div> : null}
           {error ? <div className="agent-alert is-error"><FaBan />{error}<button onClick={() => setError("")}><FaTimes /></button></div> : null}
+          {pendingHandoffs.length ? <div className="agent-handoff-banner" role="status"><FaBell /><span><strong>{pendingHandoffs.length} atendimento{pendingHandoffs.length === 1 ? "" : "s"} aguardando a equipe</strong><small>As conversas destacadas precisam ser assumidas no painel.</small></span><button onClick={() => selectTab("sessions")}>Ver conversas</button>{!soundReady || !soundEnabled ? <button className="agent-handoff-banner__sound" onClick={() => { soundEnabledRef.current = true; setSoundEnabled(true); void playHandoffSound(true); }}><FaVolumeUp /> Ativar som</button> : null}</div> : null}
 
           {tab === "overview" ? (
             <Overview status={status} contacts={contacts} counts={modeCounts} onOpen={selectTab} />
@@ -973,7 +1056,7 @@ function Sessions(props: SessionsProps) {
   const filtered = props.contacts.filter((item) => {
     const haystack = `${contactName(item)} ${contactPhone(item)} ${item.lastMessage || ""}`.toLowerCase();
     return (channel === "all" || contactChannel(item) === channel) && haystack.includes(search.trim().toLowerCase());
-  });
+  }).sort((a, b) => Number(isPendingHandoff(b)) - Number(isPendingHandoff(a)) || Number(b.lastMessageAt ?? 0) - Number(a.lastMessageAt ?? 0));
 
   const submitBlock = (event: FormEvent) => {
     event.preventDefault();
@@ -1007,26 +1090,27 @@ function Sessions(props: SessionsProps) {
       <div className="agent-contact-scroll">
         {props.loading ? <p className="agent-empty">Carregando contatos…</p> : filtered.length === 0 ? <p className="agent-empty">Nenhum contato ativo ou bloqueado.</p> : filtered.map((item) => {
           const mode = contactMode(item);
-          return <button key={item.jid} className={props.selected?.jid === item.jid ? "is-active" : ""} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || formatPhone(contactPhone(item))}</small><span className="agent-contact-chips"><em className={`channel-${contactChannel(item)}`}>{contactChannel(item) === "site" ? "Site" : "WhatsApp"}</em><em className={`mode-${mode}`}>{mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
+          return <button key={item.jid} className={[props.selected?.jid === item.jid ? "is-active" : "", isPendingHandoff(item) ? "is-handoff-pending" : ""].filter(Boolean).join(" ")} onClick={() => props.onSelect(item.jid)}><span className="agent-avatar">{contactName(item).charAt(0).toUpperCase()}</span><span className="agent-contact-copy"><strong>{contactName(item)}</strong><small>{item.lastMessage || item.blockReason || formatPhone(contactPhone(item))}</small><span className="agent-contact-chips"><em className={`channel-${contactChannel(item)}`}>{contactChannel(item) === "site" ? "Site" : "WhatsApp"}</em><em className={isPendingHandoff(item) ? "mode-pending" : `mode-${mode}`}>{isPendingHandoff(item) ? "Aguardando equipe" : mode === "bot" ? "Bot" : mode === "human" ? "Humano" : "Bloqueado"}</em></span></span><time>{timeLabel(item.lastMessageAt)}</time>{item.unread ? <b>{item.unread}</b> : null}</button>;
         })}
       </div>
     </aside>
     <div className={`agent-thread ${props.selected ? "has-selection" : ""}`}>
       {!props.selected ? <div className="agent-thread-empty"><FaComments /><strong>Selecione um atendimento</strong><span>As mensagens aparecem somente enquanto a sessão estiver ativa.</span></div> : <>
         <header><button className="agent-thread-back" onClick={props.onClearSelection}><FaArrowLeft /></button><span className="agent-avatar">{contactName(props.selected).charAt(0).toUpperCase()}</span><div><strong>{contactName(props.selected)}</strong><small>{contactChannel(props.selected) === "site" ? "Chat do site" : "WhatsApp"} · {formatPhone(contactPhone(props.selected))}</small></div><div className="agent-thread-actions">
-          {contactChannel(props.selected) === "whatsapp" && props.selected.lastFrom === "client" && contactMode(props.selected) !== "blocked" ? <button className="is-bot" title="Reunir as duas últimas mensagens sem resposta e pedir uma única resposta ao bot" onClick={() => props.onReprocess(props.selected!)}><FaSyncAlt /> Responder últimas</button> : null}
+          {contactChannel(props.selected) === "whatsapp" && props.selected.lastFrom === "client" && contactMode(props.selected) === "bot" ? <button className="is-bot" title="Reunir as duas últimas mensagens sem resposta e pedir uma única resposta ao bot" onClick={() => props.onReprocess(props.selected!)}><FaSyncAlt /> Responder últimas</button> : null}
           {contactMode(props.selected) === "blocked" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Desbloquear e devolver ao bot</button> : <>
-            {contactMode(props.selected) === "human" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Devolver ao bot</button> : <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button>}
+            {isPendingHandoff(props.selected) ? <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button> : contactMode(props.selected) === "human" ? <button className="is-bot" onClick={() => props.onMode(props.selected!, "bot")}><FaRobot /> Devolver ao bot</button> : <button className="is-human" onClick={() => props.onMode(props.selected!, "human")}><FaUser /> Assumir</button>}
             <button className="is-block" onClick={() => props.onMode(props.selected!, "blocked", "Bloqueado pelo painel do agente")}><FaBan /> Bloquear</button>
           </>}
           <button className="is-close" title="Encerrar sessão e finalizar lead" onClick={() => props.onCloseSession(props.selected!)}><FaTrash /></button>
         </div></header>
+        {isPendingHandoff(props.selected) ? <div className="agent-pending-banner"><FaBell /><span>Cliente aguardando atendimento humano. Clique em <strong>Assumir</strong> para responder.</span></div> : null}
         {contactMode(props.selected) === "blocked" ? <div className="agent-blocked-banner"><FaBan /><span><strong>Contato bloqueado</strong>O bot e os envios manuais não mandarão mensagens para este número.</span></div> : null}
         <div className="agent-thread-scroll" ref={threadRef} onScroll={(event) => {
           const element = event.currentTarget;
           stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 72;
         }}>{props.messages.length === 0 ? <p className="agent-empty">Sem mensagens na memória desta instância.</p> : props.messages.map((message) => <div key={message.id} className={`agent-bubble-row from-${message.from}`}><div><small>{message.from === "client" ? contactName(props.selected) : message.from === "agent" ? "Atendente" : "Bot"}</small><p>{message.text}</p>{["gallery", "image"].includes(message.mediaType || "") && <small><FaImage /> Foto enviada no chat</small>}{message.mediaType === "pix" && <small>QR Code PIX enviado no chat</small>}<time>{timeLabel(message.ts)}</time></div></div>)}</div>
-        <footer>{contactMode(props.selected) !== "human" ? <p>{contactMode(props.selected) === "blocked" ? "Desbloqueie o contato antes de enviar." : "Assuma o atendimento para responder manualmente."}</p> : <><input value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => {
+        <footer>{contactMode(props.selected) !== "human" || isPendingHandoff(props.selected) ? <p>{contactMode(props.selected) === "blocked" ? "Desbloqueie o contato antes de enviar." : "Assuma o atendimento para responder manualmente."}</p> : <><input value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => {
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();
           if (!event.repeat) void send();

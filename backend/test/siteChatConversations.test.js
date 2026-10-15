@@ -77,3 +77,36 @@ test("permite iniciar anonimamente e associar o WhatsApp quando a Jatobá o soli
   assert.equal(conversation.messages.length, 2);
   await removerConversaSite(sessionId);
 });
+
+test("encaminhamento do site permanece pendente até um atendente assumir", async () => {
+  const sessionId = `site_test_${Date.now()}_handoff`;
+  await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: "Preciso falar com uma pessoa da equipe",
+    sourceId: "client:handoff",
+  });
+
+  const pending = await alterarModoConversaSite(sessionId, {
+    mode: "human",
+    reason: "solicitacao_cliente",
+    updatedBy: "jatoba",
+  });
+  assert.equal(pending.handoffPending, true);
+  assert.ok(pending.handoffRequestedAt > 0);
+  assert.equal((await listarConversasSite()).find((contact) => contact.sessionId === sessionId).handoffPending, true);
+
+  await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: "Ainda estou aguardando",
+    sourceId: "client:waiting",
+  });
+  assert.equal((await obterConversaSite(sessionId)).handoffPending, true);
+
+  const assumed = await alterarModoConversaSite(sessionId, {
+    mode: "human",
+    updatedBy: "atendente@vagafogo.com.br",
+  });
+  assert.equal(assumed.handoffPending, false);
+  assert.equal(assumed.handoffRequestedAt, null);
+  await removerConversaSite(sessionId);
+});

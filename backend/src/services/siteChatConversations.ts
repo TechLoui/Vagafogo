@@ -34,6 +34,8 @@ type SiteConversation = {
   blockReason: string | null;
   controlUpdatedAt: number | null;
   updatedBy: string | null;
+  handoffPending: boolean;
+  handoffRequestedAt: number | null;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
@@ -102,6 +104,10 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     blockReason: value.blockReason ? String(value.blockReason).slice(0, 250) : null,
     controlUpdatedAt: value.controlUpdatedAt ? normalizeTimestamp(value.controlUpdatedAt) : null,
     updatedBy: value.updatedBy ? String(value.updatedBy).slice(0, 200) : null,
+    handoffPending: mode === "human" && String(value.updatedBy ?? "") === "jatoba",
+    handoffRequestedAt: mode === "human" && String(value.updatedBy ?? "") === "jatoba"
+      ? normalizeTimestamp(value.controlUpdatedAt, now)
+      : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, last?.ts ?? now),
     expiresAt: normalizeTimestamp(value.expiresAt, now + TTL_MS),
@@ -285,6 +291,8 @@ export const alterarModoConversaSite = async (sessionId: string, input: {
   conversation.blockReason = input.mode === "blocked" ? String(input.reason ?? "").trim().slice(0, 250) || null : null;
   conversation.updatedBy = String(input.updatedBy ?? "").trim().slice(0, 200) || null;
   conversation.controlUpdatedAt = now;
+  conversation.handoffPending = input.mode === "human" && conversation.updatedBy === "jatoba";
+  conversation.handoffRequestedAt = conversation.handoffPending ? now : null;
   conversation.updatedAt = now;
   conversation.expiresAt = now + TTL_MS;
   conversations.set(sessionId, conversation);
