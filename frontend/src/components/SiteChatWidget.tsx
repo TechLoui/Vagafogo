@@ -333,6 +333,7 @@ function SecureCheckoutModal({ url, viewport, onClose }: { url: string; viewport
 
 export function SiteChatWidget() {
   const location = useLocation();
+  const isBookingPage = /^\/reservar\/?$/i.test(location.pathname);
   const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
   const [redirectedPhone] = useState(() => {
@@ -786,7 +787,7 @@ export function SiteChatWidget() {
           </section>
         )}
 
-        {!open && (
+        {!open && !isBookingPage && (
           <button type="button" onClick={() => setOpen(true)} aria-label="Abrir atendimento com a Jatobá" className="group flex items-center gap-3">
             <span className="rounded-full bg-[#263d31] px-4 py-2 text-sm font-semibold text-white shadow-lg">Fale Conosco</span>
             <span className="grid h-16 w-16 place-items-center overflow-hidden rounded-full border-2 border-white bg-[#f4eddd] shadow-xl shadow-[#214f3e]/30 transition-transform group-hover:scale-105">

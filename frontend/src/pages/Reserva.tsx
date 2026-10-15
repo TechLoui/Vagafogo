@@ -6,6 +6,7 @@ import { carregarCheckoutAgente, type AgentCheckoutHandoff } from "../features/a
 
 export function Reserva() {
   const [searchParams] = useSearchParams();
+  const isCheckoutModal = searchParams.get("checkout_modal") === "1";
   const experienceParam = searchParams.get("experiencia");
   const initialExperience =
     experienceParam === "brunch" || experienceParam === "trilha"
@@ -76,15 +77,32 @@ export function Reserva() {
               loading="eager"
             />
             <div className="min-w-0 text-left">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8B4F23]/65">Reserva online</p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#8B4F23]/65 min-[360px]:text-[10px] min-[360px]:tracking-[0.2em]">Reserva online</p>
               <h1 className="truncate font-display text-sm font-bold leading-tight text-[#2D1E0F] sm:text-xl">
-                <span className="sm:hidden">Experiência Vagafogo</span>
+                <span className="min-[360px]:hidden">Vagafogo</span>
+                <span className="hidden min-[360px]:inline sm:hidden">Experiência Vagafogo</span>
                 <span className="hidden sm:inline">Sua experiência na Vagafogo</span>
               </h1>
             </div>
           </div>
 
-          <div className="h-10 w-10 shrink-0 sm:w-[88px]" aria-hidden="true" />
+          {isCheckoutModal ? (
+            <div className="h-10 w-[78px] shrink-0 sm:w-[110px]" aria-hidden="true" />
+          ) : (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("vagafogo:open-chat"))}
+              aria-label="Abrir Fale Conosco com a Jatobá"
+              className="inline-flex h-10 w-[78px] shrink-0 items-center justify-center gap-1 rounded-full bg-[#214f3e] px-1.5 text-[10px] font-semibold leading-[1.05] text-white shadow-sm transition hover:bg-[#17634b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#214f3e] sm:w-[110px] sm:gap-1.5 sm:px-2 sm:text-xs"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5 8 8 0 0 1-3-.6L4 20l1.6-5.1A7.5 7.5 0 1 1 20 11.5Z" />
+                <path d="M8.5 11.5h8" />
+              </svg>
+              <span className="sm:hidden">Fale<br />Conosco</span>
+              <span className="hidden sm:inline">Fale Conosco</span>
+            </button>
+          )}
         </div>
       </header>
 
