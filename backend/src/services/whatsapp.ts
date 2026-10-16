@@ -3,6 +3,7 @@ import { db } from "./firebase";
 import { obterStorageBucketAdmin } from "./firebaseAdmin";
 import { requestAgentService } from "./agentGateway";
 import { classificarDataDisparo, normalizarDataDisparo } from "./whatsappDispatchDate";
+import { variarMensagemAutomatica } from "./whatsappMessageVariation";
 
 type WhatsappStatus =
   | "idle"
@@ -38,6 +39,7 @@ export type WhatsappConfig = {
 export type ResultadoEnvio = {
   enviado: boolean;
   motivo?: string;
+  retryAfterMs?: number;
   mensagem?: string;
   telefone?: string;
   messageId?: string;
@@ -145,6 +147,7 @@ const resultadoGateway = (
     return {
       enviado: false,
       motivo: String(body.error ?? `AGENT_GATEWAY_HTTP_${response.status}`),
+      retryAfterMs: body.error === "DISPATCH_PACED" ? Number(body.retryAfterMs ?? 60_000) : undefined,
       telefone,
     };
   }
@@ -280,7 +283,7 @@ export async function prepararBoasVindasWhatsapp(
   if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
   const template = String(config.mensagemBoasVindas || TEMPLATE_BOAS_VINDAS_PADRAO).trim();
   if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
-  return { enviado: true, telefone, mensagem: montarMensagem(template, { ...reserva, id: reservaId }) };
+  return { enviado: true, telefone, mensagem: variarMensagemAutomatica(montarMensagem(template, { ...reserva, id: reservaId }), "agradecimento", reservaId) };
 }
 
 export async function enviarBoasVindasWhatsapp(
@@ -316,9 +319,9 @@ export async function prepararConfirmacaoWhatsapp(
   if (!telefone) return { enviado: false, motivo: "telefone_invalido" };
   const template = String(config.mensagemConfirmacaoAutomatica || TEMPLATE_CONFIRMACAO_PADRAO).trim();
   if (!template) return { enviado: false, motivo: "mensagem_vazia", telefone };
-  const mensagem = incluirLocalizacaoConfirmacao(
+  const mensagem = variarMensagemAutomatica(incluirLocalizacaoConfirmacao(
     montarMensagem(template, { ...reserva, id: reservaId }),
-  );
+  ), "confirmacao", reservaId);
   return { enviado: true, telefone, mensagem };
 }
 

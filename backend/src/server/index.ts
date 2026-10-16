@@ -51,6 +51,7 @@ import {
   processarConfirmacaoReservaWhatsapp,
 } from "../services/whatsappReservationConfirmations";
 import { iniciarProcessadorLembretesWhatsappDoDia } from "../services/whatsappDailyReminders";
+import { iniciarProcessadorAgradecimentosPendentes } from "../services/whatsappArrivalThanks";
 import { classificarDataDisparo, normalizarDataDisparo } from "../services/whatsappDispatchDate";
 import {
   iniciarLimpezaFilasWhatsappVencidas,
@@ -1490,6 +1491,9 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
     if (reserva.whatsappBoasVindasEnviado === true) {
       return res.json({ enviado: false, motivo: 'ja_enviado' });
     }
+    if (reserva.whatsappBoasVindasPendente === true) {
+      return res.json({ enviado: false, motivo: 'envio_agendado' });
+    }
 
     const prepared = await prepararBoasVindasWhatsapp(reservaId, reserva);
     const resultado = prepared.enviado && prepared.telefone && prepared.mensagem
@@ -1510,6 +1514,12 @@ app.post('/whatsapp/boas-vindas/:reservaId', exigirAdminCrm, async (req, res) =>
         whatsappBoasVindasEnviado: true,
         dataWhatsappBoasVindas: new Date(),
         whatsappBoasVindasMensagem: resultado.mensagem ?? '',
+      });
+    } else if (resultado.motivo === "DISPATCH_PACED") {
+      await updateDoc(reservaRef, {
+        whatsappBoasVindasPendente: true,
+        whatsappBoasVindasStatus: "aguardando",
+        whatsappBoasVindasProximaTentativaEm: new Date(Date.now() + Math.max(1000, resultado.retryAfterMs ?? 60_000)),
       });
     }
 
@@ -1641,6 +1651,7 @@ app.listen(port, async () => {
   iniciarLimpezaFilasWhatsappVencidas();
   iniciarProcessadorAvisosNovaReserva();
   iniciarProcessadorConfirmacoesReservaWhatsapp();
+  iniciarProcessadorAgradecimentosPendentes();
   iniciarProcessadorLembretesWhatsappDoDia();
   iniciarProcessadorCampanhasWhatsapp();
   iniciarFinalizadorLeadsAgente();

@@ -5,6 +5,7 @@ import type { ResultadoEnvio } from "./whatsapp";
 import { TEMPLATE_LEMBRETE_DIA_PADRAO } from "./whatsappAutomationConfig";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
+import { variarMensagemAutomatica } from "./whatsappMessageVariation";
 
 const TIMEZONE = "America/Sao_Paulo";
 const WORKER_INTERVAL_MS = Math.max(Number(process.env.WHATSAPP_DAILY_REMINDER_WORKER_MS ?? 15000), 10000);
@@ -250,7 +251,7 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
     }
     const reservation = reservationData;
     const template = clean(config.mensagemLembreteDia, 4096) || TEMPLATE_LEMBRETE_DIA_PADRAO;
-    const message = renderMessage(template, reservation).slice(0, 4096);
+    const message = variarMensagemAutomatica(renderMessage(template, reservation), "lembrete", `${today}:${reservationSnapshot.id}`).slice(0, 4096);
     const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
       normalizePhone(reservation.telefone ?? reservation.Telefone),
       message,
@@ -284,6 +285,24 @@ const processOne = async (config: FirebaseFirestore.DocumentData) => {
         proximoEnvioEm: nextGlobalAt,
         bloqueadoAte: FieldValue.delete(),
         enviados: FieldValue.increment(1),
+        atualizadoEm: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      await batch.commit();
+      return;
+    }
+
+    if (result.motivo === "DISPATCH_PACED") {
+      const retryAt = Timestamp.fromMillis(Date.now() + Math.max(1000, result.retryAfterMs ?? 60_000));
+      const batch = db.batch();
+      batch.set(document.ref, {
+        status: "aguardando",
+        tentativas: acquired.attempts - 1,
+        proximaTentativaEm: retryAt,
+        atualizadoEm: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      batch.set(controlRef, {
+        bloqueadoAte: FieldValue.delete(),
+        proximoEnvioEm: retryAt,
         atualizadoEm: FieldValue.serverTimestamp(),
       }, { merge: true });
       await batch.commit();

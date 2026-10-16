@@ -177,6 +177,17 @@ export const processarConfirmacaoReservaWhatsapp = async (reservaId: string, for
     return result;
   }
 
+  if (result.motivo === "DISPATCH_PACED") {
+    await ref.set({
+      whatsappConfirmacaoPendente: true,
+      whatsappConfirmacaoStatus: "aguardando",
+      whatsappConfirmacaoTentativas: acquired.attempts - 1,
+      whatsappConfirmacaoProximaTentativaEm: Timestamp.fromMillis(Date.now() + Math.max(1000, result.retryAfterMs ?? 60_000)),
+      whatsappConfirmacaoAtualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return result;
+  }
+
   const disabled = result.motivo === "desativado";
   const finalFailure = disabled || acquired.attempts >= MAX_ATTEMPTS || result.motivo === "telefone_invalido" || result.motivo === "telefone_sem_whatsapp";
   const retryDelay = RETRY_DELAYS_MS[Math.min(acquired.attempts - 1, RETRY_DELAYS_MS.length - 1)];

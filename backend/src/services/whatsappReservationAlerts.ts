@@ -3,6 +3,7 @@ import { obterFirestoreAdmin } from "./firebaseAdmin";
 import type { ResultadoEnvio } from "./whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
+import { variarMensagemAutomatica } from "./whatsappMessageVariation";
 
 const DESTINATION_DEFAULT = "5562991150376";
 const TIMEZONE = "America/Sao_Paulo";
@@ -196,7 +197,7 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
   const reservations = await db.collection("reservas").where("data", "==", today).limit(500).get();
   const eligible = reservations.docs.filter((document) => confirmedReservationForSummary(document.data(), today));
   const reservationIds = eligible.map((document) => document.id);
-  const message = montarResumoDiarioReservas(today, eligible);
+  const message = variarMensagemAutomatica(montarResumoDiarioReservas(today, eligible), "resumo", today);
   const attempts = Number(current.data()?.tentativas ?? 0) + 1;
   const acquired = await db.runTransaction(async (transaction) => {
     const fresh = await transaction.get(summaryRef);
@@ -248,6 +249,16 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
       atualizadoEm: FieldValue.serverTimestamp(),
     }, { merge: true });
     return true;
+  }
+
+  if (result.motivo === "DISPATCH_PACED") {
+    await summaryRef.set({
+      status: "aguardando",
+      tentativas: attempts - 1,
+      proximaTentativaEm: Timestamp.fromMillis(Date.now() + Math.max(1000, result.retryAfterMs ?? 60_000)),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return false;
   }
 
   const finalFailure = attempts >= MAX_ATTEMPTS;
@@ -429,7 +440,7 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
     || normalizePhone(acquired.data.destino)
     || DESTINATION_DEFAULT;
   const template = clean(config.mensagemAvisoNovaReservaEquipe, 3000) || DEFAULT_TEMPLATE;
-  const message = renderTemplate(template, acquired.data);
+  const message = variarMensagemAutomatica(renderTemplate(template, acquired.data), "aviso_equipe", `${today}:${acquired.data.reservaId}`);
   const result: ResultadoEnvio = await enviarMensagemTransacionalPeloAgente(
     destination,
     message,
@@ -469,6 +480,24 @@ const processOne = async (document: FirebaseFirestore.QueryDocumentSnapshot) => 
       proximoEnvioEm: nextSendAt,
       bloqueadoAte: FieldValue.delete(),
       enviados: FieldValue.increment(1),
+      atualizadoEm: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    await batch.commit();
+    return;
+  }
+
+  if (result.motivo === "DISPATCH_PACED") {
+    const retryAt = Timestamp.fromMillis(Date.now() + Math.max(1000, result.retryAfterMs ?? 60_000));
+    const batch = db.batch();
+    batch.update(document.ref, {
+      status: "aguardando",
+      tentativas: acquired.attempts - 1,
+      proximaTentativaEm: retryAt,
+      atualizadoEm: FieldValue.serverTimestamp(),
+    });
+    batch.set(controlRef, {
+      bloqueadoAte: FieldValue.delete(),
+      proximoEnvioEm: retryAt,
       atualizadoEm: FieldValue.serverTimestamp(),
     }, { merge: true });
     await batch.commit();

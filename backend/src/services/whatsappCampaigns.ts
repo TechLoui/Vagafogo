@@ -1105,6 +1105,18 @@ const processCampaign = async (campaignRef: FirebaseFirestore.DocumentReference)
     const result = await enviarViaDisparadorCampanhas(String(recipientData.telefone ?? ""), message, media);
     const nextDispatchAt = Timestamp.fromMillis(Date.now() + randomIntervalMs(campaign));
 
+    if (result.motivo === "DISPATCH_PACED") {
+      const retryAt = Timestamp.fromMillis(Date.now() + Math.max(1000, result.retryAfterMs ?? 60_000));
+      await due.ref.update({
+        status: "aguardando",
+        tentativas: attempts - 1,
+        proximaTentativaEm: retryAt,
+        atualizadoEm: FieldValue.serverTimestamp(),
+      });
+      await releaseCampaignLease(campaignRef, owner, { proximoDisparoEm: retryAt });
+      return;
+    }
+
     if (result.enviado) {
       const messageId = result.messageId ?? "";
       const batch = campaignRef.firestore.batch();

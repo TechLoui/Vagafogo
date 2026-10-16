@@ -52,6 +52,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
     return {
       enviado: false,
       motivo: String(body.error ?? `AGENT_GATEWAY_HTTP_${response.status}`),
+      retryAfterMs: body.error === "DISPATCH_PACED" ? Number(body.retryAfterMs ?? 60_000) : undefined,
       telefone,
     };
   }
