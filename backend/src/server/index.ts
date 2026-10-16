@@ -181,7 +181,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-16.2-shared-dispatch-pacing',
+    build: '2026-10-16.3-team-paid-same-day-only',
     timestamp: new Date().toISOString(),
   });
 });

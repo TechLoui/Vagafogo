@@ -110,7 +110,13 @@ const whatsappTemplateLembreteDiaPadrao =
   'Bom dia, {nome}! 🌿\n\nA Fazenda Vagafogo espera você hoje.\n\n⏰ Horário: {horario}\n🎫 Experiência: {atividade}\n👥 Participantes: {participantes}\n\nOrientações importantes:\n{instrucoes}\n\nDesejamos uma ótima experiência!';
 
 const whatsappTemplateAvisoNovaReservaPadrao =
-  '🌿 Reserva para hoje\n\nCódigo: {id}\nCliente: {nome}\nTelefone: {telefone}\nE-mail: {email}\nData: {data}\nHorário: {horario}\nAtividade: {atividade}\nParticipantes: {participantes}\nValor: {valor}\nPagamento: {pagamento}\nStatus: {status}';
+  '🌿 Reserva para hoje\n\nCliente: {nome}\nTelefone: {telefone}\nE-mail: {email}\nData: {data}\nHorário: {horario}\nAtividade: {atividade}\nParticipantes: {participantes}\nValor: {valor}\nPagamento: {pagamento}\nStatus: {status}';
+
+const limparModeloAvisoEquipe = (value: string) => value
+  .split(/\r?\n/)
+  .filter((line) => !/\{id\}|^\s*(?:c[oó]digo|id\s+(?:da\s+)?reserva)\s*:/i.test(line))
+  .join('\n')
+  .trim();
 
 const emailAssuntoConfirmacaoPadrao = 'Confirmação de reserva - Vagafogo';
 
@@ -127,7 +133,6 @@ const whatsappPlaceholders = [
 ];
 
 const whatsappAvisoReservaPlaceholders = [
-  '{id}',
   '{nome}',
   '{telefone}',
   '{email}',
@@ -3468,12 +3473,13 @@ const totalParticipantesDoDia = useMemo(() => {
   }, [dadosExemploWhatsapp, whatsappConfig.mensagemBoasVindas]);
 
   const mensagemPreviewAvisoNovaReserva = useMemo(() => {
-    const template = whatsappConfig.mensagemAvisoNovaReservaEquipe || whatsappTemplateAvisoNovaReservaPadrao;
+    const template = limparModeloAvisoEquipe(whatsappConfig.mensagemAvisoNovaReservaEquipe || whatsappTemplateAvisoNovaReservaPadrao);
     return montarMensagemWhatsApp(template, {
       ...dadosExemploWhatsapp,
-      id: 'ABC123',
+      data: dayjs().format('DD/MM/YYYY'),
       email: 'cliente@exemplo.com',
       pagamento: 'PIX',
+      status: 'pago',
     });
   }, [dadosExemploWhatsapp, whatsappConfig.mensagemAvisoNovaReservaEquipe]);
 
@@ -5592,7 +5598,7 @@ const totalParticipantesDoDia = useMemo(() => {
             : '5562991150376';
         const mensagemAvisoNovaReservaEquipe =
           typeof rawLegado.mensagemAvisoNovaReservaEquipe === 'string' && rawLegado.mensagemAvisoNovaReservaEquipe.trim()
-            ? rawLegado.mensagemAvisoNovaReservaEquipe
+            ? limparModeloAvisoEquipe(rawLegado.mensagemAvisoNovaReservaEquipe)
             : whatsappTemplateAvisoNovaReservaPadrao;
         const mensagemLembreteDia =
           typeof rawLegado.mensagemLembreteDia === 'string' && rawLegado.mensagemLembreteDia.trim()
@@ -5748,7 +5754,7 @@ const totalParticipantesDoDia = useMemo(() => {
     const mensagemManual = whatsappConfig.mensagemConfirmacaoManual.trim();
     const mensagemBoasVindas = (whatsappConfig.mensagemBoasVindas ?? '').trim();
     const avisoNovaReservaEquipeNumero = (whatsappConfig.avisoNovaReservaEquipeNumero || '5562991150376').replace(/\D/g, '');
-    const mensagemAvisoNovaReservaEquipe = (whatsappConfig.mensagemAvisoNovaReservaEquipe ?? '').trim();
+    const mensagemAvisoNovaReservaEquipe = limparModeloAvisoEquipe(whatsappConfig.mensagemAvisoNovaReservaEquipe ?? '');
     const horarioResumoReservasEquipe = (whatsappConfig.horarioResumoReservasEquipe || '07:30').trim();
     const mensagemLembreteDia = (whatsappConfig.mensagemLembreteDia ?? '').trim();
     const horarioLembreteDia = (whatsappConfig.horarioLembreteDia || '08:00').trim();
@@ -16200,9 +16206,9 @@ const totalParticipantesDoDia = useMemo(() => {
                     <ul className="mt-2 space-y-1 text-xs leading-relaxed text-emerald-900">
                       <li>• Às 07h30, todas as reservas confirmadas do dia chegam em uma única lista.</li>
                       <li>• Reservas manuais aparecem somente nesse resumo interno; o cliente não recebe automação.</li>
-                      <li>• Depois do resumo, cada reserva nova feita e paga para o mesmo dia gera um aviso.</li>
+                      <li>• Depois do resumo, só reservas criadas e pagas hoje para a visita de hoje geram aviso.</li>
                       <li>• Reservas futuras entram no resumo da respectiva data; nunca geram aviso antecipado.</li>
-                      <li>• Entre avisos consecutivos há uma espera aleatória de 1 a 2 minutos.</li>
+                      <li>• Há uma espera variável de 1 a 2 minutos entre todos os disparos automáticos.</li>
                       <li>• Registros de dias passados e reservas já incluídas no resumo são ignorados.</li>
                       <li>• Até cinco tentativas com espera progressiva quando houver falha.</li>
                       <li>• Histórico de enviados, fila e erros preservado no Firestore.</li>
