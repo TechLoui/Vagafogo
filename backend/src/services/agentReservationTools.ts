@@ -239,35 +239,63 @@ export const consultarReservaClienteAgente = async (input: {
 }) => {
   const codigo = clean(input.codigo, 100);
   const canal = clean(input.canal, 20);
-  if (!/^[A-Za-z0-9_-]{8,100}$/.test(codigo)) return { encontrada: false, motivo: "codigo_invalido" };
   const phone = canonicalLeadPhone(input.telefone);
   const cpf = String(input.cpf ?? "").replace(/\D/g, "");
   if (canal === "site" && !cpfValidoParaReservaAgente(cpf)) {
     return { encontrada: false, motivo: "cpf_necessario" };
   }
+  if (canal !== "site" && !/^[A-Za-z0-9_-]{8,100}$/.test(codigo)) {
+    return { encontrada: false, motivo: "codigo_invalido" };
+  }
   if (canal !== "site" && !phone) return { encontrada: false, motivo: "telefone_indisponivel" };
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const resumir = (reserva: FirebaseFirestore.DocumentData) => {
+    const status = normalizarStatusReserva(reserva.status);
+    const situacao = reservaEstaConfirmada(reserva)
+      ? "confirmada"
+      : /cancel|estorn|refund/.test(status) ? "cancelada"
+        : /aguard|pending|process|analise|pre.?reserva/.test(status) ? "aguardando_pagamento"
+          : "nao_confirmada";
+    return {
+      situacao,
+      atividade: clean(reserva.atividade, 180),
+      data: clean(reserva.data, 20),
+      horario: clean(reserva.horario, 20),
+      participantes: Number.isFinite(Number(reserva.participantes)) ? Number(reserva.participantes) : null,
+    };
+  };
+  if (canal === "site") {
+    const cpfFormatado = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
+    const snapshots = await Promise.all(
+      [cpf, cpfFormatado].map((value) => db.collection("reservas").where("cpf", "==", value).limit(30).get()),
+    );
+    const encontradas = new Map<string, FirebaseFirestore.DocumentData>();
+    for (const snapshot of snapshots) {
+      for (const doc of snapshot.docs) {
+        const reserva = doc.data();
+        if (reservaClientePodeConsultar(reserva, { canal, cpf })) encontradas.set(doc.id, reserva);
+      }
+    }
+    const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    const reservas = [...encontradas.values()]
+      .map(resumir)
+      .sort((a, b) => {
+        const aFutura = a.data >= hoje;
+        const bFutura = b.data >= hoje;
+        if (aFutura !== bFutura) return aFutura ? -1 : 1;
+        return aFutura ? a.data.localeCompare(b.data) : b.data.localeCompare(a.data);
+      });
+    if (!reservas.length) return { encontrada: false, motivo: "nao_localizada" };
+    return { encontrada: true, reservas: reservas.slice(0, 3), maisReservas: reservas.length > 3 };
+  }
   const snapshot = await db.collection("reservas").doc(codigo).get();
   if (!snapshot.exists) return { encontrada: false, motivo: "nao_localizada" };
   const reserva = snapshot.data() ?? {};
-  const authorized = reservaClientePodeConsultar(reserva, { canal, cpf, telefone: phone });
-  if (!authorized) return { encontrada: false, motivo: "nao_localizada" };
-  const status = normalizarStatusReserva(reserva.status);
-  const situacao = reservaEstaConfirmada(reserva)
-    ? "confirmada"
-    : /cancel|estorn|refund/.test(status) ? "cancelada"
-      : /aguard|pending|process|analise|pre.?reserva/.test(status) ? "aguardando_pagamento"
-        : "nao_confirmada";
-  return {
-    encontrada: true,
-    codigo,
-    situacao,
-    atividade: clean(reserva.atividade, 180),
-    data: clean(reserva.data, 20),
-    horario: clean(reserva.horario, 20),
-    participantes: Number.isFinite(Number(reserva.participantes)) ? Number(reserva.participantes) : null,
-  };
+  if (!reservaClientePodeConsultar(reserva, { canal, telefone: phone })) {
+    return { encontrada: false, motivo: "nao_localizada" };
+  }
+  return { encontrada: true, codigo, ...resumir(reserva) };
 };
 
 const agentLeadStageRank: Record<string, number> = {
