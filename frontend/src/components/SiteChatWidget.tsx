@@ -8,7 +8,7 @@ import type { BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
 const STORAGE_TTL_MS = 2 * 60 * 60 * 1000;
-const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nComo posso te ajudar?";
+const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nAntes de começarmos, como posso chamar você?";
 const OFFICIAL_CHECKOUT_HOSTS = new Set(["vagafogo.com.br", "www.vagafogo.com.br"]);
 
 type ChatMedia = {
@@ -353,7 +353,11 @@ export function SiteChatWidget() {
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi || null);
+  const [bookingUi, setBookingUi] = useState<BookingUi | null>(
+    !initial?.name ? { step: "identity_name" }
+      : !initial?.phone ? { step: "identity_phone" }
+        : initial.bookingUi || null,
+  );
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
   const [draft, setDraft] = useState("");
@@ -387,7 +391,7 @@ export function SiteChatWidget() {
     setName("");
     setPhone(redirectedPhone);
     setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-    setBookingUi(null);
+    setBookingUi({ step: "identity_name" });
     setSessionRegistered(false);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
     setDraft("");
@@ -594,15 +598,18 @@ export function SiteChatWidget() {
   const send = async (override?: string, submittedPhone?: string, selection?: SiteBookingSelection): Promise<boolean> => {
     const content = (override ?? draft).trim();
     if (!content || loading || sendingRef.current) return false;
-    const answerPhone = !phone && bookingUi?.step === "phone" ? normalizePhone(submittedPhone || content) : "";
-    if (!phone && bookingUi?.step === "phone" && (answerPhone.length < 12 || answerPhone.length > 13)) {
+    const answeringPhone = !phone && (bookingUi?.step === "phone" || bookingUi?.step === "identity_phone");
+    const answerPhone = answeringPhone ? normalizePhone(submittedPhone || content) : "";
+    if (answeringPhone && (answerPhone.length < 12 || answerPhone.length > 13)) {
       setError("Informe um WhatsApp válido com DDD.");
       return false;
     }
     const requestPhone = answerPhone || phone;
-    const answerName = bookingUi?.step === "contact" && bookingUi.fields?.includes("nome")
-      ? content.match(/Nome completo:\s*([^.]*)/i)?.[1]?.trim() || ""
-      : "";
+    const answerName = bookingUi?.step === "identity_name"
+      ? (content.match(/^Meu nome é\s+(.+?)\.?$/i)?.[1] || content).trim().replace(/\.$/, "")
+      : bookingUi?.step === "contact" && bookingUi.fields?.includes("nome")
+        ? content.match(/Nome completo:\s*([^.]*)/i)?.[1]?.trim() || ""
+        : "";
     const generation = generationRef.current;
     sendingRef.current = true;
     scrollModeRef.current = "bottom";
@@ -633,11 +640,11 @@ export function SiteChatWidget() {
       if (response.ok) {
         setSessionRegistered(true);
         if (answerPhone) setPhone(answerPhone);
-        if (answerName) setName(answerName);
       }
       const result = await response.json().catch(() => ({}));
       if (generation !== generationRef.current) return false;
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
+      if (answerName && result.booking_ui?.step !== "identity_name") setName(answerName);
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
       setBookingUi(result.atendimento_humano ? null : result.booking_ui || null);
@@ -750,7 +757,7 @@ export function SiteChatWidget() {
                     ))}
                     </Fragment>
                   ))}
-                  {messages.length === 1 && messages[0].role === "assistant" && !loading && (
+                  {messages.length === 1 && messages[0].role === "assistant" && !loading && !bookingUi && (
                     <div className="ml-9 flex flex-wrap gap-2">
                       <button type="button" onClick={() => void send("Quero consultar uma reserva que já fiz") } className="rounded-full border border-[#bfd6c8] bg-white px-3.5 py-2 text-xs font-semibold text-[#215a43] shadow-sm hover:bg-[#eef6f0]">
                         Consultar minha reserva

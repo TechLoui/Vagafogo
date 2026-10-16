@@ -1,5 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { nameFromSiteMessage, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
 
 process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
@@ -89,14 +90,61 @@ test("permite iniciar anonimamente e associar o WhatsApp quando a Jatobá o soli
 
   await registrarMensagemConversaSite(sessionId, {
     from: "client",
-    text: "Quero reservar. Meu WhatsApp é (62) 99999-9999.",
+    text: "Meu nome é Maria Silva.",
+    sourceId: "client:named",
+    name: "Maria Silva",
+  });
+  await registrarMensagemConversaSite(sessionId, {
+    from: "client",
+    text: "Meu WhatsApp é (62) 99999-9999.",
     sourceId: "client:identified",
     phone: "5562999999999",
+    name: "Maria Silva",
   });
   const conversation = await obterConversaSite(sessionId);
+  assert.equal(conversation.name, "Maria Silva");
   assert.equal(conversation.phone, "5562999999999");
-  assert.equal(conversation.messages.length, 2);
+  assert.equal(conversation.messages.length, 3);
+  assert.equal((await listarConversasSite()).find((contact) => contact.sessionId === sessionId).phone, "5562999999999");
   await removerConversaSite(sessionId);
+});
+
+test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsApp", () => {
+  assert.equal(nameFromSiteMessage("Qual o valor da trilha?"), "");
+  assert.equal(nameFromSiteMessage("Sou do Instituto Federal de Brasília"), "");
+  assert.equal(nameFromSiteMessage("Meu nome é Maria Silva."), "Maria Silva");
+  assert.equal(nameFromSiteMessage("Maria Silva", true), "Maria Silva");
+  assert.equal(pendingSiteVisitorRequest([
+    { from: "client", text: "Quero consultar minha reserva" },
+    { from: "bot", text: "Como posso chamar você?" },
+    { from: "client", text: "Meu nome é Maria Silva." },
+    { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
+  ]), "Quero consultar minha reserva");
+  assert.equal(pendingSiteVisitorRequest([
+    { from: "client", text: "Bom dia" },
+    { from: "client", text: "Meu nome é Maria." },
+    { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
+  ]), "");
+  assert.equal(pendingSiteVisitorRequest([
+    { from: "client", text: "Maria Silva" },
+    { from: "client", text: "(62) 99999-9999" },
+  ]), "");
+  const messages = [
+    { from: "client", text: "Quero consultar minha reserva" },
+    { from: "client", text: "Meu nome é Maria Silva." },
+    { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
+  ];
+  assert.equal(siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages }).step, "identity_name");
+  assert.equal(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "", hadName: false, hadPhone: false, messages }).step, "identity_phone");
+  const ready = siteVisitorIdentityDecision({ name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false, messages });
+  assert.equal(ready.reply, "");
+  assert.equal(ready.pendingRequest, "Quero consultar minha reserva");
+  assert.equal(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "5562999999999", hadName: false, hadPhone: true, messages }).pendingRequest, "Quero consultar minha reserva");
+  assert.equal(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: true, messages }).pendingRequest, "");
+  assert.match(siteVisitorIdentityDecision({
+    name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false,
+    messages: [{ from: "client", text: "Bom dia" }, { from: "client", text: "Meu nome é Maria Silva." }, { from: "client", text: "Meu WhatsApp é (62) 99999-9999." }],
+  }).reply, /Como posso ajudar/);
 });
 
 test("encaminhamento do site permanece pendente até um atendente assumir", async () => {

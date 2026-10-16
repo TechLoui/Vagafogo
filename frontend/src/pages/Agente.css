@@ -151,7 +151,8 @@
 .agent-thread > header strong { font-size: .74rem; }
 .agent-thread > header small { margin-top: 3px; color: #8495a2; font-size: .58rem; }
 .agent-thread-actions { display: flex; gap: 6px; }
-.agent-thread-actions button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d8e4e9; border-radius: 9px; padding: 0 10px; background: white; color: #536b7c; font-size: .59rem; font-weight: 750; }
+.agent-thread-actions button, .agent-thread-actions a { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d8e4e9; border-radius: 9px; padding: 0 10px; background: white; color: #536b7c; font-size: .59rem; font-weight: 750; text-decoration: none; }
+.agent-thread-actions a { border-color: #cce8d7; background: #eff9f4; color: #168055; }
 .agent-thread-actions .is-human { border-color: #d8e7dd; background: #eff9f4; color: #168055; }
 .agent-thread-actions .is-block { border-color: #efcdd0; color: #c53847; }
 .agent-thread-actions .is-close { width: 34px; padding: 0; justify-content: center; color: #8c9ba5; }
@@ -400,9 +401,9 @@
   .agent-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .agent-next-card { grid-column: span 2; }
   .agent-sessions { grid-template-columns: 290px 1fr; }
-  .agent-thread-actions button { width: 34px; padding: 0; justify-content: center; }
-  .agent-thread-actions button:not(.is-close) { font-size: 0; }
-  .agent-thread-actions button svg { font-size: .8rem; }
+  .agent-thread-actions button, .agent-thread-actions a { width: 34px; padding: 0; justify-content: center; }
+  .agent-thread-actions button:not(.is-close), .agent-thread-actions a { font-size: 0; }
+  .agent-thread-actions button svg, .agent-thread-actions a svg { font-size: .8rem; }
   .agent-lead-data { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .agent-gallery-layout { grid-template-columns: 1fr; }
   .agent-internal-intro { grid-template-columns: 1fr; }

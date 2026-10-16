@@ -75,6 +75,7 @@ import {
   siteSessionIdFromJid,
   type SiteConversationMode,
 } from "../services/siteChatConversations";
+import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -181,7 +182,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-16.4-site-reservation-cpf-only',
+    build: '2026-10-16.5-site-contact-first',
     timestamp: new Date().toISOString(),
   });
 });
@@ -240,7 +241,7 @@ app.get('/atendimento/site/catalogo', async (_req, res) => {
 
 app.post('/atendimento/site/mensagem', async (req, res) => {
   const mensagem = String(req.body?.mensagem ?? "").trim().slice(0, 4096);
-  const nome = String(req.body?.nome ?? "").trim().slice(0, 120);
+  const nomeRecebido = normalizeSiteVisitorName(req.body?.nome);
   const telefone = normalizeSiteChatPhone(req.body?.telefone);
   const sessionId = String(req.body?.sessionId ?? "").trim().slice(0, 120);
   const messageId = String(req.body?.messageId ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 160);
@@ -267,7 +268,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const existingConversation = await obterConversaSite(sessionId);
-  if (existingConversation?.phone && existingConversation.phone !== telefone) {
+  if (existingConversation?.phone && telefone && existingConversation.phone !== telefone) {
     res.status(403).json({ error: "SITE_CHAT_SESSION_PHONE_MISMATCH" });
     return;
   }
@@ -283,20 +284,30 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     return;
   }
 
+  const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
+  const awaitingName = lastSiteMessage?.from === "bot" && lastSiteMessage.text.includes("como posso chamar você");
+  const nome = nameFromSiteMessage(mensagem, awaitingName) || nomeRecebido || existingConversation?.name || "";
+  const telefoneInformado = telefone || (
+    nome && !existingConversation?.phone ? normalizeSiteChatPhone(mensagem) : ""
+  );
+  const telefoneAtendimento = telefoneInformado.length >= 12 && telefoneInformado.length <= 13
+    ? telefoneInformado
+    : existingConversation?.phone || "";
+
   const clientSourceId = `client:${messageId || createHash("sha256").update(`${sessionId}\0${mensagem}`).digest("hex")}`;
   const storedClientMessage = await registrarMensagemConversaSite(sessionId, {
     from: "client",
     text: mensagem,
     sourceId: clientSourceId,
     name: nome,
-    phone: telefone,
+    phone: telefoneAtendimento,
     incrementUnread: true,
   });
-  if (!existingConversation || (!existingConversation.phone && telefone)) {
+  if (!existingConversation || (!existingConversation.name && nome) || (!existingConversation.phone && telefoneAtendimento)) {
     try {
       await registrarLeadAgente({
         sessionId,
-        telefone,
+        telefone: telefoneAtendimento,
         canal: "site",
         nome,
         etapa: "contato_iniciado",
@@ -320,14 +331,43 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     return;
   }
 
+  const contactName = storedClientMessage.conversation.name;
+  const contactPhone = storedClientMessage.conversation.phone;
+  const identity = siteVisitorIdentityDecision({
+    name: contactName,
+    phone: contactPhone,
+    hadName: Boolean(existingConversation?.name),
+    hadPhone: Boolean(existingConversation?.phone),
+    messages: storedClientMessage.conversation.messages,
+  });
+  if (identity.reply) {
+    await registrarMensagemConversaSite(sessionId, {
+      from: "bot",
+      text: identity.reply,
+      sourceId: `bot:${clientSourceId}:identity`,
+      name: contactName,
+      phone: contactPhone,
+    });
+    res.json({
+      resposta: identity.reply,
+      session_id: sessionId,
+      media: null,
+      mensagens_adicionais: [],
+      atendimento_humano: false,
+      handoff: null,
+      booking_ui: identity.step ? { step: identity.step } : null,
+    });
+    return;
+  }
+
   const response = await requestAgentService("ai", "/ask", {
     method: "POST",
     body: {
-      pergunta: mensagem,
+      pergunta: identity.pendingRequest || mensagem,
       session_id: sessionId,
       mode: "site",
-      telefone,
-      nome_contato: nome,
+      telefone: contactPhone,
+      nome_contato: contactName,
       historico,
       resposta_interativa: req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object" && !Array.isArray(req.body.respostaInterativa)
         ? req.body.respostaInterativa

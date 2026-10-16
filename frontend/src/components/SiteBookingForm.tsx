@@ -6,7 +6,7 @@ import { ptBR } from "date-fns/locale";
 import {
   FaArrowRight, FaCalendarAlt, FaCheck, FaClock, FaCreditCard,
   FaHiking, FaLeaf, FaQrcode, FaRegCheckCircle, FaUser,
-  FaUsers, FaUtensils,
+  FaUsers, FaUtensils, FaWhatsapp,
 } from "react-icons/fa";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
@@ -27,7 +27,7 @@ type Combo = {
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
 
 export type BookingUi = {
-  step: "phone" | "experiences" | "date" | "participants" | "contact" | "summary" | "payment" | "availability";
+  step: "identity_name" | "identity_phone" | "phone" | "experiences" | "date" | "participants" | "contact" | "summary" | "payment" | "availability";
   fields?: string[];
   draft?: {
     tipoOferta?: string;
@@ -122,6 +122,8 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 }
 
 const stages = {
+  identity_name: { title: "Seu nome", hint: "Para identificar este atendimento e chamar você pelo nome.", icon: FaUser },
+  identity_phone: { title: "Seu WhatsApp", hint: "Para contato sobre este atendimento, se for necessário. Não autoriza campanhas.", icon: FaWhatsapp },
   phone: { title: "Seu WhatsApp", hint: "Apenas para este atendimento e sua reserva; isso não autoriza campanhas.", icon: FaUser },
   experiences: { title: "Escolha a experiência", hint: "Você pode escolher um pacote ou o combo.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
@@ -150,6 +152,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const revealContinue = () => requestAnimationFrame(() => submitButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 
   useEffect(() => {
+    if (ui.step === "identity_name" || ui.step === "identity_phone") return;
     const controller = new AbortController();
     fetch(`${API_BASE}/atendimento/site/catalogo`, { signal: controller.signal })
       .then(async (response) => {
@@ -164,7 +167,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         if (!controller.signal.aborted) setCatalogError(cause instanceof Error ? cause.message : "As opções estão indisponíveis.");
       });
     return () => controller.abort();
-  }, []);
+  }, [ui.step]);
 
   useEffect(() => {
     if (!catalog || !ui.draft?.ofertaId) return;
@@ -227,10 +230,13 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (sending) return;
-    if (step === "phone") {
+    if (step === "identity_name") {
+      if (fullName.trim().length < 2 || /[\d@?]/.test(fullName)) { setError("Informe seu nome para continuar."); return; }
+      await answer(`Meu nome é ${fullName.trim()}.`);
+    } else if (step === "identity_phone" || step === "phone") {
       const normalized = normalizePhone(phone);
       if (normalized.length < 12 || normalized.length > 13) { setError("Informe um WhatsApp válido com DDD."); return; }
-      await answer(`Meu WhatsApp para a reserva é ${formatPhone(normalized)}.`, normalized);
+      await answer(`Meu WhatsApp para este atendimento é ${formatPhone(normalized)}.`, normalized);
     } else if (step === "date") {
       if (!date || date < today() || unavailable.length) { setError("Escolha uma data disponível para a experiência."); return; }
       await answer(`Gostaria de reservar para ${readableDate(date)}.`);
@@ -296,7 +302,8 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         </div>
       </div>
       <div className="space-y-2.5 p-3 sm:p-3.5">
-        {step === "phone" && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
+        {step === "identity_name" && <label className="block text-xs font-semibold text-[#425c49]">Como podemos chamar você?<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" placeholder="Seu nome" required className={inputClass} /></label>}
+        {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
         {step !== "experiences" && step !== "date" && selected.length > 0 && (
           <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#e3ebdf] bg-[#f8faf5] p-2.5">
             <OfferIcon small name={combo?.nome || selected[0].nome} url={combo?.iconeUrl || selected[0].iconeUrl} emoji={combo?.emoji || selected[0].emoji} combo={Boolean(combo)} />
