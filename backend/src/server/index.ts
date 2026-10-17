@@ -78,6 +78,7 @@ import {
 } from "../services/siteChatConversations";
 import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
 import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
+import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -184,7 +185,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-17.2-site-booking-guidance-followup',
+    build: '2026-10-17.3-site-environmental-education-card',
     timestamp: new Date().toISOString(),
   });
 });
@@ -440,6 +441,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     atendimento_humano: Boolean(body.handoff),
     handoff: body.handoff && typeof body.handoff === "object" ? body.handoff : null,
     booking_ui: body.booking_ui && typeof body.booking_ui === "object" ? body.booking_ui : null,
+    environmental_education_card: shouldOfferEnvironmentalEducationContact(identity.pendingRequest || mensagem),
   });
 });
 

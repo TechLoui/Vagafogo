@@ -1,3 +1,5 @@
+import { shouldOfferEnvironmentalEducationContact } from "./siteEnvironmentalEducation";
+
 type ClientMessage = { from: string; text: string };
 
 export const normalizeSiteVisitorName = (value: unknown): string => {
@@ -22,7 +24,7 @@ export const pendingSiteVisitorRequest = (messages: ClientMessage[]): string => 
     if (/^(?:meu nome [ée]|pode me chamar de|sou|nome(?: completo)?\s*:)/i.test(text)) continue;
     if (/^(?:meu (?:n[uú]mero de )?whatsapp|whatsapp|telefone|celular)\b/i.test(text)) continue;
     if (/^(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[\s-]?\d{4}$/.test(text)) continue;
-    if (normalizeSiteVisitorName(text) === text && text.split(" ").length <= 4) continue;
+    if (normalizeSiteVisitorName(text) === text && text.split(" ").length <= 4 && !shouldOfferEnvironmentalEducationContact(text)) continue;
     return text.slice(0, 4096);
   }
   return "";

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
+import { FaWhatsapp } from "react-icons/fa";
 import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
 import type { BookingUi, SiteBookingSelection } from "./SiteBookingForm";
@@ -31,6 +32,7 @@ type ChatMessage = {
   visibleAdditional?: number;
   createdAt: number;
   animate?: boolean;
+  environmentalEducationCard?: boolean;
 };
 
 type StoredChat = {
@@ -51,7 +53,7 @@ type SiteManualMessage = {
 
 const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
   "identity_phone", "phone", "experiences", "date",
-  "participants", "contact", "summary", "payment", "availability",
+  "participants", "guidance", "contact", "summary", "payment", "availability",
 ]);
 
 const safeBookingUi = (value: unknown): BookingUi | null => {
@@ -68,6 +70,7 @@ const safeBookingUi = (value: unknown): BookingUi | null => {
 
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const createSessionId = () => `site_${createId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+const ENVIRONMENTAL_EDUCATION_URL = `https://wa.me/5562991150376?text=${encodeURIComponent("Olá, Uirá! Tenho interesse em uma visita de Educação Ambiental à Fazenda Vagafogo.")}`;
 const readViewportBounds = (): ViewportBounds => ({
   mobile: window.innerWidth < 640,
   height: window.visualViewport?.height || window.innerHeight,
@@ -677,6 +680,7 @@ export function SiteChatWidget() {
           visibleAdditional: 0,
           createdAt: Date.now(),
           animate: true,
+          environmentalEducationCard: result.environmental_education_card === true && !messages.some((message) => message.environmentalEducationCard),
         };
         setMessages((current) => [...current, assistantMessage]);
         setExpiresAt(Date.now() + STORAGE_TTL_MS);
@@ -755,7 +759,7 @@ export function SiteChatWidget() {
                   </button>}
                   {visibleMessages.map((message, index) => (
                     <Fragment key={message.id}>
-                    <div ref={index === visibleMessages.length - 1 && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
+                    <div ref={index === visibleMessages.length - 1 && !message.environmentalEducationCard && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
@@ -774,6 +778,20 @@ export function SiteChatWidget() {
                         </div>
                       </div>
                     ))}
+                    {message.environmentalEducationCard && (
+                      <div ref={index === visibleMessages.length - 1 ? latestMessageRef : undefined} className={`ml-9 w-[calc(100%-2.25rem)] min-w-0 max-w-[720px] rounded-2xl border border-[#cfe4d6] bg-gradient-to-br from-[#f4faf3] to-white p-3.5 text-[#254a38] shadow-sm sm:p-4 ${message.animate ? "site-chat-message-pop" : ""}`}>
+                        <div className="flex items-start gap-3">
+                          <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#dcefe2] text-xl">🌱</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold">Educação Ambiental</p>
+                            <p className="mt-1 text-xs leading-relaxed text-[#567060]">Para visitas escolares e projetos em grupo, o Uirá pode orientar você diretamente.</p>
+                          </div>
+                        </div>
+                        <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental">
+                          <FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp
+                        </a>
+                      </div>
+                    )}
                     </Fragment>
                   ))}
                   {loading && (
