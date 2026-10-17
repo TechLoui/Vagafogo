@@ -219,7 +219,6 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     : step === "time" && brunchHasScheduledTime
     ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
     : stages[step];
-  const StageIcon = stage.icon;
 
   const answer = async (message: string, contactPhone?: string, selection?: SiteBookingSelection) => {
     setError("");
@@ -292,6 +291,11 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     }
     setError("");
   };
+
+  // Uma sessão antiga pode conter uma etapa de outra versão do site. Nesse
+  // caso o campo interativo some, mas a conversa por texto continua disponível.
+  if (!stage) return null;
+  const StageIcon = stage.icon;
 
   return (
     <form onSubmit={(event) => void submit(event)} className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Responder à Jatobá">

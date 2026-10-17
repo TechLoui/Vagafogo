@@ -49,6 +49,23 @@ type SiteManualMessage = {
   ts: number;
 };
 
+const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
+  "identity_name", "identity_phone", "phone", "experiences", "date",
+  "participants", "contact", "summary", "payment", "availability",
+]);
+
+const safeBookingUi = (value: unknown): BookingUi | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<BookingUi>;
+  if (!BOOKING_UI_STEPS.has(candidate.step as BookingUi["step"])) return null;
+  return {
+    ...candidate,
+    step: candidate.step as BookingUi["step"],
+    fields: Array.isArray(candidate.fields) ? candidate.fields.filter((field): field is string => typeof field === "string") : [],
+    draft: candidate.draft && typeof candidate.draft === "object" && !Array.isArray(candidate.draft) ? candidate.draft : undefined,
+  };
+};
+
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const createSessionId = () => `site_${createId().replace(/[^A-Za-z0-9_-]/g, "")}`;
 const readViewportBounds = (): ViewportBounds => ({
@@ -75,6 +92,7 @@ const safeStoredChat = (): StoredChat | null => {
     return {
       ...parsed,
       expiresAt,
+      bookingUi: safeBookingUi(parsed.bookingUi),
       messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null, visibleAdditional: message.additional?.length || 0, animate: false })) : [],
     };
   } catch {
@@ -647,7 +665,7 @@ export function SiteChatWidget() {
       if (answerName && result.booking_ui?.step !== "identity_name") setName(answerName);
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
-      setBookingUi(result.atendimento_humano ? null : result.booking_ui || null);
+      setBookingUi(result.atendimento_humano ? null : safeBookingUi(result.booking_ui));
       if (result.resposta) {
         const assistantMessage: ChatMessage = {
           id: createId(),
