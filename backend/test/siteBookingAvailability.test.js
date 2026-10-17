@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { availableSiteBookingTimes } = require("../dist/services/siteBookingAvailability");
+const { availableSiteBookingSlots, availableSiteBookingTimes } = require("../dist/services/siteBookingAvailability");
 
 const brunch = {
   id: "brunch", nome: "Brunch Gastronômico", modoHorario: "lista",
@@ -37,4 +37,17 @@ test("respeita reservas sem pagamento, vagas extras e dias bloqueados", () => {
   assert.deepEqual(availableSiteBookingTimes("2026-10-18", brunch,
     { vagasExtras: { "2026-10-18-brunch-09:00": 1 } }, [paid], now), brunch.horarios);
   assert.deepEqual(availableSiteBookingTimes("2026-10-18", { ...brunch, datasBloqueadas: ["2026-10-18"] }, {}, [], now), []);
+});
+
+test("informa vagas restantes por horário sem inventar limite", () => {
+  const now = new Date("2026-10-17T12:00:00Z");
+  const paid = { status: "pago", pacoteIds: ["brunch"], horario: "11:00", participantes: 1 };
+  const slots = availableSiteBookingSlots("2026-10-18", brunch, {}, [paid], now);
+  assert.deepEqual(slots, [
+    { horario: "09:00", vagasRestantes: 2 },
+    { horario: "11:00", vagasRestantes: 1 },
+    { horario: "13:00", vagasRestantes: 2 },
+  ]);
+  assert.deepEqual(availableSiteBookingSlots("2026-10-18", { ...trail, limite: 0 }, {}, [], now),
+    [{ horario: "", vagasRestantes: null }]);
 });

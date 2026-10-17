@@ -74,13 +74,13 @@ const extraCapacity = (day: DayAvailability, date: string, packageId: string, ti
 // Uma data aparece no calendário somente se ainda houver ao menos uma vaga
 // para cada experiência escolhida. A reserva final é revalidada após informar
 // a quantidade de pessoas, pois a agenda pode mudar enquanto o cliente conversa.
-export const availableSiteBookingTimes = (
+export const availableSiteBookingSlots = (
   date: string,
   pack: PackageSchedule,
   day: DayAvailability,
   reservations: Reservation[],
   now = new Date(),
-): string[] => {
+): { horario: string; vagasRestantes: number | null }[] => {
   const currentDate = saoPauloDate(now);
   if (date < currentDate || day.fechado === true || pack.ativo === false) return [];
   const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -93,18 +93,18 @@ export const availableSiteBookingTimes = (
   const listedTimes = isInterval ? [""] : pack.horarios ?? [];
   if (!isInterval && listedTimes.length === 0) return [];
 
-  return listedTimes.filter((time) => {
+  return listedTimes.flatMap<{ horario: string; vagasRestantes: number | null }>((time) => {
     if (isInterval) {
       const end = Math.min(minutes(pack.horarioFim || "16:00") ?? 960, 900); // entrada até 15h
-      if (isToday && currentMinutes >= end) return false;
+      if (isToday && currentMinutes >= end) return [];
     } else {
       const slotMinutes = minutes(time);
-      if (slotMinutes === null || (isToday && currentMinutes >= slotMinutes)) return false;
-      if (day.horarios?.[`${date}-${pack.id}-${time}`] === false) return false;
+      if (slotMinutes === null || (isToday && currentMinutes >= slotMinutes)) return [];
+      if (day.horarios?.[`${date}-${pack.id}-${time}`] === false) return [];
     }
 
     const capacity = quantity(pack.limite);
-    if (capacity === 0) return true; // sem limite configurado
+    if (capacity === 0) return [{ horario: time, vagasRestantes: null }]; // sem limite configurado
     const occupied = reservations.reduce((total, reservation) => {
       if (!reservaContaParaOcupacao(reservation)) return total;
       const ids = reservationPackageIds(reservation);
@@ -115,9 +115,18 @@ export const availableSiteBookingTimes = (
       }
       return total + reservedParticipants(reservation, pack.id);
     }, 0);
-    return capacity + extraCapacity(day, date, pack.id, time || undefined) - occupied > 0;
+    const remaining = Math.max(0, capacity + extraCapacity(day, date, pack.id, time || undefined) - occupied);
+    return remaining > 0 ? [{ horario: time, vagasRestantes: remaining }] : [];
   });
 };
+
+export const availableSiteBookingTimes = (
+  date: string,
+  pack: PackageSchedule,
+  day: DayAvailability,
+  reservations: Reservation[],
+  now = new Date(),
+): string[] => availableSiteBookingSlots(date, pack, day, reservations, now).map((slot) => slot.horario);
 
 export const consultarAgendaReservaSite = async (month: string, packageIds: string[], now = new Date()) => {
   const db = obterFirestoreAdmin();
@@ -143,12 +152,17 @@ export const consultarAgendaReservaSite = async (month: string, packageIds: stri
   });
 
   const available: Record<string, Record<string, string[]>> = {};
+  const remaining: Record<string, Record<string, Record<string, number | null>>> = {};
   for (let cursor = new Date(`${start}T12:00:00Z`); cursor.toISOString().slice(0, 10) < end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
     const date = cursor.toISOString().slice(0, 10);
-    const perPackage = Object.fromEntries(packages.map((pack) => [pack.id,
-      availableSiteBookingTimes(date, pack, days.get(date) ?? {}, reservations.get(date) ?? [], now),
+    const slots = Object.fromEntries(packages.map((pack) => [pack.id,
+      availableSiteBookingSlots(date, pack, days.get(date) ?? {}, reservations.get(date) ?? [], now),
     ]));
+    const perPackage = Object.fromEntries(packages.map((pack) => [pack.id, slots[pack.id].map((slot) => slot.horario)]));
     if (packages.every((pack) => perPackage[pack.id].length > 0)) available[date] = perPackage;
+    if (available[date]) remaining[date] = Object.fromEntries(packages.map((pack) => [pack.id,
+      Object.fromEntries(slots[pack.id].map((slot) => [slot.horario, slot.vagasRestantes])),
+    ]));
   }
-  return available;
+  return { dias: available, vagas: remaining };
 };

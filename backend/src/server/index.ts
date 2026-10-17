@@ -262,9 +262,9 @@ app.get('/atendimento/site/agenda', async (req, res) => {
     return;
   }
   try {
-    const dias = await consultarAgendaReservaSite(month, packageIds);
+    const agenda = await consultarAgendaReservaSite(month, packageIds);
     res.set('Cache-Control', 'private, max-age=15');
-    res.json({ mes: month, dias });
+    res.json({ mes: month, ...agenda });
   } catch {
     res.status(503).json({ error: 'SITE_BOOKING_AGENDA_UNAVAILABLE' });
   }

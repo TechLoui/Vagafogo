@@ -25,7 +25,11 @@ type Combo = {
   pacoteIds: string[]; precosPorTipo: Record<string, number>; preco: number; desconto: number;
 };
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
-type SiteAgenda = { mes: string; dias: Record<string, Record<string, string[]>> };
+type SiteAgenda = {
+  mes: string;
+  dias: Record<string, Record<string, string[]>>;
+  vagas?: Record<string, Record<string, Record<string, number | null>>>;
+};
 
 export type BookingProgress = {
   selectedIds: string[];
@@ -144,7 +148,7 @@ const stages = {
   experiences: { title: "Escolha a experiência", hint: "Marque o brunch, a trilha ou os dois.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
   time: { title: "Escolha o horário", hint: "A Jatobá confirmará as vagas para você.", icon: FaClock },
-  participants: { title: "Quantas pessoas vão?", hint: "Separe por categoria para calcular o valor.", icon: FaUsers },
+  participants: { title: "Quantas pessoas vão?", hint: "Informe as pessoas por categoria. O total aparece no resumo.", icon: FaUsers },
   guidance: { title: "Antes de continuar", hint: "Confira as orientações da sua visita.", icon: FaRegCheckCircle },
   contact: { title: "Dados para a reserva", hint: "Preencha apenas o que ainda falta.", icon: FaUser },
   summary: { title: "Tudo certo até aqui?", hint: "Confira o resumo enviado pela Jatobá antes de seguir.", icon: FaRegCheckCircle },
@@ -218,13 +222,13 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   const knownTime = (item: Package) => times[item.id] || (scheduled.length === 1 ? ui.draft?.horario || "" : "");
   const missingTime = scheduled.some((item) => !knownTime(item));
   const step = (ui.step === "participants" || ui.step === "availability") && missingTime ? "time" : ui.step;
-  const agendaMonth = step === "time" && date ? date.slice(0, 7) : calendarMonth;
+  const agendaMonth = (step === "time" || step === "participants") && date ? date.slice(0, 7) : calendarMonth;
   const agendaKey = `${agendaMonth}:${selectedPackageKey}`;
   const agenda = agendaState.key === agendaKey ? agendaState.value : undefined;
   const agendaError = agendaState.key === agendaKey && agendaState.error;
 
   useEffect(() => {
-    if ((step !== "date" && step !== "time") || !selectedPackageKey) return;
+    if ((step !== "date" && step !== "time" && step !== "participants") || !selectedPackageKey) return;
     const controller = new AbortController();
     setAgendaState((current) => current.key === agendaKey && current.value ? current : { key: agendaKey });
     const params = new URLSearchParams({ mes: agendaMonth, pacotes: selectedPackageKey });
@@ -243,7 +247,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   }, [step, agendaKey, agendaMonth, selectedPackageKey, agendaRefresh]);
 
   useEffect(() => {
-    if (step !== "date" && step !== "time") return;
+    if (step !== "date" && step !== "time" && step !== "participants") return;
     const interval = window.setInterval(() => setAgendaRefresh((current) => current + 1), 60_000);
     const refreshOnFocus = () => setAgendaRefresh((current) => current + 1);
     window.addEventListener("focus", refreshOnFocus);
@@ -267,6 +271,13 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   const dateHasTimes = (key: string) => Boolean(agenda?.dias[key] && selected.length > 0
     && selected.every((item) => (agenda?.dias[key]?.[item.id] ?? []).length > 0));
   const hourAvailable = (item: Package, hour: string) => Boolean(agenda?.dias[date]?.[item.id]?.includes(hour));
+  const remainingFor = (item: Package, hour: string) => agenda?.vagas?.[date]?.[item.id]?.[hour];
+  const remainingByPackage = selected.map((item) => remainingFor(item, item.modoHorario === "intervalo" ? "" : knownTime(item)));
+  const availabilityReady = selected.length > 0 && remainingByPackage.every((value) => value !== undefined);
+  const finiteRemaining = remainingByPackage.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const remainingPlaces = finiteRemaining.length ? Math.min(...finiteRemaining) : null;
+  const participantCount = orderedTypes.reduce((total, type) => total + quantityOf(counts, type.id), 0);
+  const participantsExceedCapacity = remainingPlaces !== null && participantCount > remainingPlaces;
   const trailPackages = selected.filter((item) => item.modoHorario === "intervalo");
   const adultType = catalog?.tiposClientes.find((item) => /adult/i.test(item.nome));
   const adultPrice = (offer: Package | Combo) => adultType ? Number(offer.precosPorTipo?.[adultType.id]) || 0 : 0;
@@ -312,8 +323,8 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
         {scheduled.map((item) => <p key={item.id}><strong>{/brunch|gastron/i.test(item.nome) ? "Brunch" : item.nome}:</strong> {knownTime(item) ? `${displayHour(knownTime(item))} (horário marcado)` : "horário a escolher"}</p>)}
         {trailPackages.length > 0 && <p><strong>Trilha:</strong> dentro da faixa de funcionamento, com entrada até 15h</p>}
         <p><strong>Participantes:</strong> {quote.length ? quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ") : "a informar"}</p>
-        {quote.length > 0 && <div className="space-y-0.5 border-t border-[#dce9d8] pt-1.5">{quote.map(({ type, quantity, subtotal }) => <p key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome}</span><span>{money.format(subtotal)}</span></p>)}<p className="flex justify-between gap-2 pt-1 font-bold"><span>Total estimado</span><span>{money.format(estimate)}</span></p></div>}
-        <p className="text-[#718075]">A Jatobá confirmará vagas e valor antes do pagamento.</p>
+        {quote.length > 0 && <div className="space-y-0.5 border-t border-[#dce9d8] pt-1.5">{quote.map(({ type, quantity, subtotal }) => <p key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome}</span><span>{money.format(subtotal)}</span></p>)}<p className="flex justify-between gap-2 pt-1 font-bold"><span>Total</span><span>{money.format(estimate)}</span></p></div>}
+        <p className="text-[#718075]">As vagas serão confirmadas antes do pagamento.</p>
       </div>
     </details>
   ) : null;
@@ -353,10 +364,12 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
       );
     } else if (step === "participants") {
       if (!quote.length) { setError("Informe quantas pessoas vão participar."); return; }
+      if (!availabilityReady) { setError("Aguarde a atualização das vagas ou informe as pessoas por mensagem."); return; }
+      if (participantsExceedCapacity) { setError(`Há ${remainingPlaces} ${remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta opção. Ajuste a quantidade para continuar.`); return; }
       const timeReminder = scheduled.length && !missingTime
         ? ` Horário escolhido: ${scheduled.map((item) => `${item.nome} às ${knownTime(item)}`).join(" e ")}.`
         : "";
-      await answer(`Seremos ${quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ")}.${timeReminder} Pode conferir a vaga e o valor?`);
+      await answer(`Seremos ${quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ")}.${timeReminder} Pode confirmar se há vaga para o grupo?`);
     } else if (step === "contact") {
       if ((needsName && fullName.trim().split(/\s+/).length < 2) || (needsEmail && !email.includes("@")) || (needsCpf && !validCpf(cpf)) || (needsPet && !pet)) {
         setError("Confira os dados solicitados para continuar."); return;
@@ -472,18 +485,21 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
             <p className="mb-2 text-xs font-semibold text-[#425c49]">{/brunch|gastron/i.test(item.nome) ? "Escolha o horário do brunch" : `Escolha o horário de ${item.nome}`}</p>
             <div className="grid grid-cols-3 gap-2">
               {item.horarios.map((hour) => {
-                const selected = (times[item.id] || knownTime(item)) === hour;
+                const isSelected = (times[item.id] || knownTime(item)) === hour;
                 const available = hourAvailable(item, hour);
-                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={selected && available} onClick={() => { const next = { ...times, [item.id]: hour }; setTimes(next); onProgress({ times: next }); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${selected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                const places = [remainingFor(item, hour), ...selected.filter((other) => other.id !== item.id && (other.modoHorario === "intervalo" || knownTime(other))).map((other) => remainingFor(other, other.modoHorario === "intervalo" ? "" : knownTime(other)))];
+                const finitePlaces = places.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+                const remaining = places.some((value) => value === undefined) ? undefined : finitePlaces.length ? Math.min(...finitePlaces) : null;
+                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={isSelected && available} onClick={() => { const next = { ...times, [item.id]: hour }; setTimes(next); onProgress({ times: next }); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${isSelected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
                   <span className="block text-base font-bold">{displayHour(hour)}</span>
-                  <span className={`mt-0.5 block text-[10px] ${selected && available ? "text-white/85" : "text-[#718075]"}`}>{!available && agenda ? "Indisponível" : /brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
+                  <span className={`mt-0.5 block text-[10px] ${isSelected && available ? "text-white/85" : "text-[#718075]"}`}>{!available && agenda ? "Indisponível" : typeof remaining === "number" ? `${remaining} vaga${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"}` : remaining === null ? "Vagas disponíveis" : "Vagas a confirmar"}</span>
                 </button>;
               })}
             </div>
           </div>
         ))}{agendaError && <p role="alert" className="text-xs text-amber-800">Não consegui consultar os horários agora. Você pode escolher por mensagem.</p>}{agenda && date && !dateHasTimes(date) && <p role="alert" className="text-xs text-amber-800">Não há mais horários nessa data. Diga outra data no chat para eu verificar.</p>}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
-        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{orderedTypes.map((type) => {
+        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{!availabilityReady && <p className="text-xs text-[#718075]">{agendaError ? "Não consegui atualizar as vagas. Você pode informar as pessoas por mensagem." : "Atualizando as vagas disponíveis…"}</p>}{availabilityReady && remainingPlaces !== null && <p className="text-xs font-medium text-[#46664d]">{remainingPlaces} {remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta visita.</p>}{orderedTypes.map((type) => {
           const count = quantityOf(counts, type.id);
           const hint = participantHint(type);
           return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2.5">
@@ -494,10 +510,10 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
             <div className="flex shrink-0 items-center gap-1.5">
               <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.max(0, count - 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
               <output className="w-5 text-center text-sm font-bold">{count}</output>
-              <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.min(99, count + 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count >= 99} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
+              <button type="button" onClick={() => { if (!availabilityReady || (remainingPlaces !== null && participantCount >= remainingPlaces)) return; const next = { ...counts, [type.id]: Math.min(99, count + 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={!availabilityReady || count >= 99 || (remainingPlaces !== null && participantCount >= remainingPlaces)} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
             </div>
           </div>;
-        })}</div>)}
+        })}{participantsExceedCapacity && <p role="alert" className="text-xs text-amber-800">As vagas disponíveis mudaram. Reduza a quantidade de pessoas para continuar.</p>}</div>)}
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <label className="block text-xs font-semibold">Vai levar pet?<select value={pet} onChange={(event) => setPet(event.target.value)} required className={inputClass}><option value="">Selecione</option><option value="no">Não</option><option value="yes">Sim</option></select>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</label>}</div>}
 
@@ -506,7 +522,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
         {step === "payment" && <div className="grid gap-2.5" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por PIX. Pode enviar o QR Code e o copia e cola?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] p-3 text-left transition hover:border-[#20745a] hover:bg-[#e9f4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8ecdc] text-[#20745a]"><FaQrcode aria-hidden="true" /></span><span><strong className="block text-sm text-[#245139]">PIX</strong><small className="mt-0.5 block text-[11px] text-[#607965]">QR Code e copia e cola</small></span></button><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por cartão de crédito. Pode enviar o link seguro?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#e4d5c3] bg-[#fffaf3] p-3 text-left transition hover:border-[#b28b64] hover:bg-[#fdf4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f4e9d6] text-[#8a5a2f]"><FaCreditCard aria-hidden="true" /></span><span><strong className="block text-sm text-[#58412d]">Cartão</strong><small className="mt-0.5 block text-[11px] text-[#806c56]">Página segura</small></span></button></div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "date" && !dateHasTimes(date)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "date" && !dateHasTimes(date)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Conferir vagas" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
         {step !== "date" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>
