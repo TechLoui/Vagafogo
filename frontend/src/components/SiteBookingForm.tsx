@@ -40,7 +40,7 @@ export type BookingProgress = {
 };
 
 export type BookingUi = {
-  step: "identity_phone" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
+  step: "identity_phone" | "booking_mode" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
   reminderOptIn?: boolean;
   fields?: string[];
   draft?: {
@@ -144,6 +144,7 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 
 const stages = {
   identity_phone: { title: "Seu WhatsApp", hint: "Para retomarmos este atendimento, se for necessário.", icon: FaWhatsapp },
+  booking_mode: { title: "Como prefere reservar?", hint: "Escolha o jeito mais confortável para você.", icon: FaLeaf },
   phone: { title: "Seu WhatsApp", hint: "Para acompanhar os detalhes da sua reserva.", icon: FaUser },
   experiences: { title: "Escolha a experiência", hint: "Marque o brunch, a trilha ou os dois.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
@@ -182,7 +183,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   const revealContinue = () => requestAnimationFrame(() => submitButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 
   useEffect(() => {
-    if (ui.step === "identity_phone") return;
+    if (ui.step === "identity_phone" || ui.step === "booking_mode") return;
     const controller = new AbortController();
     fetch(`${API_BASE}/atendimento/site/catalogo`, { signal: controller.signal })
       .then(async (response) => {
@@ -397,6 +398,16 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   // caso o campo interativo some, mas a conversa por texto continua disponível.
   if (!stage) return null;
   const StageIcon = stage.icon;
+
+  if (step === "booking_mode") return (
+    <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Escolha como reservar">
+      <p className="text-sm font-bold text-[#244b38]">Como prefere reservar?</p>
+      <div className="mt-3 grid gap-2" style={choiceColumns}>
+        <button type="button" disabled={sending} onClick={() => void answer("Quero fazer a reserva guiada pela Jatobá, passo a passo.")} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#bcdcc7] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#245139] transition hover:border-[#20745a] hover:bg-[#f0f8f1] disabled:opacity-50"><FaUser className="shrink-0 text-[#20745a]" aria-hidden="true" /><span>Reservar com a Jatobá<small className="mt-0.5 block text-[11px] font-normal text-[#617267]">Acompanhamento pelo chat, passo a passo</small></span></button>
+        <button type="button" disabled={sending} onClick={() => void answer("Prefiro preencher o formulário da reserva por conta própria.")} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#e4d5c3] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#58412d] transition hover:border-[#a97a4b] hover:bg-[#fffaf3] disabled:opacity-50"><FaArrowRight className="shrink-0 text-[#8b4f23]" aria-hidden="true" /><span>Preencher por conta própria<small className="mt-0.5 block text-[11px] font-normal text-[#806c56]">Abrir o formulário oficial de reservas</small></span></button>
+      </div>
+    </div>
+  );
 
   if (step === "guidance") return (
     <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Orientações da reserva">

@@ -53,7 +53,7 @@ type SiteManualMessage = {
 };
 
 const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
-  "identity_phone", "phone", "experiences", "date", "time",
+  "identity_phone", "booking_mode", "phone", "experiences", "date", "time",
   "participants", "guidance", "contact", "summary", "payment", "availability",
 ]);
 
