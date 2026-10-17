@@ -125,7 +125,7 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 const stages = {
   identity_phone: { title: "Seu WhatsApp", hint: "Para retomarmos este atendimento, se for necessário.", icon: FaWhatsapp },
   phone: { title: "Seu WhatsApp", hint: "Para acompanhar os detalhes da sua reserva.", icon: FaUser },
-  experiences: { title: "Escolha a experiência", hint: "Você pode escolher um pacote ou o combo.", icon: FaLeaf },
+  experiences: { title: "Escolha a experiência", hint: "Marque o brunch, a trilha ou os dois.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
   time: { title: "Escolha o horário", hint: "A Jatobá confirmará as vagas para você.", icon: FaClock },
   participants: { title: "Quantas pessoas vão?", hint: "Separe por categoria para calcular o valor.", icon: FaUsers },
@@ -198,6 +198,13 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const trailPackages = selected.filter((item) => item.modoHorario === "intervalo");
   const adultType = catalog?.tiposClientes.find((item) => /adult/i.test(item.nome));
   const adultPrice = (offer: Package | Combo) => adultType ? Number(offer.precosPorTipo?.[adultType.id]) || 0 : 0;
+  const featuredCombo = catalog?.combos.find((item) => item.pacoteIds.length === 2
+    && /brunch/i.test(item.nome) && /trilha/i.test(item.nome)
+    && item.pacoteIds.every((id) => catalog.pacotes.some((pack) => pack.id === id)));
+  const featuredPackages = featuredCombo?.pacoteIds.map((id) => catalog?.pacotes.find((pack) => pack.id === id)).filter((item): item is Package => Boolean(item)) || [];
+  const featuredRegularPrice = featuredPackages.reduce((sum, item) => sum + adultPrice(item), 0);
+  const featuredComboPrice = featuredCombo ? adultPrice(featuredCombo) : 0;
+  const featuredSavings = Math.max(0, Math.round((featuredRegularPrice - featuredComboPrice) * 100) / 100);
   const quote = catalog?.tiposClientes.map((type) => {
     const quantity = quantityOf(counts, type.id);
     const packageSum = selected.reduce((sum, item) => sum + (Number(item.precosPorTipo?.[type.id]) || 0), 0);
@@ -279,17 +286,6 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
     setError("");
   };
-  const toggleCombo = (item: Combo) => {
-    if (combo?.id === item.id) {
-      setSelectedIds([]);
-      setPreferredComboId("");
-    } else {
-      setSelectedIds(item.pacoteIds);
-      setPreferredComboId(item.id);
-    }
-    setError("");
-  };
-
   // Uma sessão antiga pode conter uma etapa de outra versão do site. Nesse
   // caso o campo interativo some, mas a conversa por texto continua disponível.
   if (!stage) return null;
@@ -357,30 +353,27 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         )}
 
         {step === "experiences" && (catalogError ? <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{catalogError} Você pode responder por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando experiências…</p> : (
-          <div className="space-y-3.5">
-            <div className="grid gap-2.5" style={cardColumns} role="group" aria-label="Pacotes individuais">
+          <div className="space-y-2.5">
+            <div className="grid gap-2" style={cardColumns} role="group" aria-label="Escolha uma ou duas experiências">
               {catalog.pacotes.map((item) => {
                 const checked = selectedIds.includes(item.id);
                 const unavailableHere = unavailableIds.has(item.id);
-                return <button key={item.id} type="button" onClick={() => togglePackage(item.id)} disabled={sending || unavailableHere} aria-pressed={checked} className={`group flex min-w-0 flex-col gap-2.5 rounded-2xl border p-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "border-[#318360] bg-[#f0f7ee] shadow-[0_4px_14px_rgba(39,110,76,.12)]" : "border-[#e0e8da] bg-white hover:border-[#96b79d] hover:bg-[#fbfdf9]"}`}>
-                  <span className="flex w-full items-start gap-2.5"><OfferIcon name={item.nome} url={item.iconeUrl} emoji={item.emoji} /><span className="min-w-0 flex-1"><span className="block text-[13px] font-bold leading-snug text-[#264732]">{item.nome}</span><span className="mt-1 block text-[11px] font-medium text-[#63806b]">{unavailableHere ? "Indisponível nesta data" : adultPrice(item) > 0 ? `Adulto · ${money.format(adultPrice(item))}` : "Experiência individual"}</span></span><span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${checked ? "border-[#20745a] bg-[#20745a] text-white" : "border-[#b8cdbb] text-transparent"}`}><FaCheck className="text-[10px]" aria-hidden="true" /></span></span>
-                  {item.descricao && <span className="line-clamp-2 text-[11px] leading-relaxed text-[#647469]">{item.descricao}</span>}
-                  {combo && checked && <span className="text-[10px] font-semibold text-[#24805c]">Incluído no combo</span>}
+                return <button key={item.id} type="button" onClick={() => togglePackage(item.id)} disabled={sending || unavailableHere} aria-pressed={checked} className={`group flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "border-[#318360] bg-[#f0f7ee] shadow-[0_4px_14px_rgba(39,110,76,.12)]" : "border-[#e0e8da] bg-white hover:border-[#96b79d] hover:bg-[#fbfdf9]"}`}>
+                  <OfferIcon small name={item.nome} url={item.iconeUrl} emoji={item.emoji} />
+                  <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-snug text-[#264732]">{item.nome}</span><span className="mt-0.5 block text-[11px] font-medium text-[#63806b]">{unavailableHere ? "Indisponível nesta data" : adultPrice(item) > 0 ? `Adulto · ${money.format(adultPrice(item))}` : "Experiência individual"}</span></span>
+                  <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${checked ? "border-[#20745a] bg-[#20745a] text-white" : "border-[#b8cdbb] text-transparent"}`}><FaCheck className="text-[9px]" aria-hidden="true" /></span>
                 </button>;
               })}
             </div>
-            {catalog.combos.length > 0 && <div className="border-t border-[#e7ede3] pt-3"><p className="mb-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#688574]">Ou escolha o combo</p><div className="grid gap-2.5" style={cardColumns} role="group" aria-label="Combos">
-              {catalog.combos.map((item) => {
-                const checked = combo?.id === item.id;
-                const unavailableHere = item.pacoteIds.some((id) => unavailableIds.has(id));
-                const includedNames = item.pacoteIds.map((id) => catalog.pacotes.find((pack) => pack.id === id)?.nome).filter(Boolean).join(" + ");
-                return <button key={item.id} type="button" onClick={() => toggleCombo(item)} disabled={sending || unavailableHere} aria-pressed={checked} className={`flex min-w-0 flex-col gap-2.5 rounded-2xl border p-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "border-[#ad7948] bg-[#fcf5e9] shadow-[0_4px_14px_rgba(117,74,28,.12)]" : "border-[#e8d9c4] bg-[#fffaf2] hover:border-[#b48a5d]"}`}>
-                  <span className="flex w-full items-start gap-2.5"><OfferIcon name={item.nome} url={item.iconeUrl} emoji={item.emoji} combo /><span className="min-w-0 flex-1"><span className="block text-[10px] font-bold uppercase tracking-[.12em] text-[#9d713e]">Combo</span><span className="mt-0.5 block text-[13px] font-bold leading-snug text-[#58432a]">{item.nome}</span><span className="mt-1 block text-[11px] font-medium text-[#80694a]">{unavailableHere ? "Indisponível nesta data" : adultPrice(item) > 0 ? `Adulto · ${money.format(adultPrice(item))}` : "Experiências juntas"}</span></span><span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${checked ? "border-[#a8723e] bg-[#a8723e] text-white" : "border-[#c6ac87] text-transparent"}`}><FaCheck className="text-[10px]" aria-hidden="true" /></span></span>
-                  <span className="text-[11px] leading-relaxed text-[#766a58]">{includedNames || item.descricao}</span>
-                </button>;
-              })}
-            </div></div>}
-            {combo && <div className="flex gap-2 rounded-xl bg-[#edf6eb] px-3 py-2.5 text-[11px] leading-relaxed text-[#2d684a]"><FaCheck className="mt-0.5 shrink-0" aria-hidden="true" /><span><strong>{combo.nome}</strong> aplicado à sua escolha. Não há cobrança duplicada.</span></div>}
+            {featuredCombo && featuredRegularPrice > 0 && featuredComboPrice > 0 && (
+              <div className={`min-w-0 rounded-xl border px-3 py-2 text-xs leading-snug ${combo?.id === featuredCombo.id ? "border-[#bcdcc7] bg-[#edf6eb] text-[#245b3f]" : "border-[#e6dbc6] bg-[#fffaf0] text-[#6c5638]"}`}>
+                <p className="font-semibold">{combo?.id === featuredCombo.id ? "Brunch + Trilha: combo aplicado" : "Selecione Brunch + Trilha para aproveitar o combo"}</p>
+                {featuredSavings > 0 && (combo?.id === featuredCombo.id
+                  ? <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5"><span className="line-through opacity-65">{money.format(featuredRegularPrice)}</span><strong>{money.format(featuredComboPrice)}</strong><span>por adulto · economia de {money.format(featuredSavings)}</span></p>
+                  : <p className="mt-0.5">Economize {money.format(featuredSavings)} por adulto ao selecionar os dois.</p>)}
+                {featuredSavings === 0 && combo?.id === featuredCombo.id && <p className="mt-0.5">{money.format(featuredComboPrice)} por adulto.</p>}
+              </div>
+            )}
             {unavailable.length > 0 && <p role="alert" className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">Uma das experiências selecionadas não está disponível nessa data.</p>}
           </div>
         ))}

@@ -717,7 +717,7 @@ export function SiteChatWidget() {
   const isCompactReply = (message: ChatMessage) => message.role === "assistant"
     && message.id === messages.at(-1)?.id
     && Boolean(bookingUi && ["phone", "experiences", "date", "participants"].includes(bookingUi.step))
-    && message.content.length > 420
+    && message.content.length > (bookingUi?.step === "experiences" ? 180 : 420)
     && !extractOfficialCardCheckout(message.content);
 
   if (hidden) return null;
