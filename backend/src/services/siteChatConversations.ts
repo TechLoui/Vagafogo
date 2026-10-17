@@ -1,10 +1,12 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
+const MESSAGE_COLLECTION = process.env.SITE_CHAT_MESSAGES_COLLECTION?.trim() || `${COLLECTION}_messages`;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_MESSAGES = 120;
 const MAX_MESSAGE_BYTES = 700_000;
+const CLEANUP_BATCH_SIZE = 450;
 
 export const filtrarMensagensSiteVigentes = <T extends { ts: number }>(messages: T[], now = Date.now()): T[] =>
   messages.filter((message) => Number(message.ts) > now - TTL_MS);
@@ -20,6 +22,19 @@ export const limitarHistoricoSite = <T extends { ts: number }>(messages: T[], no
     bytes += size;
   }
   return kept.reverse();
+};
+
+export const combinarMensagensSite = (
+  cached: SiteConversationMessage[], archived: SiteConversationMessage[], after = 0,
+  onlyAgent = false, now = Date.now(),
+): SiteConversationMessage[] => {
+  const unique = new Map<string, SiteConversationMessage>();
+  for (const message of [...cached, ...archived]) {
+    if (message.ts <= now - TTL_MS || message.ts <= after) continue;
+    if (onlyAgent && message.from !== "agent") continue;
+    unique.set(message.id, message);
+  }
+  return Array.from(unique.values()).sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
 };
 
 export type SiteConversationMode = "bot" | "human" | "blocked";
@@ -165,6 +180,35 @@ const serializeConversation = (conversation: SiteConversation) => ({
   controlUpdatedAt: conversation.controlUpdatedAt ? new Date(conversation.controlUpdatedAt) : null,
 });
 
+const archiveMessageId = (sessionId: string, messageId: string) =>
+  createHash("sha256").update(`${sessionId}\0${messageId}`).digest("hex");
+
+const persistMessageAndConversation = async (conversation: SiteConversation, message: SiteConversationMessage) => {
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) return;
+  const batch = firestore.batch();
+  batch.set(firestore.collection(COLLECTION).doc(conversation.sessionId), serializeConversation(conversation));
+  batch.set(firestore.collection(MESSAGE_COLLECTION).doc(archiveMessageId(conversation.sessionId, message.id)), {
+    ...message,
+    sessionId: conversation.sessionId,
+    expiresAt: new Date(message.ts + TTL_MS),
+  });
+  await batch.commit();
+};
+
+const deleteArchivedMessages = async (query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>) => {
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) return;
+  for (;;) {
+    const snapshot = await query.limit(CLEANUP_BATCH_SIZE).get();
+    if (snapshot.empty) return;
+    const batch = firestore.batch();
+    snapshot.docs.forEach((document) => batch.delete(document.ref));
+    await batch.commit();
+    if (snapshot.size < CLEANUP_BATCH_SIZE) return;
+  }
+};
+
 const hydrate = async () => {
   if (hydrationPromise) return hydrationPromise;
   hydrationPromise = (async () => {
@@ -230,6 +274,11 @@ const removeExpired = async () => {
   } catch (error) {
     console.error("[site-chat] Nao foi possivel limpar conversas expiradas:", error);
   }
+  try {
+    await deleteArchivedMessages(firestore.collection(MESSAGE_COLLECTION).where("expiresAt", "<=", new Date(now)));
+  } catch (error) {
+    console.error("[site-chat] Nao foi possivel limpar mensagens expiradas:", error);
+  }
 };
 
 export const limparConversasSiteExpiradas = async () => {
@@ -285,7 +334,10 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
   }
   if (!conversation) throw new Error("SITE_CHAT_SESSION_INVALID");
   const duplicate = sourceId && conversation.messages.find((message) => message.sourceId === sourceId);
-  if (duplicate) return { conversation, message: duplicate, duplicated: true };
+  if (duplicate) {
+    await persistMessageAndConversation(conversation, duplicate);
+    return { conversation, message: duplicate, duplicated: true };
+  }
 
   const message: SiteConversationMessage = {
     id: sourceId || randomUUID(),
@@ -305,7 +357,7 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
   conversation.expiresAt = now + TTL_MS;
   if (input.incrementUnread) conversation.unread += 1;
   conversations.set(sessionId, conversation);
-  await persist(conversation);
+  await persistMessageAndConversation(conversation, message);
   return { conversation, message, duplicated: false };
 });
 
@@ -358,7 +410,21 @@ export const listarConversasSite = async () => {
 export const listarMensagensConversaSite = async (sessionId: string, after = 0, onlyAgent = false) => {
   const conversation = await obterConversaSite(sessionId);
   if (!conversation) return [];
-  return conversation.messages.filter((message) => message.ts > after && (!onlyAgent || message.from === "agent"));
+  // A primeira abertura no painel recupera o arquivo completo. As consultas
+  // incrementais do painel e do visitante usam o cache recente, sem reler
+  // todos os documentos a cada atualização.
+  if (onlyAgent || after > 0) return combinarMensagensSite(conversation.messages, [], after, onlyAgent);
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) return combinarMensagensSite(conversation.messages, [], after, onlyAgent);
+  try {
+    const snapshot = await firestore.collection(MESSAGE_COLLECTION).where("sessionId", "==", sessionId).get();
+    const archived = snapshot.docs.map((document) => normalizeMessage(document.data()))
+      .filter((message): message is SiteConversationMessage => Boolean(message));
+    return combinarMensagensSite(conversation.messages, archived, after, onlyAgent);
+  } catch (error) {
+    console.error("[site-chat] Nao foi possivel consultar o historico completo:", error);
+    return combinarMensagensSite(conversation.messages, [], after, onlyAgent);
+  }
 };
 
 export const marcarConversaSiteLida = async (sessionId: string) => mutate(sessionId, async () => {
@@ -399,6 +465,7 @@ export const removerConversaSite = async (sessionId: string) => mutate(sessionId
   await hydrate();
   const existed = conversations.delete(sessionId);
   const firestore = obterFirestoreAdmin();
+  if (firestore) await deleteArchivedMessages(firestore.collection(MESSAGE_COLLECTION).where("sessionId", "==", sessionId));
   if (firestore) await firestore.collection(COLLECTION).doc(sessionId).delete().catch((error) => {
     console.error("[site-chat] Nao foi possivel excluir a conversa:", error);
   });

@@ -6,6 +6,7 @@ process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
 const {
   alterarModoConversaSite,
+  combinarMensagensSite,
   filtrarMensagensSiteVigentes,
   limitarHistoricoSite,
   listarConversasSite,
@@ -33,6 +34,22 @@ test("limita o historico para caber em um documento sem perder as mensagens nova
   assert.ok(Buffer.byteLength(JSON.stringify(retained), "utf8") <= 700_000);
   assert.equal(retained.at(-1).id, "119");
   assert.ok(retained.length < messages.length);
+});
+
+test("painel combina o cache com o arquivo completo dos ultimos sete dias", () => {
+  const now = Date.now();
+  const archived = Array.from({ length: 150 }, (_, index) => ({
+    id: `message-${index}`,
+    from: index % 3 === 0 ? "agent" : "client",
+    text: `Mensagem ${index}`,
+    ts: now - 150 + index,
+  }));
+  const cached = archived.slice(-120);
+  assert.equal(combinarMensagensSite(cached, archived, 0, false, now).length, 150);
+  assert.equal(combinarMensagensSite(cached, archived, now - 20, false, now).length, 19);
+  assert.equal(combinarMensagensSite(cached, archived, 0, true, now).length, 50);
+  const expired = { id: "expired", from: "client", text: "Antiga", ts: now - 8 * 24 * 60 * 60 * 1000 };
+  assert.equal(combinarMensagensSite(cached, [...archived, expired], 0, false, now).length, 150);
 });
 
 test("unifica o atendimento do site e entrega a resposta manual ao visitante", async () => {
