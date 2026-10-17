@@ -27,8 +27,16 @@ type Combo = {
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
 type SiteAgenda = { mes: string; dias: Record<string, Record<string, string[]>> };
 
+export type BookingProgress = {
+  selectedIds: string[];
+  preferredComboId: string;
+  date: string;
+  times: Record<string, string>;
+  counts: Record<string, number>;
+};
+
 export type BookingUi = {
-  step: "identity_phone" | "phone" | "experiences" | "date" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
+  step: "identity_phone" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
   reminderOptIn?: boolean;
   fields?: string[];
   draft?: {
@@ -136,17 +144,23 @@ const stages = {
   payment: { title: "Como prefere pagar?", hint: "Sua reserva é confirmada após a aprovação do pagamento.", icon: FaCreditCard },
 };
 
-export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; sending: boolean; onAnswer: (message: string, phone?: string, selection?: SiteBookingSelection) => Promise<boolean> }) {
+export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }: {
+  ui: BookingUi;
+  sending: boolean;
+  onAnswer: (message: string, phone?: string, selection?: SiteBookingSelection) => Promise<boolean>;
+  progress: BookingProgress;
+  onProgress: (patch: Partial<BookingProgress>) => void;
+}) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
-  const [date, setDate] = useState(ui.draft?.data || "");
-  const [calendarMonth, setCalendarMonth] = useState((ui.draft?.data || today()).slice(0, 7));
+  const [date, setDate] = useState(ui.draft?.data || progress.date || "");
+  const [calendarMonth, setCalendarMonth] = useState((ui.draft?.data || progress.date || today()).slice(0, 7));
   const [agendaState, setAgendaState] = useState<{ key: string; value?: SiteAgenda; error?: boolean }>({ key: "" });
   const [agendaRefresh, setAgendaRefresh] = useState(0);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [preferredComboId, setPreferredComboId] = useState("");
-  const [times, setTimes] = useState<Record<string, string>>(ui.draft?.horariosPorPacote || {});
-  const [counts, setCounts] = useState<Record<string, number>>(ui.draft?.participantesPorTipo || {});
+  const [selectedIds, setSelectedIds] = useState<string[]>(progress.selectedIds);
+  const [preferredComboId, setPreferredComboId] = useState(progress.preferredComboId);
+  const [times, setTimes] = useState<Record<string, string>>({ ...progress.times, ...ui.draft?.horariosPorPacote });
+  const [counts, setCounts] = useState<Record<string, number>>({ ...progress.counts, ...ui.draft?.participantesPorTipo });
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [cpf, setCpf] = useState("");
@@ -177,13 +191,16 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   useEffect(() => {
     if (!catalog || !ui.draft?.ofertaId) return;
     if (ui.draft.tipoOferta === "combo") {
-      setSelectedIds(catalog.combos.find((item) => item.id === ui.draft?.ofertaId)?.pacoteIds || []);
+      const ids = catalog.combos.find((item) => item.id === ui.draft?.ofertaId)?.pacoteIds || [];
+      setSelectedIds(ids);
       setPreferredComboId(ui.draft.ofertaId);
+      onProgress({ selectedIds: ids, preferredComboId: ui.draft.ofertaId });
     } else {
       setSelectedIds([ui.draft.ofertaId]);
       setPreferredComboId("");
+      onProgress({ selectedIds: [ui.draft.ofertaId], preferredComboId: "" });
     }
-  }, [catalog, ui.draft?.ofertaId, ui.draft?.tipoOferta]);
+  }, [catalog, ui.draft?.ofertaId, ui.draft?.tipoOferta, onProgress]);
 
   const selected = useMemo(() => catalog?.pacotes.filter((item) => selectedIds.includes(item.id)) || [], [catalog, selectedIds]);
   const selectedPackageKey = selected.map((item) => item.id).sort().join(",");
@@ -227,8 +244,11 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
 
   useEffect(() => {
     if (step !== "date" || !date || !agenda) return;
-    if (!selected.length || !selected.every((item) => (agenda.dias[date]?.[item.id] ?? []).length > 0)) setDate("");
-  }, [step, date, agenda, selected]);
+    if (!selected.length || !selected.every((item) => (agenda.dias[date]?.[item.id] ?? []).length > 0)) {
+      setDate("");
+      onProgress({ date: "", times: {} });
+    }
+  }, [step, date, agenda, selected, onProgress]);
   if (step === "availability") return null;
 
   const weekday = date ? new Date(`${date}T12:00:00Z`).getUTCDay() : -1;
@@ -271,6 +291,24 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     : step === "time" && brunchHasScheduledTime
     ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
     : stages[step];
+  const estimate = quote.reduce((sum, item) => sum + item.subtotal, 0);
+  const liveSummary = selected.length > 0 ? (
+    <details className="group overflow-hidden rounded-xl border border-[#d8e7d7] bg-[#f6faf3] text-[#31513c]">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#20745a] [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2"><FaRegCheckCircle className="shrink-0 text-[#20745a]" aria-hidden="true" /><span className="truncate">Ver resumo da visita</span></span>
+        <span className="flex shrink-0 items-center gap-2 text-[#20745a]">{quote.length ? money.format(estimate) : "Em andamento"}<span aria-hidden="true" className="text-base leading-none transition-transform group-open:rotate-180">⌄</span></span>
+      </summary>
+      <div className="space-y-1.5 border-t border-[#dce9d8] px-3 py-2.5 text-[11px] leading-relaxed">
+        <p><strong>Experiência:</strong> {combo?.nome || selected.map((item) => item.nome).join(" + ")}</p>
+        <p><strong>Data:</strong> {date ? readableDate(date) : "a escolher"}</p>
+        {scheduled.map((item) => <p key={item.id}><strong>{/brunch|gastron/i.test(item.nome) ? "Brunch" : item.nome}:</strong> {knownTime(item) ? `${displayHour(knownTime(item))} (horário marcado)` : "horário a escolher"}</p>)}
+        {trailPackages.length > 0 && <p><strong>Trilha:</strong> dentro da faixa de funcionamento, com entrada até 15h</p>}
+        <p><strong>Participantes:</strong> {quote.length ? quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ") : "a informar"}</p>
+        {quote.length > 0 && <div className="space-y-0.5 border-t border-[#dce9d8] pt-1.5">{quote.map(({ type, quantity, subtotal }) => <p key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome}</span><span>{money.format(subtotal)}</span></p>)}<p className="flex justify-between gap-2 pt-1 font-bold"><span>Total estimado</span><span>{money.format(estimate)}</span></p></div>}
+        <p className="text-[#718075]">A Jatobá confirmará vagas e valor antes do pagamento.</p>
+      </div>
+    </details>
+  ) : null;
 
   const answer = async (message: string, contactPhone?: string, selection?: SiteBookingSelection) => {
     setError("");
@@ -326,8 +364,12 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   };
 
   const togglePackage = (id: string) => {
+    const next = selectedIds.includes(id) ? selectedIds.filter((value) => value !== id) : [...selectedIds, id];
     setPreferredComboId("");
-    setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+    setSelectedIds(next);
+    setTimes({});
+    setCounts({});
+    onProgress({ selectedIds: next, preferredComboId: "", times: {}, counts: {} });
     setError("");
   };
   // Uma sessão antiga pode conter uma etapa de outra versão do site. Nesse
@@ -338,6 +380,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   if (step === "guidance") return (
     <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Orientações da reserva">
       <div className="flex items-center gap-2.5 text-sm font-bold text-[#244b38]"><FaRegCheckCircle className="text-[#20745a]" aria-hidden="true" />Antes de continuar</div>
+      {liveSummary && <div className="mt-3">{liveSummary}</div>}
       <div className="mt-3 space-y-2 text-xs leading-relaxed text-[#445a49]">
         <p>• Brunch e combo exigem reserva e pagamento antecipados; não são vendidos no balcão.</p>
         <p>• A trilha individual pode ser paga no local, conforme a disponibilidade.</p>
@@ -359,16 +402,9 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
           <div className="min-w-0"><p className="text-sm font-bold leading-snug text-[#244b38]">{stage.title}</p><p className="mt-0.5 text-xs leading-relaxed text-[#65766a]">{stage.hint}</p></div>
         </div>
       </div>
+      {liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
       <div className="space-y-2.5 p-3 sm:p-3.5">
         {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
-        {step !== "experiences" && step !== "date" && selected.length > 0 && (
-          <div className="flex min-w-0 items-center gap-2.5 rounded-2xl border border-[#e3ebdf] bg-[#f8faf5] p-2.5">
-            <OfferIcon small name={combo?.nome || selected[0].nome} url={combo?.iconeUrl || selected[0].iconeUrl} emoji={combo?.emoji || selected[0].emoji} combo={Boolean(combo)} />
-            <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-[#315b43]">{combo?.nome || selected.map((item) => item.nome).join(" + ")}</p>{date && <p className="mt-0.5 text-[11px] text-[#6e7d70]">{readableDate(date)}</p>}</div>
-            <FaCheck className="shrink-0 text-xs text-[#338663]" aria-hidden="true" />
-          </div>
-        )}
-
         {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
           <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2 text-[11px] leading-[1.45] text-[#3d6147]">
             <strong className="block text-xs">{item.nome} · {item.horarioInicio && item.horarioFim ? `${displayHour(item.horarioInicio)}–${displayHour(item.horarioFim)}` : "faixa de funcionamento"}</strong>
@@ -385,8 +421,8 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
                 mode="single"
                 selected={dateFromKey(date)}
                 month={dateFromKey(`${calendarMonth}-01`)}
-                onMonthChange={(month) => { setCalendarMonth(keyFromDate(month).slice(0, 7)); setDate(""); setError(""); }}
-                onSelect={(day) => { setDate(day ? keyFromDate(day) : ""); setError(""); if (day) revealContinue(); }}
+                onMonthChange={(month) => { setCalendarMonth(keyFromDate(month).slice(0, 7)); setDate(""); onProgress({ date: "", times: {} }); setError(""); }}
+                onSelect={(day) => { const next = day ? keyFromDate(day) : ""; setDate(next); setTimes({}); onProgress({ date: next, times: {} }); setError(""); if (day) revealContinue(); }}
                 disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())) || !dateHasTimes(key); }}
                 today={dateFromKey(today())}
                 locale={ptBR}
@@ -430,7 +466,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
               {item.horarios.map((hour) => {
                 const selected = (times[item.id] || knownTime(item)) === hour;
                 const available = hourAvailable(item, hour);
-                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={selected && available} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${selected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={selected && available} onClick={() => { const next = { ...times, [item.id]: hour }; setTimes(next); onProgress({ times: next }); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${selected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
                   <span className="block text-base font-bold">{displayHour(hour)}</span>
                   <span className={`mt-0.5 block text-[10px] ${selected && available ? "text-white/85" : "text-[#718075]"}`}>{!available && agenda ? "Indisponível" : /brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
                 </button>;
@@ -448,12 +484,12 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
               {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e]">{hint}</span>}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.max(0, count - 1) }))} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
+              <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.max(0, count - 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
               <output className="w-5 text-center text-sm font-bold">{count}</output>
-              <button type="button" onClick={() => setCounts((current) => ({ ...current, [type.id]: Math.min(99, count + 1) }))} disabled={count >= 99} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
+              <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.min(99, count + 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count >= 99} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
             </div>
           </div>;
-        })}{quote.length > 0 && <div className="rounded-xl bg-[#f3f7ef] p-3 text-xs"><div className="space-y-1">{quote.map(({ type, quantity, unit, subtotal }) => <div key={type.id} className="flex justify-between gap-2"><span>{quantity} × {type.nome} · {money.format(unit)}</span><span className="shrink-0">{money.format(subtotal)}</span></div>)}</div><div className="mt-2 flex justify-between border-t border-[#dbe7d7] pt-2 font-bold"><span>Estimativa</span><span>{money.format(quote.reduce((sum, item) => sum + item.subtotal, 0))}</span></div><p className="mt-1 text-[#657368]">A Jatobá confirmará vaga e valor antes de reservar.</p></div>}</div>)}
+        })}</div>)}
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <label className="block text-xs font-semibold">Vai levar pet?<select value={pet} onChange={(event) => setPet(event.target.value)} required className={inputClass}><option value="">Selecione</option><option value="no">Não</option><option value="yes">Sim</option></select>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</label>}</div>}
 

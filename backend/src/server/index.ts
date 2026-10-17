@@ -80,6 +80,7 @@ import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingF
 import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
+import { requireTimeBeforeParticipants } from "../services/siteBookingStepOrder";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -414,6 +415,20 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const body = response.body as Record<string, any>;
+  if (body.booking_ui && typeof body.booking_ui === "object"
+    && body.booking_ui.step === "participants" && body.booking_ui.draft?.ofertaId) {
+    try {
+      const catalog = await listarCatalogoAgente();
+      const corrected = requireTimeBeforeParticipants(body.booking_ui, catalog.pacotes, catalog.combos);
+      if (corrected) {
+        body.booking_ui = corrected;
+        body.resposta = "Perfeito! Antes de informar quantas pessoas vão participar, escolha o horário do brunch. Depois seguimos com os participantes e o resumo da visita. 🌿";
+        body.mensagens_adicionais = [];
+      }
+    } catch (error) {
+      console.error("[site-chat] Não foi possível conferir a ordem da reserva:", error);
+    }
+  }
   const currentConversation = await obterConversaSite(sessionId);
   if (currentConversation?.mode === "human" && !body.handoff) {
     res.json({

@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 import { FaWhatsapp } from "react-icons/fa";
 import jatobaIcon from "../assets/jatoba-crest.webp";
 import { SiteBookingForm } from "./SiteBookingForm";
-import type { BookingUi, SiteBookingSelection } from "./SiteBookingForm";
+import type { BookingProgress, BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -42,6 +42,7 @@ type StoredChat = {
   phone: string;
   messages: ChatMessage[];
   bookingUi?: BookingUi | null;
+  bookingProgress?: BookingProgress;
 };
 
 type SiteManualMessage = {
@@ -52,7 +53,7 @@ type SiteManualMessage = {
 };
 
 const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
-  "identity_phone", "phone", "experiences", "date",
+  "identity_phone", "phone", "experiences", "date", "time",
   "participants", "guidance", "contact", "summary", "payment", "availability",
 ]);
 
@@ -65,6 +66,22 @@ const safeBookingUi = (value: unknown): BookingUi | null => {
     step: candidate.step as BookingUi["step"],
     fields: Array.isArray(candidate.fields) ? candidate.fields.filter((field): field is string => typeof field === "string") : [],
     draft: candidate.draft && typeof candidate.draft === "object" && !Array.isArray(candidate.draft) ? candidate.draft : undefined,
+  };
+};
+
+const emptyBookingProgress = (): BookingProgress => ({
+  selectedIds: [], preferredComboId: "", date: "", times: {}, counts: {},
+});
+
+const safeBookingProgress = (value: unknown): BookingProgress => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyBookingProgress();
+  const data = value as Partial<BookingProgress>;
+  return {
+    selectedIds: Array.isArray(data.selectedIds) ? data.selectedIds.filter((id): id is string => typeof id === "string").slice(0, 3) : [],
+    preferredComboId: typeof data.preferredComboId === "string" ? data.preferredComboId : "",
+    date: typeof data.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : "",
+    times: data.times && typeof data.times === "object" && !Array.isArray(data.times) ? data.times : {},
+    counts: data.counts && typeof data.counts === "object" && !Array.isArray(data.counts) ? data.counts : {},
   };
 };
 
@@ -96,6 +113,7 @@ const safeStoredChat = (): StoredChat | null => {
       ...parsed,
       expiresAt,
       bookingUi: safeBookingUi(parsed.bookingUi),
+      bookingProgress: safeBookingProgress(parsed.bookingProgress),
       messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({
         ...message,
         content: parsed.messages.length === 1 && message.role === "assistant" && message.content?.includes("Antes de começarmos") ? WELCOME : message.content,
@@ -381,6 +399,10 @@ export function SiteChatWidget() {
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
   const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.name ? initial.bookingUi || null : null);
+  const [bookingProgress, setBookingProgress] = useState<BookingProgress>(initial?.bookingProgress || emptyBookingProgress());
+  const updateBookingProgress = useCallback((patch: Partial<BookingProgress>) => {
+    setBookingProgress((current) => ({ ...current, ...patch }));
+  }, []);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
   const [draft, setDraft] = useState("");
@@ -415,6 +437,7 @@ export function SiteChatWidget() {
     setPhone(redirectedPhone);
     setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
     setBookingUi(null);
+    setBookingProgress(emptyBookingProgress());
     setSessionRegistered(false);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
     setDraft("");
@@ -479,8 +502,9 @@ export function SiteChatWidget() {
       phone,
       messages: persistable,
       bookingUi,
+      bookingProgress,
     } satisfies StoredChat));
-  }, [bookingUi, expiresAt, messages, name, phone, sessionId]);
+  }, [bookingUi, bookingProgress, expiresAt, messages, name, phone, sessionId]);
 
   useEffect(() => {
     const pending = messages.find((message) => message.animate && (message.visibleAdditional ?? message.additional?.length ?? 0) < (message.additional?.length || 0));
@@ -669,7 +693,23 @@ export function SiteChatWidget() {
       if (returnedName || answerName) setName(returnedName || answerName);
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
-      setBookingUi(result.atendimento_humano ? null : safeBookingUi(result.booking_ui));
+      const nextBookingUi = result.atendimento_humano ? null : safeBookingUi(result.booking_ui);
+      setBookingUi(nextBookingUi);
+      if (nextBookingUi?.step === "experiences" && !nextBookingUi.draft?.ofertaId) {
+        setBookingProgress(emptyBookingProgress());
+      } else if (nextBookingUi?.draft) {
+        const nextDraft = nextBookingUi.draft;
+        const changedDate = Boolean(nextDraft.data && bookingProgress.date && nextDraft.data !== bookingProgress.date);
+        const draftTime = nextDraft.horario && nextDraft.ofertaId && nextDraft.tipoOferta !== "combo"
+          ? { [nextDraft.ofertaId]: nextDraft.horario } : {};
+        const draftHasCounts = Object.values(nextDraft.participantesPorTipo || {}).some((value) => Number(value) > 0);
+        updateBookingProgress({
+          ...(nextDraft.data ? { date: nextDraft.data } : {}),
+          ...(changedDate || Object.keys(draftTime).length || nextDraft.horariosPorPacote
+            ? { times: { ...(changedDate ? {} : bookingProgress.times), ...draftTime, ...nextDraft.horariosPorPacote } } : {}),
+          ...(changedDate || draftHasCounts ? { counts: draftHasCounts ? nextDraft.participantesPorTipo! : {} } : {}),
+        });
+      }
       if (result.resposta) {
         const assistantMessage: ChatMessage = {
           id: createId(),
@@ -718,7 +758,7 @@ export function SiteChatWidget() {
     ? messages.at(-1)?.id : null;
   const isCompactReply = (message: ChatMessage) => message.role === "assistant"
     && message.id === messages.at(-1)?.id
-    && Boolean(bookingUi && ["phone", "experiences", "date", "participants"].includes(bookingUi.step))
+    && Boolean(bookingUi && ["phone", "experiences", "date", "time", "participants"].includes(bookingUi.step))
     && message.content.length > (bookingUi?.step === "experiences" ? 180 : 420)
     && !extractOfficialCardCheckout(message.content);
 
@@ -782,7 +822,7 @@ export function SiteChatWidget() {
                             <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental"><FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp</a>
                           </div>
                         )}
-                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} /></div>}
+                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} progress={bookingProgress} onProgress={updateBookingProgress} /></div>}
                       </div>
                     </div>
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
