@@ -439,7 +439,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
       </div>
       {step === "summary" && summaryBody
         ? <div className="px-3 pt-3 sm:px-3.5"><div role="region" aria-label="Resumo completo da reserva" tabIndex={0} className="max-h-[min(38dvh,260px)] overflow-y-auto overscroll-contain rounded-xl border border-[#d8e7d7] bg-[#f6faf3] px-3 py-2.5 text-xs leading-[1.5] whitespace-pre-line text-[#31513c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{summaryBody}</div></div>
-        : liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
+        : step !== "payment" && liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
       <div className="space-y-2.5 p-3 sm:p-3.5">
         {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
         {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
