@@ -53,6 +53,17 @@ type SiteConversation = {
   updatedBy: string | null;
   handoffPending: boolean;
   handoffRequestedAt: number | null;
+  bookingFollowup: {
+    step: string;
+    date: string;
+    hour: string;
+    offerId: string;
+    offerName: string;
+    optedIn: boolean;
+    lastClientAt: number;
+    sentAt: number | null;
+    lastAttemptAt: number | null;
+  } | null;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
@@ -103,6 +114,8 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     : "bot";
   const now = Date.now();
   const lastMessageAt = normalizeTimestamp(value.lastMessageAt, last?.ts ?? now);
+  const rawFollowup = value.bookingFollowup && typeof value.bookingFollowup === "object"
+    ? value.bookingFollowup as Record<string, unknown> : null;
   return {
     id: sessionId,
     jid: `site:${sessionId}`,
@@ -126,6 +139,17 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     handoffRequestedAt: mode === "human" && String(value.updatedBy ?? "") === "jatoba"
       ? normalizeTimestamp(value.controlUpdatedAt, now)
       : null,
+    bookingFollowup: rawFollowup ? {
+      step: String(rawFollowup.step ?? "").slice(0, 40),
+      date: String(rawFollowup.date ?? "").slice(0, 10),
+      hour: String(rawFollowup.hour ?? "").slice(0, 5),
+      offerId: String(rawFollowup.offerId ?? "").slice(0, 100),
+      offerName: String(rawFollowup.offerName ?? "").slice(0, 160),
+      optedIn: rawFollowup.optedIn === true,
+      lastClientAt: normalizeTimestamp(rawFollowup.lastClientAt),
+      sentAt: rawFollowup.sentAt ? normalizeTimestamp(rawFollowup.sentAt) : null,
+      lastAttemptAt: rawFollowup.lastAttemptAt ? normalizeTimestamp(rawFollowup.lastAttemptAt) : null,
+    } : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, last?.ts ?? now),
     expiresAt: normalizeTimestamp(value.expiresAt, now + TTL_MS),
@@ -290,6 +314,38 @@ export const obterConversaSite = async (sessionId: string) => {
   await removeExpired();
   return conversations.get(sessionId) ?? null;
 };
+
+export const atualizarProgressoReservaSite = async (sessionId: string, ui: unknown, lastClientAt: number) => mutate(sessionId, async () => {
+  await hydrate();
+  const conversation = conversations.get(sessionId);
+  if (!conversation) return null;
+  const raw = ui && typeof ui === "object" ? ui as Record<string, unknown> : {};
+  const draft = raw.draft && typeof raw.draft === "object" ? raw.draft as Record<string, unknown> : {};
+  const previous = conversation.bookingFollowup;
+  const step = String(raw.step ?? "");
+  conversation.bookingFollowup = {
+    step: ["contact", "summary", "payment"].includes(step) ? step : "",
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(draft.data ?? "")) ? String(draft.data) : previous?.date ?? "",
+    hour: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(draft.horario ?? "")) ? String(draft.horario) : previous?.hour ?? "",
+    offerId: String(draft.ofertaId ?? previous?.offerId ?? "").slice(0, 100),
+    offerName: String(draft.ofertaNome ?? previous?.offerName ?? "").slice(0, 160),
+    optedIn: raw.reminderOptIn === true,
+    lastClientAt: Math.max(0, lastClientAt),
+    sentAt: previous?.sentAt ?? null,
+    lastAttemptAt: previous?.lastAttemptAt ?? null,
+  };
+  await persist(conversation);
+  return conversation.bookingFollowup;
+});
+
+export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean) => mutate(sessionId, async () => {
+  await hydrate();
+  const conversation = conversations.get(sessionId);
+  if (!conversation?.bookingFollowup) return;
+  conversation.bookingFollowup.lastAttemptAt = Date.now();
+  if (sent) conversation.bookingFollowup.sentAt = Date.now();
+  await persist(conversation);
+});
 
 export const listarConversasSite = async () => {
   await hydrate();

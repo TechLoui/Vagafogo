@@ -27,7 +27,8 @@ type Combo = {
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
 
 export type BookingUi = {
-  step: "identity_phone" | "phone" | "experiences" | "date" | "participants" | "contact" | "summary" | "payment" | "availability";
+  step: "identity_phone" | "phone" | "experiences" | "date" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
+  reminderOptIn?: boolean;
   fields?: string[];
   draft?: {
     tipoOferta?: string;
@@ -45,7 +46,7 @@ export type SiteBookingSelection = {
   ofertaId: string;
   data: string;
   horariosPorPacote: Record<string, string>;
-};
+} | { step: "guidance"; accepted: boolean };
 
 const validCpf = (input: string) => {
   const cpf = input.replace(/\D/g, "");
@@ -128,6 +129,7 @@ const stages = {
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
   time: { title: "Escolha o horário", hint: "A Jatobá confirmará as vagas para você.", icon: FaClock },
   participants: { title: "Quantas pessoas vão?", hint: "Separe por categoria para calcular o valor.", icon: FaUsers },
+  guidance: { title: "Antes de continuar", hint: "Confira as orientações da sua visita.", icon: FaRegCheckCircle },
   contact: { title: "Dados para a reserva", hint: "Preencha apenas o que ainda falta.", icon: FaUser },
   summary: { title: "Tudo certo até aqui?", hint: "Confira o resumo enviado pela Jatobá antes de seguir.", icon: FaRegCheckCircle },
   payment: { title: "Como prefere pagar?", hint: "Sua reserva é confirmada após a aprovação do pagamento.", icon: FaCreditCard },
@@ -292,6 +294,22 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   // caso o campo interativo some, mas a conversa por texto continua disponível.
   if (!stage) return null;
   const StageIcon = stage.icon;
+
+  if (step === "guidance") return (
+    <div className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white p-4 text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Orientações da reserva">
+      <div className="flex items-center gap-2.5 text-sm font-bold text-[#244b38]"><FaRegCheckCircle className="text-[#20745a]" aria-hidden="true" />Antes de continuar</div>
+      <div className="mt-3 space-y-2 text-xs leading-relaxed text-[#445a49]">
+        <p>• Brunch e combo precisam de reserva e pagamento antecipados. Chegar ao balcão não garante vaga.</p>
+        <p>• A trilha individual pode ser paga no local, conforme a disponibilidade.</p>
+        <p>• A reserva só está confirmada após o pagamento aprovado.</p>
+        <p>• Se você parar antes de concluir, podemos enviar um único aviso para o WhatsApp informado.</p>
+      </div>
+      <div className="mt-4 grid gap-2" style={choiceColumns}>
+        <button type="button" disabled={sending} onClick={() => void answer("Li as orientações e concordo em continuar a reserva.", undefined, { step: "guidance", accepted: true })} className="min-h-11 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Concordo</button>
+        <button type="button" disabled={sending} onClick={() => void answer("Não concordo com as orientações da reserva.", undefined, { step: "guidance", accepted: false })} className="min-h-11 rounded-xl border border-[#cddfcf] bg-white px-3 py-2.5 text-sm font-semibold text-[#305944] disabled:opacity-50">Não concordo</button>
+      </div>
+    </div>
+  );
 
   return (
     <form onSubmit={(event) => void submit(event)} className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Responder à Jatobá">

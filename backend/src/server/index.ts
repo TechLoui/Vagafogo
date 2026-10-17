@@ -64,6 +64,7 @@ import { registrarEventoJornada } from "../services/crmJourneys";
 import { agentServiceConfigured, requestAgentService, type AgentResponse } from "../services/agentGateway";
 import {
   alterarModoConversaSite,
+  atualizarProgressoReservaSite,
   isSiteConversationJid,
   listarConversasSite,
   limparConversasSiteExpiradas,
@@ -75,6 +76,7 @@ import {
   siteSessionIdFromJid,
   type SiteConversationMode,
 } from "../services/siteChatConversations";
+import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
 import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
@@ -182,7 +184,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-17.1-site-chat-natural-intro',
+    build: '2026-10-17.2-site-booking-guidance-followup',
     timestamp: new Date().toISOString(),
   });
 });
@@ -426,6 +428,8 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       updatedBy: "jatoba",
     });
   }
+
+  await atualizarProgressoReservaSite(sessionId, body.booking_ui, storedClientMessage.message.ts);
 
   res.json({
     resposta,
@@ -1675,6 +1679,7 @@ app.listen(port, async () => {
     60 * 60 * 1000,
   );
   siteChatCleanupTimer.unref();
+  iniciarProcessadorLembretesReservaSite();
   iniciarLimpezaAutomaticaReservas();
   try {
     const migrada = await garantirConfiguracaoAutomacoesWhatsapp();

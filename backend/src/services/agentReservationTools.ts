@@ -37,6 +37,9 @@ type AgentReservationDraftInput = AgentAvailabilityInput & {
   sessionId?: unknown;
   teste?: unknown;
   siteBookingStarted?: unknown;
+  orientacoesReservaNecessarias?: unknown;
+  orientacoesReservaAceitas?: unknown;
+  orientacoesReservaRecusadas?: unknown;
   nome?: unknown;
   email?: unknown;
   cpf?: unknown;
@@ -1396,6 +1399,9 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   }
   if (owns(input, "siteBookingStarted") && typeof input.siteBookingStarted === "boolean") {
     patch.siteBookingStarted = input.siteBookingStarted;
+  }
+  for (const key of ["orientacoesReservaNecessarias", "orientacoesReservaAceitas", "orientacoesReservaRecusadas"] as const) {
+    if (owns(input, key) && typeof input[key] === "boolean") patch[key] = input[key];
   }
   if (owns(input, "formaPagamento")) {
     const value = clean(input.formaPagamento, 30).toUpperCase();
