@@ -379,9 +379,9 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
         needsName ? `Nome completo: ${fullName.trim()}` : "",
         needsEmail ? `E-mail: ${email.trim()}` : "",
         needsCpf ? `CPF: ${cpf.replace(/\D/g, "")}` : "",
-        needsPet ? (pet === "yes" ? "Vamos levar pet." : "Não vamos levar pet.") : fields.includes("presenca de pet") ? "Não vamos levar pet." : "",
+        needsPet ? (pet === "yes" ? "Vamos levar pet" : "Não vamos levar pet") : fields.includes("presenca de pet") ? "Não vamos levar pet" : "",
       ].filter(Boolean);
-      await answer(`${parts.join(". ")}. Pode conferir o resumo da reserva?`);
+      await answer(`${parts.join(". ")}.`);
     }
   };
 
