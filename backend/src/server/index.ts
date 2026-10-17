@@ -79,6 +79,7 @@ import {
 import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
 import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
+import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -239,6 +240,32 @@ app.get('/atendimento/site/catalogo', async (_req, res) => {
     });
   } catch {
     res.status(503).json({ error: 'SITE_CHAT_CATALOG_UNAVAILABLE' });
+  }
+});
+
+app.get('/atendimento/site/agenda', async (req, res) => {
+  const month = String(req.query.mes ?? "").trim();
+  const rawIds = String(req.query.pacotes ?? "").trim();
+  const packageIds = rawIds.split(",").filter(Boolean);
+  const currentMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" }).format(new Date());
+  const maximumMonth = new Date(`${currentMonth}-01T12:00:00Z`);
+  maximumMonth.setUTCMonth(maximumMonth.getUTCMonth() + 24);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || month < currentMonth || month > maximumMonth.toISOString().slice(0, 7)
+    || packageIds.length < 1 || packageIds.length > 3 || packageIds.some((id) => !/^[A-Za-z0-9_-]{1,100}$/.test(id))
+    || new Set(packageIds).size !== packageIds.length) {
+    res.status(400).json({ error: 'SITE_BOOKING_AGENDA_INPUT_INVALID' });
+    return;
+  }
+  if (!consumeSiteChatRateLimit(`agenda:${req.ip ?? "unknown"}`, 60 * 60 * 1000, 120)) {
+    res.status(429).json({ error: 'SITE_BOOKING_AGENDA_RATE_LIMIT' });
+    return;
+  }
+  try {
+    const dias = await consultarAgendaReservaSite(month, packageIds);
+    res.set('Cache-Control', 'private, max-age=15');
+    res.json({ mes: month, dias });
+  } catch {
+    res.status(503).json({ error: 'SITE_BOOKING_AGENDA_UNAVAILABLE' });
   }
 });
 

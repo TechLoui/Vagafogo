@@ -25,6 +25,7 @@ type Combo = {
   pacoteIds: string[]; precosPorTipo: Record<string, number>; preco: number; desconto: number;
 };
 type Catalog = { tiposClientes: VisitorType[]; pacotes: Package[]; combos: Combo[] };
+type SiteAgenda = { mes: string; dias: Record<string, Record<string, string[]>> };
 
 export type BookingUi = {
   step: "identity_phone" | "phone" | "experiences" | "date" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
@@ -139,6 +140,9 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const [date, setDate] = useState(ui.draft?.data || "");
+  const [calendarMonth, setCalendarMonth] = useState((ui.draft?.data || today()).slice(0, 7));
+  const [agendaState, setAgendaState] = useState<{ key: string; value?: SiteAgenda; error?: boolean }>({ key: "" });
+  const [agendaRefresh, setAgendaRefresh] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [preferredComboId, setPreferredComboId] = useState("");
   const [times, setTimes] = useState<Record<string, string>>(ui.draft?.horariosPorPacote || {});
@@ -182,12 +186,49 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   }, [catalog, ui.draft?.ofertaId, ui.draft?.tipoOferta]);
 
   const selected = useMemo(() => catalog?.pacotes.filter((item) => selectedIds.includes(item.id)) || [], [catalog, selectedIds]);
+  const selectedPackageKey = selected.map((item) => item.id).sort().join(",");
   const matchingCombos = catalog?.combos.filter((item) => item.pacoteIds.length === selectedIds.length && item.pacoteIds.every((id) => selectedIds.includes(id))) || [];
   const combo = matchingCombos.find((item) => item.id === preferredComboId) || matchingCombos[0];
   const scheduled = selected.filter((item) => item.modoHorario !== "intervalo" && item.horarios.length > 0);
   const knownTime = (item: Package) => times[item.id] || (scheduled.length === 1 ? ui.draft?.horario || "" : "");
   const missingTime = scheduled.some((item) => !knownTime(item));
   const step = (ui.step === "participants" || ui.step === "availability") && missingTime ? "time" : ui.step;
+  const agendaMonth = step === "time" && date ? date.slice(0, 7) : calendarMonth;
+  const agendaKey = `${agendaMonth}:${selectedPackageKey}`;
+  const agenda = agendaState.key === agendaKey ? agendaState.value : undefined;
+  const agendaError = agendaState.key === agendaKey && agendaState.error;
+
+  useEffect(() => {
+    if ((step !== "date" && step !== "time") || !selectedPackageKey) return;
+    const controller = new AbortController();
+    setAgendaState((current) => current.key === agendaKey && current.value ? current : { key: agendaKey });
+    const params = new URLSearchParams({ mes: agendaMonth, pacotes: selectedPackageKey });
+    fetch(`${API_BASE}/atendimento/site/agenda?${params}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("AGENDA_UNAVAILABLE");
+        return response.json() as Promise<SiteAgenda>;
+      })
+      .then((value) => {
+        if (!controller.signal.aborted) setAgendaState({ key: agendaKey, value });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setAgendaState({ key: agendaKey, error: true });
+      });
+    return () => controller.abort();
+  }, [step, agendaKey, agendaMonth, selectedPackageKey, agendaRefresh]);
+
+  useEffect(() => {
+    if (step !== "date" && step !== "time") return;
+    const interval = window.setInterval(() => setAgendaRefresh((current) => current + 1), 60_000);
+    const refreshOnFocus = () => setAgendaRefresh((current) => current + 1);
+    window.addEventListener("focus", refreshOnFocus);
+    return () => { window.clearInterval(interval); window.removeEventListener("focus", refreshOnFocus); };
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== "date" || !date || !agenda) return;
+    if (!selected.length || !selected.every((item) => (agenda.dias[date]?.[item.id] ?? []).length > 0)) setDate("");
+  }, [step, date, agenda, selected]);
   if (step === "availability") return null;
 
   const weekday = date ? new Date(`${date}T12:00:00Z`).getUTCDay() : -1;
@@ -195,6 +236,9 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     (item.diasSemana?.length > 0 && !item.diasSemana.includes(dayOfWeek)) || item.datasBloqueadas?.includes(day);
   const unavailableIds = new Set((catalog?.pacotes || []).filter((item) => date && packageUnavailableOn(item, date, weekday)).map((item) => item.id));
   const unavailable = selected.filter((item) => unavailableIds.has(item.id));
+  const dateHasTimes = (key: string) => Boolean(agenda?.dias[key] && selected.length > 0
+    && selected.every((item) => (agenda?.dias[key]?.[item.id] ?? []).length > 0));
+  const hourAvailable = (item: Package, hour: string) => Boolean(agenda?.dias[date]?.[item.id]?.includes(hour));
   const trailPackages = selected.filter((item) => item.modoHorario === "intervalo");
   const adultType = catalog?.tiposClientes.find((item) => /adult/i.test(item.nome));
   const adultPrice = (offer: Package | Combo) => adultType ? Number(offer.precosPorTipo?.[adultType.id]) || 0 : 0;
@@ -242,13 +286,13 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
       if (normalized.length < 12 || normalized.length > 13) { setError("Informe um WhatsApp válido com DDD."); return; }
       await answer(`Meu WhatsApp para este atendimento é ${formatPhone(normalized)}.`, normalized);
     } else if (step === "date") {
-      if (!date || date < today() || unavailable.length) { setError("Escolha uma data disponível para a experiência."); return; }
+      if (!date || date < today() || unavailable.length || !dateHasTimes(date)) { setError("Escolha uma data com horários disponíveis para a experiência."); return; }
       await answer(`Gostaria de reservar para ${readableDate(date)}.`);
     } else if (step === "experiences") {
       if (!selected.length || unavailable.length) { setError("Escolha uma experiência disponível para a data informada."); return; }
       await answer(`Quero reservar ${combo?.nome || selected.map((item) => item.nome).join(" e ")}.`);
     } else if (step === "time") {
-      if (scheduled.some((item) => !times[item.id] && !knownTime(item))) { setError("Escolha o horário para continuar."); return; }
+      if (scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) { setError("Escolha um horário disponível para continuar."); return; }
       const selectedTimes = Object.fromEntries(scheduled.map((item) => [item.id, times[item.id] || knownTime(item)]));
       await answer(
         `Para a reserva, prefiro ${scheduled.map((item) => `${item.nome} às ${selectedTimes[item.id]}`).join(" e ")}.`,
@@ -340,15 +384,16 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
               <DayPicker
                 mode="single"
                 selected={dateFromKey(date)}
-                defaultMonth={dateFromKey(date || today())}
+                month={dateFromKey(`${calendarMonth}-01`)}
+                onMonthChange={(month) => { setCalendarMonth(keyFromDate(month).slice(0, 7)); setDate(""); setError(""); }}
                 onSelect={(day) => { setDate(day ? keyFromDate(day) : ""); setError(""); if (day) revealContinue(); }}
-                disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())); }}
+                disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())) || !dateHasTimes(key); }}
                 today={dateFromKey(today())}
                 locale={ptBR}
                 className="rdp-vagafogo site-chat-calendar"
               />
             </div>
-            <p className="mt-1.5 text-center text-[11px] text-[#718075]">Dias cinzas: indisponíveis. Vagas a confirmar.</p>
+            <p className="mt-1.5 text-center text-[11px] text-[#718075]">{agendaError ? "Não consegui consultar os horários agora. Você pode informar a data por mensagem." : !agenda ? "Consultando os horários disponíveis…" : "Dias cinzas: sem horários disponíveis. Vagas a confirmar."}</p>
           </div>
         )}
 
@@ -384,14 +429,15 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
             <div className="grid grid-cols-3 gap-2">
               {item.horarios.map((hour) => {
                 const selected = (times[item.id] || knownTime(item)) === hour;
-                return <button key={hour} type="button" disabled={sending} aria-pressed={selected} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${selected ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                const available = hourAvailable(item, hour);
+                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={selected && available} onClick={() => { setTimes((current) => ({ ...current, [item.id]: hour })); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${selected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
                   <span className="block text-base font-bold">{displayHour(hour)}</span>
-                  <span className={`mt-0.5 block text-[10px] ${selected ? "text-white/85" : "text-[#718075]"}`}>{/brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
+                  <span className={`mt-0.5 block text-[10px] ${selected && available ? "text-white/85" : "text-[#718075]"}`}>{!available && agenda ? "Indisponível" : /brunch|gastron/i.test(item.nome) ? "Brunch à mesa" : "Hora marcada"}</span>
                 </button>;
               })}
             </div>
           </div>
-        ))}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
+        ))}{agendaError && <p role="alert" className="text-xs text-amber-800">Não consegui consultar os horários agora. Você pode escolher por mensagem.</p>}{agenda && date && !dateHasTimes(date) && <p role="alert" className="text-xs text-amber-800">Não há mais horários nessa data. Diga outra data no chat para eu verificar.</p>}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
         {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{catalog.tiposClientes.map((type) => {
           const count = quantityOf(counts, type.id);
@@ -416,7 +462,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
         {step === "payment" && <div className="grid gap-2.5" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por PIX. Pode enviar o QR Code e o copia e cola?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] p-3 text-left transition hover:border-[#20745a] hover:bg-[#e9f4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8ecdc] text-[#20745a]"><FaQrcode aria-hidden="true" /></span><span><strong className="block text-sm text-[#245139]">PIX</strong><small className="mt-0.5 block text-[11px] text-[#607965]">QR Code e copia e cola</small></span></button><button type="button" disabled={sending} onClick={() => void answer("Prefiro pagar por cartão de crédito. Pode enviar o link seguro?")} className="flex min-h-[72px] items-center gap-3 rounded-2xl border border-[#e4d5c3] bg-[#fffaf3] p-3 text-left transition hover:border-[#b28b64] hover:bg-[#fdf4e8] disabled:opacity-50"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f4e9d6] text-[#8a5a2f]"><FaCreditCard aria-hidden="true" /></span><span><strong className="block text-sm text-[#58412d]">Cartão</strong><small className="mt-0.5 block text-[11px] text-[#806c56]">Página segura</small></span></button></div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "date" && !dateHasTimes(date)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && !quote.length)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Consultar vaga e valor" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
         {step !== "date" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>
