@@ -94,6 +94,13 @@ const cardColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17
 const choiceColumns = { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))" };
 const inputClass = "mt-1.5 w-full rounded-xl border border-[#d4ded1] bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#20745a] focus:ring-2 focus:ring-[#20745a]/15";
 
+const participantOrder = (type: VisitorType) => {
+  const name = type.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (name.includes("adult")) return 0;
+  if (name.includes("crianca")) return 1;
+  return 2;
+};
+
 const participantHint = (type: VisitorType) => {
   const description = type.descricao?.trim() || "";
   const name = type.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -203,6 +210,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   }, [catalog, ui.draft?.ofertaId, ui.draft?.tipoOferta, onProgress]);
 
   const selected = useMemo(() => catalog?.pacotes.filter((item) => selectedIds.includes(item.id)) || [], [catalog, selectedIds]);
+  const orderedTypes = useMemo(() => [...(catalog?.tiposClientes || [])].sort((a, b) => participantOrder(a) - participantOrder(b)), [catalog]);
   const selectedPackageKey = selected.map((item) => item.id).sort().join(",");
   const matchingCombos = catalog?.combos.filter((item) => item.pacoteIds.length === selectedIds.length && item.pacoteIds.every((id) => selectedIds.includes(id))) || [];
   const combo = matchingCombos.find((item) => item.id === preferredComboId) || matchingCombos[0];
@@ -269,7 +277,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
   const featuredRegularPrice = featuredPackages.reduce((sum, item) => sum + adultPrice(item), 0);
   const featuredComboPrice = featuredCombo ? adultPrice(featuredCombo) : 0;
   const featuredSavings = Math.max(0, Math.round((featuredRegularPrice - featuredComboPrice) * 100) / 100);
-  const quote = catalog?.tiposClientes.map((type) => {
+  const quote = orderedTypes.map((type) => {
     const quantity = quantityOf(counts, type.id);
     const packageSum = selected.reduce((sum, item) => sum + (Number(item.precosPorTipo?.[type.id]) || 0), 0);
     const hasCategoryPrices = combo && catalog.tiposClientes.some((visitor) => Number(combo.precosPorTipo?.[visitor.id]) > 0);
@@ -278,7 +286,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
         : combo.preco > 0 ? combo.preco : packageSum * (1 - Math.min(100, Math.max(0, combo.desconto || 0)) / 100)
       : packageSum;
     return { type, quantity, unit, subtotal: Math.round(unit * quantity * 100) / 100 };
-  }).filter((item) => item.quantity > 0) || [];
+  }).filter((item) => item.quantity > 0);
   const fields = ui.fields || [];
   const needsName = fields.length === 0 || fields.includes("nome");
   const needsEmail = fields.length === 0 || fields.includes("e-mail");
@@ -475,7 +483,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
           </div>
         ))}{agendaError && <p role="alert" className="text-xs text-amber-800">Não consegui consultar os horários agora. Você pode escolher por mensagem.</p>}{agenda && date && !dateHasTimes(date) && <p role="alert" className="text-xs text-amber-800">Não há mais horários nessa data. Diga outra data no chat para eu verificar.</p>}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
-        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{catalog.tiposClientes.map((type) => {
+        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{orderedTypes.map((type) => {
           const count = quantityOf(counts, type.id);
           const hint = participantHint(type);
           return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2.5">
