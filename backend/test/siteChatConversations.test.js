@@ -114,6 +114,9 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
   assert.equal(nameFromSiteMessage("Sou do Instituto Federal de Brasília"), "");
   assert.equal(nameFromSiteMessage("Meu nome é Maria Silva."), "Maria Silva");
   assert.equal(nameFromSiteMessage("Maria Silva", true), "Maria Silva");
+  assert.equal(nameFromSiteMessage("Maria", true), "Maria");
+  assert.equal(nameFromSiteMessage("Amanhã", true), "");
+  assert.equal(nameFromSiteMessage("Sim", true), "");
   assert.equal(pendingSiteVisitorRequest([
     { from: "client", text: "Quero consultar minha reserva" },
     { from: "bot", text: "Como posso chamar você?" },
@@ -134,8 +137,12 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
     { from: "client", text: "Meu nome é Maria Silva." },
     { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
   ];
-  assert.equal(siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages }).step, "identity_name");
+  const askName = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
+  assert.equal(askName.step, null);
+  assert.match(askName.reply, /Como posso chamar você/);
+  assert.doesNotMatch(askName.reply, /equipe|campanhas/i);
   assert.equal(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "", hadName: false, hadPhone: false, messages }).step, "identity_phone");
+  assert.doesNotMatch(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "", hadName: false, hadPhone: false, messages }).reply, /campanhas/i);
   const ready = siteVisitorIdentityDecision({ name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false, messages });
   assert.equal(ready.reply, "");
   assert.equal(ready.pendingRequest, "Quero consultar minha reserva");

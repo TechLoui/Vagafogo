@@ -4,7 +4,7 @@ export const normalizeSiteVisitorName = (value: unknown): string => {
   const name = String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
   if (/^(?:sou\s+(?:do|da|de)\b|(?:do|da|de)\s)/i.test(name)) return "";
-  if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio)$/i.test(name)) return "";
+  if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio|sim|n[aã]o|ok|certo|hoje|amanh[aã]|obrigad[oa]|tudo bem)$/i.test(name)) return "";
   if (/\b(?:quero|gostaria|preciso|reservar|reserva|consulta|consultar|valor(?:es)?|pre[cç]o(?:s)?|hor[aá]rio(?:s)?|brunch|trilha|combo|ajuda|d[uú]vida(?:s)?|foto(?:s)?|endere[cç]o|localiza[cç][aã]o|atendente|pagamento|pix|cart[aã]o|quanto|como|tem|voc[eê]s|podem|pode|aberto(?:s)?)\b/i.test(name)) return "";
   return name;
 };
@@ -38,14 +38,14 @@ export const siteVisitorIdentityDecision = (input: {
   const firstName = input.name.split(" ")[0];
   if (!input.name) {
     return {
-      reply: "🌿 Antes de seguirmos, como posso chamar você? Assim consigo identificar este atendimento para a nossa equipe.",
-      step: "identity_name" as const,
+      reply: "🌿 Claro! Como posso chamar você?",
+      step: null,
       pendingRequest: "",
     };
   }
   if (!input.phone) {
     return {
-      reply: `Obrigada, ${firstName}! Qual é o seu WhatsApp com DDD? Usaremos o número apenas para acompanhar este atendimento ou falar com você se for necessário; isso não autoriza campanhas. 🌿`,
+      reply: `Obrigada, ${firstName}! Qual é o seu WhatsApp com DDD? Assim podemos retomar este atendimento se for necessário. 🌿`,
       step: "identity_phone" as const,
       pendingRequest: "",
     };

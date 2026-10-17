@@ -182,7 +182,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-16.5-site-contact-first',
+    build: '2026-10-17.1-site-chat-natural-intro',
     timestamp: new Date().toISOString(),
   });
 });
@@ -285,7 +285,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
-  const awaitingName = lastSiteMessage?.from === "bot" && lastSiteMessage.text.includes("como posso chamar você");
+  const awaitingName = lastSiteMessage?.from === "bot" && /como posso chamar voc[eê]/i.test(lastSiteMessage.text);
   const nome = nameFromSiteMessage(mensagem, awaitingName) || nomeRecebido || existingConversation?.name || "";
   const telefoneInformado = telefone || (
     nome && !existingConversation?.phone ? normalizeSiteChatPhone(mensagem) : ""
@@ -351,6 +351,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     res.json({
       resposta: identity.reply,
       session_id: sessionId,
+      nome_contato: contactName,
       media: null,
       mensagens_adicionais: [],
       atendimento_humano: false,
@@ -404,8 +405,8 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       from: "bot",
       text: resposta,
       sourceId: `bot:${clientSourceId}:main`,
-      name: nome,
-      phone: telefone,
+      name: contactName,
+      phone: contactPhone,
       mediaType: body.media?.type,
     });
   }
@@ -414,8 +415,8 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       from: "bot",
       text: mensagensAdicionais[index],
       sourceId: `bot:${clientSourceId}:extra:${index}`,
-      name: nome,
-      phone: telefone,
+      name: contactName,
+      phone: contactPhone,
     });
   }
   if (body.handoff && typeof body.handoff === "object") {
@@ -429,6 +430,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   res.json({
     resposta,
     session_id: String(body.session_id ?? sessionId).slice(0, 120),
+    nome_contato: contactName,
     media: body.media && typeof body.media === "object" ? body.media : null,
     mensagens_adicionais: mensagensAdicionais,
     atendimento_humano: Boolean(body.handoff),

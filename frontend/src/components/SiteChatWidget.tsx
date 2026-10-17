@@ -8,7 +8,7 @@ import type { BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
 const STORAGE_TTL_MS = 2 * 60 * 60 * 1000;
-const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nAntes de começarmos, como posso chamar você?";
+const WELCOME = "Olá! Eu sou a Jatobá, atendente da Fazenda Vagafogo. 🌿\n\nComo posso te ajudar?";
 const OFFICIAL_CHECKOUT_HOSTS = new Set(["vagafogo.com.br", "www.vagafogo.com.br"]);
 
 type ChatMedia = {
@@ -50,7 +50,7 @@ type SiteManualMessage = {
 };
 
 const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
-  "identity_name", "identity_phone", "phone", "experiences", "date",
+  "identity_phone", "phone", "experiences", "date",
   "participants", "contact", "summary", "payment", "availability",
 ]);
 
@@ -93,7 +93,13 @@ const safeStoredChat = (): StoredChat | null => {
       ...parsed,
       expiresAt,
       bookingUi: safeBookingUi(parsed.bookingUi),
-      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({ ...message, media: null, visibleAdditional: message.additional?.length || 0, animate: false })) : [],
+      messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-50).map((message) => ({
+        ...message,
+        content: parsed.messages.length === 1 && message.role === "assistant" && message.content?.includes("Antes de começarmos") ? WELCOME : message.content,
+        media: null,
+        visibleAdditional: message.additional?.length || 0,
+        animate: false,
+      })) : [],
     };
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -371,11 +377,7 @@ export function SiteChatWidget() {
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-  const [bookingUi, setBookingUi] = useState<BookingUi | null>(
-    !initial?.name ? { step: "identity_name" }
-      : !initial?.phone ? { step: "identity_phone" }
-        : initial.bookingUi || null,
-  );
+  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.name ? initial.bookingUi || null : null);
   const [sessionRegistered, setSessionRegistered] = useState(Boolean(initial?.messages?.some((message) => message.role === "user")));
   const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
   const [draft, setDraft] = useState("");
@@ -409,7 +411,7 @@ export function SiteChatWidget() {
     setName("");
     setPhone(redirectedPhone);
     setMessages([{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-    setBookingUi({ step: "identity_name" });
+    setBookingUi(null);
     setSessionRegistered(false);
     setExpiresAt(Date.now() + STORAGE_TTL_MS);
     setDraft("");
@@ -623,11 +625,9 @@ export function SiteChatWidget() {
       return false;
     }
     const requestPhone = answerPhone || phone;
-    const answerName = bookingUi?.step === "identity_name"
-      ? (content.match(/^Meu nome é\s+(.+?)\.?$/i)?.[1] || content).trim().replace(/\.$/, "")
-      : bookingUi?.step === "contact" && bookingUi.fields?.includes("nome")
-        ? content.match(/Nome completo:\s*([^.]*)/i)?.[1]?.trim() || ""
-        : "";
+    const answerName = bookingUi?.step === "contact" && bookingUi.fields?.includes("nome")
+      ? content.match(/Nome completo:\s*([^.]*)/i)?.[1]?.trim() || ""
+      : "";
     const generation = generationRef.current;
     sendingRef.current = true;
     scrollModeRef.current = "bottom";
@@ -662,7 +662,8 @@ export function SiteChatWidget() {
       const result = await response.json().catch(() => ({}));
       if (generation !== generationRef.current) return false;
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
-      if (answerName && result.booking_ui?.step !== "identity_name") setName(answerName);
+      const returnedName = typeof result.nome_contato === "string" ? result.nome_contato.trim().slice(0, 120) : "";
+      if (returnedName || answerName) setName(returnedName || answerName);
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
       setBookingUi(result.atendimento_humano ? null : safeBookingUi(result.booking_ui));
@@ -775,13 +776,6 @@ export function SiteChatWidget() {
                     ))}
                     </Fragment>
                   ))}
-                  {messages.length === 1 && messages[0].role === "assistant" && !loading && !bookingUi && (
-                    <div className="ml-9 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => void send("Quero consultar uma reserva que já fiz") } className="rounded-full border border-[#bfd6c8] bg-white px-3.5 py-2 text-xs font-semibold text-[#215a43] shadow-sm hover:bg-[#eef6f0]">
-                        Consultar minha reserva
-                      </button>
-                    </div>
-                  )}
                   {loading && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
