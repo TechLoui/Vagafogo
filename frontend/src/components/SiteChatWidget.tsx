@@ -425,6 +425,7 @@ export function SiteChatWidget() {
   const autoScrollingRef = useRef(false);
   const wasOpenRef = useRef(false);
   const lastPresentedMessageIdRef = useRef(messages.at(-1)?.id || "");
+  const summaryFocusedMessageIdRef = useRef("");
   const sendingRef = useRef(false);
   const manualCursorRef = useRef(0);
   const generationRef = useRef(0);
@@ -559,6 +560,20 @@ export function SiteChatWidget() {
     const newest = messages.at(-1);
     const hasNewMessage = newest?.id !== lastPresentedMessageIdRef.current;
     lastPresentedMessageIdRef.current = newest?.id || "";
+    if (bookingUi?.step === "summary" && newest?.role === "assistant" && newest.id !== summaryFocusedMessageIdRef.current) {
+      summaryFocusedMessageIdRef.current = newest.id;
+      const frame = requestAnimationFrame(() => {
+        const scroller = scrollRef.current;
+        const latest = latestMessageRef.current;
+        if (!scroller || !latest) return;
+        const top = latest.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+        autoScrollingRef.current = true;
+        scroller.scrollTop += top - 8;
+        scrollModeRef.current = "free";
+        requestAnimationFrame(() => { autoScrollingRef.current = false; });
+      });
+      return () => cancelAnimationFrame(frame);
+    }
     if (scrollModeRef.current === "free") {
       if (hasNewMessage && newest?.role === "assistant") setShowNewMessages(true);
       return;
@@ -810,7 +825,7 @@ export function SiteChatWidget() {
                         </span>
                       )}
                       <div className={`min-w-0 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] ${interactive || message.environmentalEducationCard ? "w-[calc(100%-2.25rem)] max-w-[720px] overflow-hidden" : "max-w-[calc(100%-2.25rem)] sm:max-w-[min(88%,720px)]"} ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                        <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? "line-clamp-2" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
+                        <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? "line-clamp-2" : ""}`}>{interactive && bookingUi?.step === "summary" ? "Confira todos os dados da sua reserva abaixo. 🌿" : <RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText>}</p>
                         {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => setExpandedMessageId((current) => current === message.id ? "" : message.id)} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.environmentalEducationCard && (
@@ -822,7 +837,7 @@ export function SiteChatWidget() {
                             <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental"><FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp</a>
                           </div>
                         )}
-                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} progress={bookingProgress} onProgress={updateBookingProgress} /></div>}
+                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} progress={bookingProgress} onProgress={updateBookingProgress} summaryText={bookingUi?.step === "summary" ? message.content : undefined} /></div>}
                       </div>
                     </div>
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (

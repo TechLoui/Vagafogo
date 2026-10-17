@@ -152,16 +152,17 @@ const stages = {
   participants: { title: "Quantas pessoas vão?", hint: "Informe as pessoas por categoria. O total aparece no resumo.", icon: FaUsers },
   guidance: { title: "Antes de continuar", hint: "Confira as orientações da sua visita.", icon: FaRegCheckCircle },
   contact: { title: "Dados para a reserva", hint: "Preencha apenas o que ainda falta.", icon: FaUser },
-  summary: { title: "Tudo certo até aqui?", hint: "Confira o resumo enviado pela Jatobá antes de seguir.", icon: FaRegCheckCircle },
+  summary: { title: "Confira sua reserva", hint: "Leia os dados abaixo antes de confirmar.", icon: FaRegCheckCircle },
   payment: { title: "Como prefere pagar?", hint: "Sua reserva é confirmada após a aprovação do pagamento.", icon: FaCreditCard },
 };
 
-export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }: {
+export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, summaryText }: {
   ui: BookingUi;
   sending: boolean;
   onAnswer: (message: string, phone?: string, selection?: SiteBookingSelection) => Promise<boolean>;
   progress: BookingProgress;
   onProgress: (patch: Partial<BookingProgress>) => void;
+  summaryText?: string;
 }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
@@ -312,6 +313,8 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
     ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
     : stages[step];
   const estimate = quote.reduce((sum, item) => sum + item.subtotal, 0);
+  const summaryBody = summaryText?.replace(/\*/g, "").replace(/\n\s*\n/g, "\n").trim()
+    .replace(/\nEstá tudo correto para seguirmos para o pagamento\?\s*$/i, "");
   const liveSummary = selected.length > 0 ? (
     <details className="group overflow-hidden rounded-xl border border-[#d8e7d7] bg-[#f6faf3] text-[#31513c]">
       <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#20745a] [&::-webkit-details-marker]:hidden">
@@ -434,7 +437,9 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
           <div className="min-w-0"><p className="text-sm font-bold leading-snug text-[#244b38]">{stage.title}</p><p className="mt-0.5 text-xs leading-relaxed text-[#65766a]">{stage.hint}</p></div>
         </div>
       </div>
-      {liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
+      {step === "summary" && summaryBody
+        ? <div className="px-3 pt-3 sm:px-3.5"><div role="region" aria-label="Resumo completo da reserva" tabIndex={0} className="max-h-[min(38dvh,260px)] overflow-y-auto overscroll-contain rounded-xl border border-[#d8e7d7] bg-[#f6faf3] px-3 py-2.5 text-xs leading-[1.5] whitespace-pre-line text-[#31513c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{summaryBody}</div></div>
+        : liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
       <div className="space-y-2.5 p-3 sm:p-3.5">
         {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
         {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
@@ -528,7 +533,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <div role="group" aria-label="Vai levar pet?" className="text-xs font-semibold"><span className="block">Vai levar pet?</span><div className="mt-1.5 grid grid-cols-2 gap-2">{([ ["yes", "Sim"], ["no", "Não"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={pet === value} onClick={() => setPet(value)} className={`min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${pet === value ? "border-[#20745a] bg-[#e7f3e9] text-[#184f3c]" : "border-[#cddfcf] bg-white text-[#305944] hover:border-[#20745a]"}`}>{label}</button>)}</div>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</div>}</div>}
 
-        {step === "summary" && <div className="grid gap-2" style={choiceColumns}><button type="button" disabled={sending} onClick={() => void answer("Sim, confirmo que o resumo desta reserva está correto. Pode prosseguir.")} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><FaCheck aria-hidden="true" /> Sim, está correto</button><button type="button" disabled={sending} onClick={() => void answer("Não, quero corrigir o resumo antes de pagar.")} className="flex min-h-12 items-center justify-center rounded-xl border border-[#cddfcf] bg-white px-3 py-2.5 text-sm font-semibold text-[#305944] disabled:opacity-50">Não, quero corrigir</button></div>}
+        {step === "summary" && <div className="grid grid-cols-2 gap-2"><button type="button" disabled={sending} onClick={() => void answer("Sim, confirmo que o resumo desta reserva está correto. Pode prosseguir.")} className="flex min-h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl bg-[#20745a] px-2 py-2.5 text-center text-xs font-semibold text-white disabled:opacity-50 sm:text-sm"><FaCheck className="shrink-0" aria-hidden="true" /> Está correto</button><button type="button" disabled={sending} onClick={() => void answer("Não, quero corrigir o resumo antes de pagar.")} className="flex min-h-12 min-w-0 items-center justify-center rounded-xl border border-[#cddfcf] bg-white px-2 py-2.5 text-center text-xs font-semibold text-[#305944] disabled:opacity-50 sm:text-sm">Quero corrigir</button></div>}
 
         {step === "payment" && <div role="group" aria-label="Escolha a forma de pagamento" className="grid grid-cols-2 gap-2">
           <button type="button" disabled={sending} onClick={() => void answer("Quero pagar por PIX.")} className="flex min-h-24 min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl border border-[#acd1bc] bg-[#f0f8f1] px-2 py-3 text-center transition hover:border-[#20745a] hover:bg-[#e9f4e8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:opacity-50"><FaQrcode className="text-xl text-[#20745a]" aria-hidden="true" /><strong className="text-sm text-[#245139]">PIX</strong><span className="text-[11px] leading-tight text-[#607965]">QR Code e copia e cola</span></button>
@@ -537,7 +542,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress }:
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
         {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "date" && !dateHasTimes(date)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Conferir vagas" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
-        {step !== "date" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
+        {step !== "date" && step !== "summary" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>
   );
