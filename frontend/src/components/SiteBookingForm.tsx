@@ -299,7 +299,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
     <div className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white p-4 text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Orientações da reserva">
       <div className="flex items-center gap-2.5 text-sm font-bold text-[#244b38]"><FaRegCheckCircle className="text-[#20745a]" aria-hidden="true" />Antes de continuar</div>
       <div className="mt-3 space-y-2 text-xs leading-relaxed text-[#445a49]">
-        <p>• Brunch e combo precisam de reserva e pagamento antecipados. Chegar ao balcão não garante vaga.</p>
+        <p>• Brunch e combo exigem reserva e pagamento antecipados; não são vendidos no balcão.</p>
         <p>• A trilha individual pode ser paga no local, conforme a disponibilidade.</p>
         <p>• A reserva só está confirmada após o pagamento aprovado.</p>
         <p>• Se você parar antes de concluir, podemos enviar um único aviso para o WhatsApp informado.</p>
