@@ -714,6 +714,8 @@ export function SiteChatWidget() {
   const focusedHistory = Boolean(bookingUi && !humanMode && !showHistory && messages.length > 1);
   const visibleMessages = focusedHistory ? messages.slice(-1) : messages;
   const olderMessageCount = bookingUi && !humanMode ? Math.max(0, messages.length - 1) : 0;
+  const activeBookingMessageId = !loading && !humanMode && bookingUi && bookingUi.step !== "availability" && !messages.at(-1)?.animate && messages.at(-1)?.role === "assistant"
+    ? messages.at(-1)?.id : null;
   const isCompactReply = (message: ChatMessage) => message.role === "assistant"
     && message.id === messages.at(-1)?.id
     && Boolean(bookingUi && ["phone", "experiences", "date", "participants"].includes(bookingUi.step))
@@ -757,18 +759,30 @@ export function SiteChatWidget() {
                   {olderMessageCount > 0 && <button type="button" aria-expanded={showHistory} onClick={() => { setShowHistory((value) => !value); if (showHistory) { scrollModeRef.current = "bottom"; requestAnimationFrame(scrollToLatest); } }} className="mx-auto flex items-center gap-2 rounded-full border border-[#dbe6d8] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b6d58] shadow-sm transition hover:border-[#a8c8ac] hover:bg-[#f1f7ee] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">
                     <span aria-hidden="true">{showHistory ? "⌃" : "⌄"}</span>{showHistory ? "Ocultar conversa anterior" : `Ver conversa anterior (${olderMessageCount})`}
                   </button>}
-                  {visibleMessages.map((message, index) => (
+                  {visibleMessages.map((message, index) => {
+                    const interactive = message.id === activeBookingMessageId;
+                    return (
                     <Fragment key={message.id}>
-                    <div ref={index === visibleMessages.length - 1 && !message.environmentalEducationCard && !(message.visibleAdditional ?? message.additional?.length) ? latestMessageRef : undefined} className={`flex min-w-0 items-end gap-2 ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
+                    <div ref={index === visibleMessages.length - 1 && (interactive || !(message.visibleAdditional ?? message.additional?.length)) ? latestMessageRef : undefined} className={`flex min-w-0 gap-2 ${interactive || message.environmentalEducationCard ? "items-start" : "items-end"} ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
                         </span>
                       )}
-                      <div className={`min-w-0 max-w-[calc(100%-2.25rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(88%,720px)] ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
+                      <div className={`min-w-0 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] ${interactive || message.environmentalEducationCard ? "w-[calc(100%-2.25rem)] max-w-[720px] overflow-hidden" : "max-w-[calc(100%-2.25rem)] sm:max-w-[min(88%,720px)]"} ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
                         <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? "line-clamp-2" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>
                         {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => setExpandedMessageId((current) => current === message.id ? "" : message.id)} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
+                        {message.environmentalEducationCard && (
+                          <div className="mt-3 border-t border-[#e1e9df] pt-3 text-[#254a38]">
+                            <div className="flex items-start gap-2.5">
+                              <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#dcefe2] text-lg">🌱</span>
+                              <div className="min-w-0"><p className="text-sm font-bold">Educação Ambiental</p><p className="mt-0.5 text-xs leading-relaxed text-[#567060]">Para visitas escolares e projetos em grupo, o Uirá pode orientar você diretamente.</p></div>
+                            </div>
+                            <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental"><FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp</a>
+                          </div>
+                        )}
+                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} /></div>}
                       </div>
                     </div>
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
@@ -778,22 +792,8 @@ export function SiteChatWidget() {
                         </div>
                       </div>
                     ))}
-                    {message.environmentalEducationCard && (
-                      <div ref={index === visibleMessages.length - 1 ? latestMessageRef : undefined} className={`ml-9 w-[calc(100%-2.25rem)] min-w-0 max-w-[720px] rounded-2xl border border-[#cfe4d6] bg-gradient-to-br from-[#f4faf3] to-white p-3.5 text-[#254a38] shadow-sm sm:p-4 ${message.animate ? "site-chat-message-pop" : ""}`}>
-                        <div className="flex items-start gap-3">
-                          <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#dcefe2] text-xl">🌱</span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold">Educação Ambiental</p>
-                            <p className="mt-1 text-xs leading-relaxed text-[#567060]">Para visitas escolares e projetos em grupo, o Uirá pode orientar você diretamente.</p>
-                          </div>
-                        </div>
-                        <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental">
-                          <FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp
-                        </a>
-                      </div>
-                    )}
                     </Fragment>
-                  ))}
+                  )})}
                   {loading && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
@@ -805,7 +805,6 @@ export function SiteChatWidget() {
                       </div>
                     </div>
                   )}
-                  {!loading && !humanMode && bookingUi && !messages.at(-1)?.animate && <div ref={bookingFormRef} className="ml-9 w-[calc(100%-2.25rem)] max-w-[720px] site-chat-message-pop"><SiteBookingForm key={`${messages.at(-1)?.id || sessionId}:${bookingUi.step}`} ui={bookingUi} sending={loading} onAnswer={send} /></div>}
                   </div>
                   </div>
                   {showNewMessages && <button type="button" onClick={scrollToLatest} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-[#214f3e] px-4 py-2 text-xs font-semibold text-white shadow-lg">Ver nova resposta ↓</button>}

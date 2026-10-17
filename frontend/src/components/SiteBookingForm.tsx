@@ -292,7 +292,7 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   const StageIcon = stage.icon;
 
   if (step === "guidance") return (
-    <div className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white p-4 text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Orientações da reserva">
+    <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Orientações da reserva">
       <div className="flex items-center gap-2.5 text-sm font-bold text-[#244b38]"><FaRegCheckCircle className="text-[#20745a]" aria-hidden="true" />Antes de continuar</div>
       <div className="mt-3 space-y-2 text-xs leading-relaxed text-[#445a49]">
         <p>• Brunch e combo exigem reserva e pagamento antecipados; não são vendidos no balcão.</p>
@@ -308,8 +308,8 @@ export function SiteBookingForm({ ui, sending, onAnswer }: { ui: BookingUi; send
   );
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="min-w-0 rounded-[22px] border border-[#d5e2d2] bg-white text-[#263d31] shadow-[0_12px_30px_rgba(26,59,40,.08)]" aria-label="Responder à Jatobá">
-      <div className="rounded-t-[21px] border-b border-[#e6ecdf] bg-gradient-to-r from-[#f3f8ee] via-[#fbfcf8] to-white px-3.5 py-3 sm:px-4">
+    <form onSubmit={(event) => void submit(event)} className="min-w-0 bg-white text-[#263d31]" aria-label="Responder à Jatobá">
+      <div className="border-b border-[#e6ecdf] bg-gradient-to-r from-[#f3f8ee] via-[#fbfcf8] to-white px-3.5 py-3 sm:px-4">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#dfeee0] text-[#20745a]"><StageIcon aria-hidden="true" /></span>
           <div className="min-w-0"><p className="text-sm font-bold leading-snug text-[#244b38]">{stage.title}</p><p className="mt-0.5 text-xs leading-relaxed text-[#65766a]">{stage.hint}</p></div>
