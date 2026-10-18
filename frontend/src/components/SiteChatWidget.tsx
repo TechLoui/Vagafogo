@@ -686,11 +686,23 @@ export function SiteChatWidget() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${API_BASE}/atendimento/site/mensagem`, {
+      const request = () => fetch(`${API_BASE}/atendimento/site/mensagem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history, ...(selection ? { respostaInterativa: selection } : {}) }),
       });
+      let response: Response;
+      try {
+        response = await request();
+      } catch (cause) {
+        // Uma conexão instável durante a primeira saudação não deve impedir
+        // o visitante de iniciar o chat. Nas etapas de reserva/pagamento não
+        // repetimos POST automaticamente para evitar ações duplicadas.
+        if (!(cause instanceof TypeError) || history.length > 1 || selection) throw cause;
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        if (generation !== generationRef.current) return false;
+        response = await request();
+      }
       if (generation !== generationRef.current) return false;
       if (response.status === 410) {
         resetConversation();
@@ -749,7 +761,9 @@ export function SiteChatWidget() {
       if (generation !== generationRef.current) return false;
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
       setDraft(content);
-      setError(cause instanceof Error ? cause.message : "Não foi possível responder agora. Tente novamente.");
+      setError(cause instanceof TypeError
+        ? "A conexão oscilou. Confira sua internet e tente enviar novamente."
+        : cause instanceof Error ? cause.message : "Não foi possível responder agora. Tente novamente.");
       return false;
     } finally {
       if (generation === generationRef.current) {
@@ -866,7 +880,7 @@ export function SiteChatWidget() {
                 </div>
                 <div className="shrink-0 border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                   {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
-                  {error && <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error} Sua mensagem continua no campo para tentar novamente.</div>}
+                  {error && <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700"><span>{error} Sua mensagem continua no campo.</span><button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1 font-semibold disabled:opacity-50">Tentar enviar</button></div>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
                     <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm outline-none" />
                     <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">

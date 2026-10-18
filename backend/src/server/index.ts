@@ -271,6 +271,7 @@ app.get('/atendimento/site/agenda', async (req, res) => {
 });
 
 app.post('/atendimento/site/mensagem', async (req, res) => {
+  try {
   const mensagem = String(req.body?.mensagem ?? "").trim().slice(0, 4096);
   const nomeRecebido = normalizeSiteVisitorName(req.body?.nome);
   const telefone = normalizeSiteChatPhone(req.body?.telefone);
@@ -485,6 +486,15 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     booking_ui: body.booking_ui && typeof body.booking_ui === "object" ? body.booking_ui : null,
     environmental_education_card: shouldOfferEnvironmentalEducationContact(identity.pendingRequest || mensagem),
   });
+  } catch (error) {
+    console.error("[site-chat] Falha ao responder mensagem:", error);
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: "SITE_CHAT_TEMPORARILY_UNAVAILABLE",
+        mensagem: "O atendimento oscilou por um instante. Tente enviar novamente.",
+      });
+    }
+  }
 });
 
 app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
