@@ -77,7 +77,7 @@ import {
   type SiteConversationMode,
 } from "../services/siteChatConversations";
 import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
-import { nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
+import { isSiteNamePrompt, nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
 import { requireTimeBeforeParticipants } from "../services/siteBookingStepOrder";
@@ -317,7 +317,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
-  const awaitingName = lastSiteMessage?.from === "bot" && /como posso chamar voc[eê]/i.test(lastSiteMessage.text);
+  const awaitingName = lastSiteMessage?.from === "bot" && isSiteNamePrompt(lastSiteMessage.text);
   const nome = nameFromSiteMessage(mensagem, awaitingName) || nomeRecebido || existingConversation?.name || "";
   const telefoneInformado = telefone || (
     nome && !existingConversation?.phone ? normalizeSiteChatPhone(mensagem) : ""

@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { nameFromSiteMessage, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
+const { isSiteNamePrompt, nameFromSiteMessage, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
 
 process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
@@ -175,6 +175,24 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
   assert.equal(askName.step, null);
   assert.match(askName.reply, /Como posso chamar você/);
   assert.doesNotMatch(askName.reply, /equipe|campanhas/i);
+  assert.doesNotMatch(askName.reply, /Claro!/i);
+  const firstGreeting = siteVisitorIdentityDecision({
+    name: "", phone: "", hadName: false, hadPhone: false,
+    messages: [{ from: "client", text: "oi" }],
+  });
+  const secondGreeting = siteVisitorIdentityDecision({
+    name: "", phone: "", hadName: false, hadPhone: false,
+    messages: [
+      { from: "client", text: "oi" },
+      { from: "bot", text: firstGreeting.reply },
+      { from: "client", text: "oi" },
+    ],
+  });
+  assert.match(firstGreeting.reply, /^Oi!/);
+  assert.match(secondGreeting.reply, /estou por aqui/i);
+  assert.notEqual(secondGreeting.reply, firstGreeting.reply);
+  assert.equal(isSiteNamePrompt(secondGreeting.reply), true);
+  assert.equal(nameFromSiteMessage("Andrea", isSiteNamePrompt(secondGreeting.reply)), "Andrea");
   assert.equal(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "", hadName: false, hadPhone: false, messages }).step, "identity_phone");
   assert.doesNotMatch(siteVisitorIdentityDecision({ name: "Maria Silva", phone: "", hadName: false, hadPhone: false, messages }).reply, /campanhas/i);
   const ready = siteVisitorIdentityDecision({ name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false, messages });

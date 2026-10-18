@@ -2,6 +2,11 @@ import { shouldOfferEnvironmentalEducationContact } from "./siteEnvironmentalEdu
 
 type ClientMessage = { from: string; text: string };
 
+export const isSiteNamePrompt = (text: string): boolean => {
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /como posso chamar voce|me (?:diga|diz) (?:o )?seu (?:primeiro )?nome/.test(normalized);
+};
+
 export const normalizeSiteVisitorName = (value: unknown): string => {
   const name = String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
@@ -39,8 +44,20 @@ export const siteVisitorIdentityDecision = (input: {
 }) => {
   const firstName = input.name.split(" ")[0];
   if (!input.name) {
+    const priorNamePrompts = input.messages.filter((message) => message.from === "bot" && isSiteNamePrompt(message.text)).length;
+    const lastClientMessage = [...input.messages].reverse().find((message) => message.from === "client")?.text.trim() ?? "";
+    const isGreeting = /^(?:oi|ol[aá]|bom dia|boa tarde|boa noite)[!.,\s]*$/i.test(lastClientMessage);
+    const reply = priorNamePrompts === 0
+      ? isGreeting
+        ? "Oi! Que bom falar com você. 🌿 Como posso chamar você?"
+        : "Vou ajudar você com isso. 🌿 Como posso chamar você?"
+      : priorNamePrompts === 1
+        ? isGreeting
+          ? "Oi, estou por aqui! 😊 Me diga seu primeiro nome para continuarmos."
+          : "Entendi. Para continuar, me diga seu primeiro nome, por favor. 🌿"
+        : "Estou por aqui para ajudar. 🌿 Quando puder, me diga seu nome e seguimos.";
     return {
-      reply: "🌿 Claro! Como posso chamar você?",
+      reply,
       step: null,
       pendingRequest: "",
     };
