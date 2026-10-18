@@ -518,12 +518,25 @@
 .crm-report-bars > div > i span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #19a9de, #4dc5d9); }
 .crm-report-bars strong { font-size: .66rem; text-align: right; }
 
-.crm-finance-hero { min-height: 142px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; border-radius: 17px; padding: 25px 31px; overflow: hidden; background: linear-gradient(120deg, #087fae, #08a193 72%, #43bd8d); color: #fff; box-shadow: 0 14px 30px rgba(8, 128, 158, .2); }
+.crm-finance-origin { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 13px; border: 1px solid #dce7ec; border-radius: 15px; padding: 13px 16px; background: #fff; }
+.crm-finance-origin > div:first-child { display: grid; gap: 3px; }
+.crm-finance-origin strong { color: #25495b; font-size: .72rem; }
+.crm-finance-origin small { color: #718496; font-size: .61rem; line-height: 1.4; }
+.crm-finance-origin__options { display: flex; flex-wrap: wrap; gap: 6px; }
+.crm-finance-origin__options button { min-height: 35px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d8e6e9; border-radius: 9px; padding: 0 10px; background: #f8fbfb; color: #486476; font-size: .64rem; font-weight: 700; white-space: nowrap; }
+.crm-finance-origin__options button:hover, .crm-finance-origin__options button.is-active { border-color: #087fae; background: #e9f7fa; color: #08749b; }
+.crm-finance-origin__options button span { min-width: 20px; border-radius: 6px; padding: 3px 5px; background: rgba(8,127,174,.09); text-align: center; font-size: .58rem; }
+.crm-finance-highlights { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(220px, 1fr); gap: 13px; margin-bottom: 13px; }
+.crm-finance-hero { min-height: 142px; display: flex; align-items: center; justify-content: space-between; border-radius: 17px; padding: 25px 31px; overflow: hidden; background: linear-gradient(120deg, #087fae, #08a193 72%, #43bd8d); color: #fff; box-shadow: 0 14px 30px rgba(8, 128, 158, .2); }
 .crm-finance-hero span, .crm-finance-hero strong, .crm-finance-hero small { display: block; }
 .crm-finance-hero span { color: rgba(255,255,255,.78); font-size: .7rem; }
 .crm-finance-hero strong { margin: 7px 0 9px; font-family: "Playfair Display", Georgia, serif; font-size: 2.25rem; }
 .crm-finance-hero small { display: flex; align-items: center; gap: 5px; font-size: .62rem; }
 .crm-finance-hero > svg { color: rgba(255,255,255,.22); font-size: 6rem; transform: rotate(-6deg); }
+.crm-finance-percent { min-width: 0; display: flex; flex-direction: column; justify-content: center; border: 1px solid #cde5de; border-radius: 17px; padding: 22px 24px; background: linear-gradient(135deg, #f4fbf7, #e8f7f1); color: #205847; }
+.crm-finance-percent > span { font-size: .71rem; font-weight: 800; }
+.crm-finance-percent strong { margin: 9px 0; font-family: "Playfair Display", Georgia, serif; font-size: clamp(1.55rem, 2.1vw, 2rem); overflow-wrap: anywhere; }
+.crm-finance-percent small { color: #567869; font-size: .62rem; line-height: 1.5; }
 .crm-finance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .crm-experience-bars { padding: 10px 18px 20px; }
 .crm-experience-bars > div { margin-top: 15px; }
@@ -542,6 +555,7 @@
 .crm-transactions strong { font-size: .65rem; }
 .crm-transactions small { margin-top: 3px; color: #8393a0; font-size: .54rem; }
 .crm-transactions em { font-size: .65rem; font-style: normal; font-weight: 800; }
+.crm-transactions .crm-finance-empty { padding: 15px 0; color: #718496; font-size: .68rem; line-height: 1.5; }
 
 .crm-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .crm-settings-card { padding: 17px; }
@@ -851,6 +865,8 @@
 }
 
 @media (max-width: 820px) {
+  .crm-finance-origin { align-items: stretch; flex-direction: column; }
+  .crm-finance-highlights { grid-template-columns: 1fr; }
   .crm-topbar { height: 76px; grid-template-columns: 1fr auto; padding: 0 14px; }
   .crm-topbar__identity span { display: none; }
   .crm-topbar__identity strong { font-size: 1.25rem; }

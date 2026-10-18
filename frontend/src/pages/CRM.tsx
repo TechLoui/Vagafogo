@@ -68,6 +68,8 @@ type SectionKey =
   | "financeiro"
   | "configuracoes";
 type PeriodKey = "today" | "7days" | "30days" | "month" | "custom";
+type FinanceOriginFilter = "all" | "manual" | "checkout" | "other";
+type BookingSource = Exclude<FinanceOriginFilter, "all">;
 type CampaignSegment =
   | "inactive90"
   | "inactive180"
@@ -115,6 +117,7 @@ type RawReservation = Record<string, unknown> & {
   status?: unknown;
   Status?: unknown;
   origem?: unknown;
+  Origem?: unknown;
   criadaEm?: unknown;
   criadoEm?: unknown;
   dataPagamento?: unknown;
@@ -131,6 +134,13 @@ type RawReservation = Record<string, unknown> & {
   canalOrigem?: unknown;
   dominioOrigem?: unknown;
   agentSessionId?: unknown;
+  criadaManualmente?: unknown;
+  reservaManual?: unknown;
+  inseridaManualmente?: unknown;
+  createdManually?: unknown;
+  manual?: unknown;
+  origemReserva?: unknown;
+  tipoOrigem?: unknown;
 };
 
 type CRMReservation = {
@@ -145,6 +155,7 @@ type CRMReservation = {
   value: number;
   status: string;
   origin: "manual" | "checkout" | "whatsapp" | "unknown";
+  bookingSource: BookingSource;
   flow: ReservationFlow;
   sourceDomain?: string;
   sourceChannel?: "site" | "whatsapp" | "unknown";
@@ -396,6 +407,12 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
   maximumFractionDigits: 0,
 });
+const currencyWithCents = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 const compactNumber = new Intl.NumberFormat("pt-BR", {
   notation: "compact",
   maximumFractionDigits: 1,
@@ -414,6 +431,25 @@ const normalizeSourceDomain = (value: unknown) =>
     .split("/")[0]
     .replace(/^www\./, "")
     .replace(/:\d+$/, "");
+const classifyBookingSource = (raw: RawReservation): BookingSource => {
+  const attribution = raw.atribuicao && typeof raw.atribuicao === "object"
+    ? raw.atribuicao as Record<string, unknown>
+    : {};
+  const origin = normalizeText([raw.origem, raw.Origem, raw.origemReserva, raw.tipoOrigem].find((value) => normalizeText(value)))
+    .replace(/[^a-z0-9]+/g, "_");
+  if (
+    [raw.criadaManualmente, raw.reservaManual, raw.inseridaManualmente, raw.createdManually, raw.manual].some((value) => value === true)
+    || origin.includes("manual") || origin === "balcao" || origin === "administrativo"
+  ) return "manual";
+  const hasCheckoutEvidence = Boolean(
+    [raw.canalOrigem, raw.sourceChannel, attribution.sourceChannel].some((value) => normalizeText(value))
+    || [raw.dominioOrigem, raw.sourceDomain, attribution.sourceDomain, attribution.entryDomain].some((value) => normalizeSourceDomain(value)),
+  );
+  // Cadastros manuais antigos podiam receber origem "checkout" ao registrar o pagamento no Asaas.
+  if (origin === "checkout") return hasCheckoutEvidence ? "checkout" : "manual";
+  if (["site", "whatsapp", "agente_whatsapp", "bot"].includes(origin)) return "checkout";
+  return !origin && hasCheckoutEvidence ? "checkout" : "other";
+};
 const formatPhone = (value: unknown) => {
   let digits = String(value ?? "")
     .replace(/\D/g, "")
@@ -710,6 +746,7 @@ export function CRM() {
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState("");
   const [financialValuesVisible, setFinancialValuesVisible] = useState(false);
+  const [financeOriginFilter, setFinanceOriginFilter] = useState<FinanceOriginFilter>("all");
   const [reservations, setReservations] = useState<CRMReservation[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(true);
   const [reservationsError, setReservationsError] = useState("");
@@ -736,15 +773,16 @@ export function CRM() {
                   ? (raw.atribuicao as Record<string, unknown>)
                   : {};
               const originRaw = normalizeText(raw.origem);
+              const bookingSource = classifyBookingSource(raw);
               const channelRaw = normalizeText(
                 raw.canalOrigem ?? attribution.sourceChannel,
               );
               const recordedOrigin: CRMReservation["origin"] =
-                originRaw === "manual"
+                bookingSource === "manual"
                   ? "manual"
                   : originRaw.includes("whatsapp") || channelRaw === "whatsapp"
                     ? "whatsapp"
-                    : originRaw === "checkout" ||
+                    : bookingSource === "checkout" ||
                         Object.keys(attribution).length > 0
                       ? "checkout"
                       : "unknown";
@@ -853,6 +891,7 @@ export function CRM() {
                 value: toNumber(rawValue(raw, "valor", "Valor")),
                 status: displayStatus,
                 origin,
+                bookingSource,
                 flow,
                 sourceDomain: sourceDomain || undefined,
                 sourceChannel:
@@ -1170,6 +1209,11 @@ export function CRM() {
       }),
     [periodBounds, reservations],
   );
+  const financialReservations = useMemo(
+    () => filteredReservations.filter((item) =>
+      financeOriginFilter === "all" || item.bookingSource === financeOriginFilter),
+    [filteredReservations, financeOriginFilter],
+  );
 
   const customers = useMemo<Customer[]>(() => {
     const map = new Map<string, Omit<Customer, "daysInactive" | "status">>();
@@ -1387,7 +1431,7 @@ export function CRM() {
       setToast("Revele os valores financeiros antes de exportar o relatório.");
       return;
     }
-    const reservationRows = filteredReservations.map((item) => ({
+    const reservationRows = (activeSection === "financeiro" ? financialReservations : filteredReservations).map((item) => ({
       reserva: item.id,
       cliente: item.name,
       telefone: item.phone,
@@ -1400,6 +1444,7 @@ export function CRM() {
       valor: item.value,
       status: statusLabel(item.status),
       origem: originLabel(item.origin),
+      tipoReserva: item.bookingSource === "manual" ? "Manual" : item.bookingSource === "checkout" ? "Checkout" : "Não identificada",
       dominioOrigem: item.sourceDomain ?? "",
       campanhaId: item.campaignId ?? "",
       tipoAtribuicao:
@@ -1950,6 +1995,9 @@ export function CRM() {
           ) : activeSection === "financeiro" ? (
             <FinanceSection
               reservations={filteredReservations}
+              selectedReservations={financialReservations}
+              originFilter={financeOriginFilter}
+              onOriginFilterChange={setFinanceOriginFilter}
               periodLabel={periodLabel}
               valuesVisible={financialValuesVisible}
               onToggleValues={() =>
@@ -4999,18 +5047,24 @@ function ReportsSection({
 
 function FinanceSection({
   reservations,
+  selectedReservations,
+  originFilter,
+  onOriginFilterChange,
   periodLabel,
   valuesVisible,
   onToggleValues,
 }: {
   reservations: CRMReservation[];
+  selectedReservations: CRMReservation[];
+  originFilter: FinanceOriginFilter;
+  onOriginFilterChange: (filter: FinanceOriginFilter) => void;
   periodLabel: string;
   valuesVisible: boolean;
   onToggleValues: () => void;
 }) {
-  const paid = reservations.filter((item) => isPaid(item.status));
-  const pending = reservations.filter((item) => isPending(item.status));
-  const cancelled = reservations.filter((item) => isCancelled(item.status));
+  const paid = selectedReservations.filter((item) => isPaid(item.status));
+  const pending = selectedReservations.filter((item) => isPending(item.status));
+  const cancelled = selectedReservations.filter((item) => isCancelled(item.status));
   const paidValue = paid.reduce((sum, item) => sum + item.value, 0);
   const pendingValue = pending.reduce((sum, item) => sum + item.value, 0);
   const cancelledValue = cancelled.reduce((sum, item) => sum + item.value, 0);
@@ -5028,7 +5082,7 @@ function FinanceSection({
   }));
   const max = Math.max(1, ...byExperience.map((item) => item.value));
   const displayMoney = (value: number) =>
-    valuesVisible ? currency.format(value) : "R$ •••••";
+    valuesVisible ? currencyWithCents.format(value) : "R$ •••••";
   return (
     <section className="crm-section">
       <SectionTitle
@@ -5051,15 +5105,49 @@ function FinanceSection({
           </button>
         }
       />
-      <div className="crm-finance-hero">
+      <div className="crm-finance-origin" role="group" aria-label="Filtrar financeiro por origem da reserva">
         <div>
-          <span>Receita confirmada</span>
-          <strong className={!valuesVisible ? "is-private" : ""}>
-            {displayMoney(paidValue)}
-          </strong>
-          <small>{paid.length} reservas pagas no período</small>
+          <strong>Origem das reservas</strong>
+          <small>Todos os valores abaixo acompanham este filtro e o período selecionado.</small>
         </div>
-        <FaChartLine />
+        <div className="crm-finance-origin__options">
+          {([
+            ["all", "Todas"],
+            ["manual", "Manuais"],
+            ["checkout", "Checkout"],
+            ["other", "Não identificadas"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={originFilter === value ? "is-active" : ""}
+              aria-pressed={originFilter === value}
+              onClick={() => onOriginFilterChange(value)}
+            >
+              {label}
+              <span>{value === "all" ? reservations.length : reservations.filter((item) => item.bookingSource === value).length}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="crm-finance-highlights">
+        <div className="crm-finance-hero">
+          <div>
+            <span>Receita confirmada</span>
+            <strong className={!valuesVisible ? "is-private" : ""}>
+              {displayMoney(paidValue)}
+            </strong>
+            <small>{paid.length} reservas pagas no filtro</small>
+          </div>
+          <FaChartLine />
+        </div>
+        <div className="crm-finance-percent">
+          <span>1% do total filtrado</span>
+          <strong className={!valuesVisible ? "is-private" : ""}>
+            {valuesVisible ? currencyWithCents.format(paidValue * 0.01) : "R$ •••••"}
+          </strong>
+          <small>Calculado sobre a receita confirmada, sem valores pendentes ou cancelados.</small>
+        </div>
       </div>
       <div className="crm-summary-strip">
         <article>
@@ -5147,7 +5235,10 @@ function FinanceSection({
             </div>
           </div>
           <div className="crm-transactions">
-            {reservations
+            {selectedReservations.length === 0 && (
+              <p className="crm-finance-empty">Nenhuma reserva encontrada para esta origem no período selecionado.</p>
+            )}
+            {selectedReservations
               .slice()
               .sort((a, b) => b.date.localeCompare(a.date))
               .slice(0, 5)
