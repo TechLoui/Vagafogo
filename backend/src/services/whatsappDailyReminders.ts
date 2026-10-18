@@ -112,13 +112,13 @@ const getConfig = async (force = false) => {
   return cachedConfig;
 };
 
-const buildInstructions = (reservation: FirebaseFirestore.DocumentData) => {
+export const buildInstructions = (reservation: FirebaseFirestore.DocumentData) => {
   const activity = clean(reservation.atividade ?? reservation.Atividade, 500)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const lines: string[] = [];
   if (activity.includes("brunch")) {
     lines.push("• O horário reservado é para estar sentado à mesa; há 15 minutos de tolerância.");
-    lines.push("• Se precisar avisar que vai se atrasar, ligue para (62) 99222-5471. Atendemos chamadas das 08h às 17h.");
+    lines.push("• Se precisar avisar que vai se atrasar, ligue para nossa equipe pelo botão de chamada aqui neste WhatsApp. Atendemos chamadas das 08h às 17h.");
   }
   if (activity.includes("trilha")) {
     lines.push("• A trilha funciona das 09h às 16h, com entrada até 15h e saída até 16h.");

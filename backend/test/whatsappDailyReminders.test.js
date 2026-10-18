@@ -2,8 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  buildInstructions,
   reservaCriadaOuConfirmadaNoDia,
 } = require("../dist/services/whatsappDailyReminders");
+
+test("lembrete de brunch orienta a ligar por este WhatsApp, sem discar o número", () => {
+  const instructions = buildInstructions({ atividade: "Brunch Gastronômico" });
+  assert.match(instructions, /botão de chamada aqui neste WhatsApp/);
+  assert.doesNotMatch(instructions, /ligue para \(62\)/);
+});
 
 test("exclui do bom dia a reserva criada no dia da visita", () => {
   assert.equal(
