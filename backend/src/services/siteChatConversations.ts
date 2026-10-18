@@ -115,6 +115,15 @@ const normalizeMessage = (value: unknown): SiteConversationMessage | null => {
   };
 };
 
+export const serializarMensagemConversaSite = (message: SiteConversationMessage) => ({
+  id: message.id,
+  from: message.from,
+  text: message.text,
+  ts: message.ts,
+  ...(message.sourceId ? { sourceId: message.sourceId } : {}),
+  ...(message.mediaType ? { mediaType: message.mediaType } : {}),
+});
+
 const normalizeConversation = (id: string, value: Record<string, unknown>): SiteConversation | null => {
   const sessionId = String(value.sessionId ?? id).trim();
   if (!/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId)) return null;
@@ -173,6 +182,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
 
 const serializeConversation = (conversation: SiteConversation) => ({
   ...conversation,
+  messages: conversation.messages.map(serializarMensagemConversaSite),
   createdAt: new Date(conversation.createdAt),
   updatedAt: new Date(conversation.updatedAt),
   expiresAt: new Date(conversation.expiresAt),
@@ -189,7 +199,7 @@ const persistMessageAndConversation = async (conversation: SiteConversation, mes
   const batch = firestore.batch();
   batch.set(firestore.collection(COLLECTION).doc(conversation.sessionId), serializeConversation(conversation));
   batch.set(firestore.collection(MESSAGE_COLLECTION).doc(archiveMessageId(conversation.sessionId, message.id)), {
-    ...message,
+    ...serializarMensagemConversaSite(message),
     sessionId: conversation.sessionId,
     expiresAt: new Date(message.ts + TTL_MS),
   });

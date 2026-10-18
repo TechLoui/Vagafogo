@@ -15,7 +15,24 @@ const {
   obterConversaSite,
   registrarMensagemConversaSite,
   removerConversaSite,
+  serializarMensagemConversaSite,
 } = require("../dist/services/siteChatConversations");
+
+test("nao grava campos opcionais indefinidos nas mensagens do Firestore", () => {
+  const plain = serializarMensagemConversaSite({
+    id: "client:test", from: "client", text: "Oi", ts: Date.now(),
+    sourceId: undefined, mediaType: undefined,
+  });
+  assert.equal(Object.hasOwn(plain, "sourceId"), false);
+  assert.equal(Object.hasOwn(plain, "mediaType"), false);
+  assert.deepEqual(Object.values(plain).filter((value) => value === undefined), []);
+  const withMedia = serializarMensagemConversaSite({
+    id: "bot:photo", from: "bot", text: "Foto", ts: Date.now(),
+    sourceId: "bot:photo", mediaType: "image/jpeg",
+  });
+  assert.equal(withMedia.sourceId, "bot:photo");
+  assert.equal(withMedia.mediaType, "image/jpeg");
+});
 
 test("descarta mensagens com mais de sete dias mesmo em conversa ainda ativa", () => {
   const now = Date.now();
