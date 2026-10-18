@@ -380,6 +380,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       name: contactName,
       phone: contactPhone,
     });
+    await atualizarProgressoReservaSite(sessionId, null, storedClientMessage.message.ts);
     res.json({
       resposta: identity.reply,
       session_id: sessionId,
@@ -515,10 +516,12 @@ app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
     return;
   }
   res.set("Cache-Control", "no-store");
+  const resuming = req.query.retomar === "1";
   res.json({
     session_id: sessionId,
     mode: conversation.mode,
-    messages: await listarMensagensConversaSite(sessionId, after, true),
+    ...(resuming ? { name: conversation.name, phone: conversation.phone, booking_ui: conversation.bookingUi } : {}),
+    messages: await listarMensagensConversaSite(sessionId, after, !resuming),
   });
 });
 

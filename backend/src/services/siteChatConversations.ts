@@ -79,6 +79,7 @@ type SiteConversation = {
     sentAt: number | null;
     lastAttemptAt: number | null;
   } | null;
+  bookingUi: Record<string, unknown> | null;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
@@ -174,6 +175,8 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       sentAt: rawFollowup.sentAt ? normalizeTimestamp(rawFollowup.sentAt) : null,
       lastAttemptAt: rawFollowup.lastAttemptAt ? normalizeTimestamp(rawFollowup.lastAttemptAt) : null,
     } : null,
+    bookingUi: value.bookingUi && typeof value.bookingUi === "object" && !Array.isArray(value.bookingUi)
+      ? value.bookingUi as Record<string, unknown> : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, last?.ts ?? now),
     expiresAt: normalizeTimestamp(value.expiresAt, now + TTL_MS),
@@ -385,13 +388,20 @@ export const atualizarProgressoReservaSite = async (sessionId: string, ui: unkno
   const draft = raw.draft && typeof raw.draft === "object" ? raw.draft as Record<string, unknown> : {};
   const previous = conversation.bookingFollowup;
   const step = String(raw.step ?? "");
+  const latestClientText = [...conversation.messages].reverse().find((message) => message.from === "client")?.text ?? "";
+  const declined = /\b(n[aã]o concordo|n[aã]o me (?:envie|mande)|n[aã]o quero receber|pare de me enviar)\b/i.test(latestClientText);
+  const normalizedLastClientText = latestClientText.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  const finished = /^(?:obrigad[oa](?: por tudo)?|valeu|tudo certo|perfeito obrigad[oa]|ja resolvi|resolvido|nao preciso mais|pode encerrar|vou decidir depois|depois eu volto)$/.test(normalizedLastClientText);
+  const serializedUi = ui && typeof ui === "object" ? JSON.stringify(ui) : "";
+  conversation.bookingUi = serializedUi && serializedUi.length <= 100_000
+    ? JSON.parse(serializedUi) as Record<string, unknown> : null;
   conversation.bookingFollowup = {
     step: ["contact", "summary", "payment"].includes(step) ? step : "",
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(draft.data ?? "")) ? String(draft.data) : previous?.date ?? "",
     hour: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(draft.horario ?? "")) ? String(draft.horario) : previous?.hour ?? "",
     offerId: String(draft.ofertaId ?? previous?.offerId ?? "").slice(0, 100),
     offerName: String(draft.ofertaNome ?? previous?.offerName ?? "").slice(0, 160),
-    optedIn: raw.reminderOptIn === true,
+    optedIn: /^55\d{10,11}$/.test(conversation.phone) && !declined && !finished,
     lastClientAt: Math.max(0, lastClientAt),
     sentAt: previous?.sentAt ?? null,
     lastAttemptAt: previous?.lastAttemptAt ?? null,

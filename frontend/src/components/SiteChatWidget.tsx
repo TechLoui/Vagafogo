@@ -383,18 +383,25 @@ export function SiteChatWidget() {
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
   const [redirectedPhone] = useState(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("origem") !== "whatsapp") return "";
+    if (!["whatsapp", "retomada"].includes(params.get("origem") || "")) return "";
     const normalized = normalizePhone(params.get("telefone") || "");
     return normalized.length >= 12 && normalized.length <= 13 ? normalized : "";
+  });
+  const [resumeSessionId] = useState(() => {
+    if (!redirectedPhone) return "";
+    const params = new URLSearchParams(location.search);
+    const value = params.get("origem") === "retomada" ? params.get("sessao") || "" : "";
+    return /^site_[A-Za-z0-9_-]{12,110}$/.test(value) ? value : "";
   });
   const stored = useMemo(safeStoredChat, []);
   const initial = useMemo(() => {
     if (!stored) return null;
+    if (resumeSessionId && stored.sessionId !== resumeSessionId) return null;
     if (redirectedPhone && normalizePhone(stored.phone) !== redirectedPhone) return null;
     return stored;
-  }, [redirectedPhone, stored]);
+  }, [redirectedPhone, resumeSessionId, stored]);
   const [open, setOpen] = useState(false);
-  const [sessionId, setSessionId] = useState(initial?.sessionId || createSessionId());
+  const [sessionId, setSessionId] = useState(resumeSessionId || initial?.sessionId || createSessionId());
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
@@ -407,6 +414,7 @@ export function SiteChatWidget() {
   const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || Date.now() + STORAGE_TTL_MS);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resuming, setResuming] = useState(Boolean(resumeSessionId));
   const [error, setError] = useState("");
   const [checkoutUrl, setCheckoutUrl] = useState("");
   const [photoPreview, setPhotoPreview] = useState<PhotoPreviewState | null>(null);
@@ -481,11 +489,65 @@ export function SiteChatWidget() {
   }, [location.search]);
 
   useEffect(() => {
-    if (!redirectedPhone) return;
+    if (!redirectedPhone || resumeSessionId) return;
     const cleanLocation = new URL(window.location.href);
     cleanLocation.searchParams.delete("telefone");
     window.history.replaceState(window.history.state, "", `${cleanLocation.pathname}${cleanLocation.search}${cleanLocation.hash}`);
-  }, [redirectedPhone]);
+  }, [redirectedPhone, resumeSessionId]);
+
+  useEffect(() => {
+    if (!resumeSessionId || !redirectedPhone) return;
+    let disposed = false;
+    const cleanResumeUrl = () => {
+      const cleanLocation = new URL(window.location.href);
+      for (const key of ["telefone", "sessao", "origem"]) cleanLocation.searchParams.delete(key);
+      window.history.replaceState(window.history.state, "", `${cleanLocation.pathname}${cleanLocation.search}${cleanLocation.hash}`);
+    };
+    const restore = async () => {
+      try {
+        const query = new URLSearchParams({ telefone: redirectedPhone, retomar: "1" });
+        const response = await fetch(`${API_BASE}/atendimento/site/sessao/${encodeURIComponent(resumeSessionId)}/mensagens?${query}`, {
+          headers: { Accept: "application/json" }, cache: "no-store",
+        });
+        if (!response.ok) throw new Error(response.status === 410
+          ? "Este atendimento expirou após 2 horas. Você pode começar uma nova conversa com a Jatobá por aqui."
+          : "Não foi possível retomar o atendimento anterior. Você pode começar uma nova conversa por aqui.");
+        const result = await response.json() as {
+          name?: string; phone?: string; mode?: string; booking_ui?: BookingUi | null;
+          messages?: Array<{ id: string; from: "client" | "bot" | "agent"; text: string; ts: number }>;
+        };
+        if (disposed) return;
+        const restoredMessages: ChatMessage[] = (result.messages || []).filter((message) => message.text).map((message) => ({
+          id: message.id,
+          role: message.from === "client" ? "user" : "assistant",
+          content: message.text,
+          createdAt: Number(message.ts) || Date.now(),
+          animate: false,
+        }));
+        setSessionId(resumeSessionId);
+        setName(result.name || "");
+        setPhone(result.phone || redirectedPhone);
+        if (restoredMessages.length) setMessages(restoredMessages);
+        setBookingUi(result.mode === "bot" ? safeBookingUi(result.booking_ui) : null);
+        setHumanMode(result.mode === "human");
+        setSessionRegistered(true);
+        setExpiresAt((restoredMessages.at(-1)?.createdAt || Date.now()) + STORAGE_TTL_MS);
+        setShowHistory(false);
+      } catch (cause) {
+        if (!disposed) {
+          resetConversation();
+          setError(cause instanceof Error ? cause.message : "Não foi possível retomar o atendimento.");
+        }
+      } finally {
+        if (!disposed) {
+          setResuming(false);
+          cleanResumeUrl();
+        }
+      }
+    };
+    void restore();
+    return () => { disposed = true; };
+  }, [redirectedPhone, resetConversation, resumeSessionId]);
 
   useEffect(() => {
     if (!open || !window.matchMedia("(max-width: 639px)").matches) return;
@@ -659,7 +721,7 @@ export function SiteChatWidget() {
 
   const send = async (override?: string, submittedPhone?: string, selection?: SiteBookingSelection): Promise<boolean> => {
     const content = (override ?? draft).trim();
-    if (!content || loading || sendingRef.current) return false;
+    if (!content || loading || resuming || sendingRef.current) return false;
     const answeringPhone = !phone && (bookingUi?.step === "phone" || bookingUi?.step === "identity_phone");
     const answerPhone = answeringPhone ? normalizePhone(submittedPhone || content) : "";
     if (answeringPhone && (answerPhone.length < 12 || answerPhone.length > 13)) {
@@ -868,6 +930,7 @@ export function SiteChatWidget() {
                     ))}
                     </Fragment>
                   )})}
+                  {resuming && <div role="status" className="rounded-xl bg-[#eef6f1] px-3 py-2 text-sm text-[#315c49]">Retomando sua conversa com a Jatobá…</div>}
                   {loading && (!bookingUi || humanMode) && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
@@ -885,10 +948,10 @@ export function SiteChatWidget() {
                 </div>
                 <div className="shrink-0 border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                   {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
-                  {error && <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700"><span>{error} Sua mensagem continua no campo.</span><button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1 font-semibold disabled:opacity-50">Tentar enviar</button></div>}
+                  {error && <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700"><span>{error}{draft.trim() ? " Sua mensagem continua no campo." : ""}</span>{draft.trim() && <button type="button" onClick={() => void send()} disabled={loading || resuming} className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1 font-semibold disabled:opacity-50">Tentar enviar</button>}</div>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
-                    <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm outline-none" />
-                    <button type="button" onClick={() => void send()} disabled={loading || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
+                    <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading || resuming} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm outline-none" />
+                    <button type="button" onClick={() => void send()} disabled={loading || resuming || !draft.trim()} aria-label="Enviar mensagem" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#20745a] text-white disabled:cursor-not-allowed disabled:opacity-40">
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
                     </button>
                   </div>

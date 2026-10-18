@@ -6,6 +6,7 @@ process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
 const {
   alterarModoConversaSite,
+  atualizarProgressoReservaSite,
   combinarMensagensSite,
   filtrarMensagensSiteVigentes,
   limitarHistoricoSite,
@@ -140,6 +141,41 @@ test("permite iniciar anonimamente e associar o WhatsApp quando a Jatobá o soli
   assert.equal(conversation.phone, "5562999999999");
   assert.equal(conversation.messages.length, 3);
   assert.equal((await listarConversasSite()).find((contact) => contact.sessionId === sessionId).phone, "5562999999999");
+  await removerConversaSite(sessionId);
+});
+
+test("guarda a etapa para retomar e respeita recusa de contato", async () => {
+  const sessionId = `site_test_${Date.now()}_resumeabcdef`;
+  const client = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Quero reservar o brunch", phone: "5562999999999", name: "Maria",
+  });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Qual dia fica melhor?" });
+  const ui = { step: "date", draft: { ofertaId: "brunch", data: "2026-10-20" } };
+  await atualizarProgressoReservaSite(sessionId, ui, client.message.ts);
+  let conversation = await obterConversaSite(sessionId);
+  assert.deepEqual(conversation.bookingUi, ui);
+  assert.equal(conversation.bookingFollowup.optedIn, true);
+  assert.equal(conversation.bookingFollowup.lastClientAt, client.message.ts);
+
+  const refusal = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Não me envie mensagens no WhatsApp.",
+  });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Tudo bem, não enviarei." });
+  await atualizarProgressoReservaSite(sessionId, null, refusal.message.ts);
+  conversation = await obterConversaSite(sessionId);
+  assert.equal(conversation.bookingFollowup.optedIn, false);
+  assert.equal(conversation.bookingUi, null);
+  await removerConversaSite(sessionId);
+});
+
+test("não retoma um atendimento encerrado com agradecimento", async () => {
+  const sessionId = `site_test_${Date.now()}_finishedabcdef`;
+  const message = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Obrigado!", phone: "5562999999999", name: "Paulo",
+  });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Por nada! 🌿" });
+  await atualizarProgressoReservaSite(sessionId, null, message.message.ts);
+  assert.equal((await obterConversaSite(sessionId)).bookingFollowup.optedIn, false);
   await removerConversaSite(sessionId);
 });
 

@@ -4,7 +4,7 @@ import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsa
 import { listarConversasSite, obterConversaSite, registrarTentativaLembreteReservaSite } from "./siteChatConversations";
 
 const TIMEZONE = "America/Sao_Paulo";
-const INACTIVITY_MS = 30 * 60 * 1000;
+const INACTIVITY_MS = 15 * 60 * 1000;
 const SESSION_MS = 2 * 60 * 60 * 1000;
 const RETRY_MS = 5 * 60 * 1000;
 const CLAIMS = "site_booking_followup_claims";
@@ -17,6 +17,7 @@ type FollowupCandidate = {
   phone: string;
   name: string;
   mode: string;
+  lastFrom: string;
   bookingFollowup: {
     step: string;
     date: string;
@@ -39,14 +40,13 @@ const localMinutes = (now: number) => {
 
 export const reservaSiteElegivelParaLembrete = (conversation: FollowupCandidate, now = Date.now()) => {
   const progress = conversation.bookingFollowup;
-  if (!progress || conversation.mode !== "bot" || !/^55\d{10,11}$/.test(conversation.phone)) return false;
-  if (!progress.optedIn || !["contact", "summary", "payment"].includes(progress.step)) return false;
-  if (!progress.offerId || !/^\d{4}-\d{2}-\d{2}$/.test(progress.date) || progress.sentAt) return false;
+  if (!progress || conversation.mode !== "bot" || conversation.lastFrom === "client" || !/^55\d{10,11}$/.test(conversation.phone)) return false;
+  if (!progress.optedIn || progress.sentAt) return false;
   const idle = now - progress.lastClientAt;
   if (idle < INACTIVITY_MS || idle >= SESSION_MS || progress.lastClientAt <= 0) return false;
   if (progress.lastAttemptAt && now - progress.lastAttemptAt < RETRY_MS) return false;
   const today = localDate(now);
-  if (progress.date < today) return false;
+  if (progress.date && (!/^\d{4}-\d{2}-\d{2}$/.test(progress.date) || progress.date < today)) return false;
   // Same-day reminders stop before the booked brunch or the trail entry cutoff.
   if (progress.date === today) {
     const hour = /^(\d{2}):(\d{2})$/.exec(progress.hour);
@@ -74,14 +74,16 @@ const matchingReservationExists = async (phone: string, date: string) => {
   }));
 };
 
-const messageFor = (candidate: FollowupCandidate) => {
+export const mensagemRetomadaSite = (candidate: FollowupCandidate) => {
   const progress = candidate.bookingFollowup!;
   const firstName = candidate.name.trim().split(/\s+/)[0] || "";
-  const greeting = firstName ? `Olá, ${firstName}! 🌿` : "Olá! 🌿";
-  const date = progress.date.split("-").reverse().join("/");
-  const when = `${date}${progress.hour ? ` às ${progress.hour}` : ""}`;
-  const offer = progress.offerName ? ` de ${progress.offerName}` : "";
-  return `${greeting}\n\nVocê iniciou uma reserva${offer} para ${when} pelo nosso site, mas ela ainda não foi concluída. A vaga só fica garantida após terminar as etapas e ter o pagamento aprovado.\n\nSe quiser continuar, abra o atendimento em https://vagafogo.com.br/?atendimento=1. Se já concluiu por outro caminho, desconsidere este aviso. 💚`;
+  const greeting = firstName ? `Oi, ${firstName}! 🌿` : "Oi! 🌿";
+  const params = new URLSearchParams({ atendimento: "1", origem: "retomada", sessao: candidate.sessionId, telefone: candidate.phone });
+  const link = `https://vagafogo.com.br/?${params.toString()}`;
+  const reservationNote = progress.offerId && progress.date
+    ? "Sua reserva ainda não foi concluída; a vaga só fica garantida após o pagamento aprovado.\n\n"
+    : "";
+  return `${greeting}\n\nNossa conversa no site ficou em pausa. Se quiser retomar de onde parou, é só tocar aqui:\n${link}\n\n${reservationNote}A Jatobá está por lá para tirar dúvidas e ajudar você com sua reserva. Se já resolveu tudo, pode desconsiderar esta mensagem. 💚`;
 };
 
 export const processarLembretesReservaSite = async (now = Date.now()) => {
@@ -102,7 +104,7 @@ export const processarLembretesReservaSite = async (now = Date.now()) => {
     const candidates = (await listarConversasSite()).filter((item) => reservaSiteElegivelParaLembrete(item, now)).slice(0, 20);
     let sent = 0;
     for (const candidate of candidates) {
-      const claimId = createHash("sha256").update(`${candidate.phone}:${candidate.bookingFollowup!.date}`).digest("hex");
+      const claimId = createHash("sha256").update(`${candidate.phone}:${localDate(candidate.bookingFollowup!.lastClientAt)}`).digest("hex");
       const claim = db.collection(CLAIMS).doc(claimId);
       try {
         await claim.create({ sessionId: candidate.sessionId, createdAt: new Date() });
@@ -111,14 +113,17 @@ export const processarLembretesReservaSite = async (now = Date.now()) => {
       }
       try {
         const current = await obterConversaSite(candidate.sessionId);
-        if (!current || !reservaSiteElegivelParaLembrete(current, Date.now())) continue;
-        if (await matchingReservationExists(current.phone, current.bookingFollowup!.date)) continue;
+        if (!current || !reservaSiteElegivelParaLembrete(current, Date.now())) {
+          await claim.delete();
+          continue;
+        }
+        if (current.bookingFollowup!.date && await matchingReservationExists(current.phone, current.bookingFollowup!.date)) continue;
         const result = await enviarMensagemTransacionalPeloAgente(
           current.phone,
-          messageFor(current),
+          mensagemRetomadaSite(current),
           `site-booking-followup:${current.sessionId}`,
           current.name,
-          { dataLimite: current.bookingFollowup!.date, tipoDisparo: "retomada_site" },
+          { ...(current.bookingFollowup!.date ? { dataLimite: current.bookingFollowup!.date } : {}), tipoDisparo: "retomada_site" },
         );
         await registrarTentativaLembreteReservaSite(current.sessionId, result.enviado);
         if (result.enviado) sent += 1;

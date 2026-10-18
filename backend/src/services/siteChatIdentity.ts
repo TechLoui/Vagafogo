@@ -64,7 +64,7 @@ export const siteVisitorIdentityDecision = (input: {
   }
   if (!input.phone) {
     return {
-      reply: `Obrigada, ${firstName}! Qual é o seu WhatsApp com DDD? Assim podemos retomar este atendimento se for necessário. 🌿`,
+      reply: `Obrigada, ${firstName}! Qual é o seu WhatsApp com DDD? Se nossa conversa parar, posso enviar um único lembrete após 15 minutos para você retomar por aqui. 🌿`,
       step: "identity_phone" as const,
       pendingRequest: "",
     };

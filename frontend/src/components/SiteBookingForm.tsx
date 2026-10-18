@@ -143,9 +143,9 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 }
 
 const stages = {
-  identity_phone: { title: "Seu WhatsApp", hint: "Para retomarmos este atendimento, se for necessário.", icon: FaWhatsapp },
+  identity_phone: { title: "Seu WhatsApp", hint: "Se parar, enviaremos um único lembrete após 15 minutos para retomar.", icon: FaWhatsapp },
   booking_mode: { title: "Como prefere reservar?", hint: "Escolha o jeito mais confortável para você.", icon: FaLeaf },
-  phone: { title: "Seu WhatsApp", hint: "Para acompanhar os detalhes da sua reserva.", icon: FaUser },
+  phone: { title: "Seu WhatsApp", hint: "Para acompanhar sua reserva e retomar se você parar por 15 minutos.", icon: FaUser },
   experiences: { title: "Escolha a experiência", hint: "Marque o brunch, a trilha ou os dois.", icon: FaLeaf },
   date: { title: "Escolha a data", hint: "Qual dia fica melhor para sua visita?", icon: FaCalendarAlt },
   time: { title: "Escolha o horário", hint: "A Jatobá confirmará as vagas para você.", icon: FaClock },
@@ -418,7 +418,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
         <p>• Brunch e combo exigem reserva e pagamento antecipados; não são vendidos no balcão.</p>
         <p>• A trilha individual pode ser paga no local, conforme a disponibilidade.</p>
         <p>• A reserva só está confirmada após o pagamento aprovado.</p>
-        <p>• Se você parar antes de concluir, podemos enviar um único aviso para o WhatsApp informado.</p>
+        <p>• Se você parar antes de concluir, podemos enviar um único aviso ao WhatsApp informado após 15 minutos.</p>
       </div>
       <div className="mt-4 grid gap-2" style={choiceColumns}>
         <button type="button" disabled={sending} onClick={() => void answer("Li as orientações e concordo em continuar a reserva.", undefined, { step: "guidance", accepted: true })} className="min-h-11 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Concordo</button>
