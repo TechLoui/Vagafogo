@@ -420,7 +420,7 @@ export function SiteChatWidget() {
   const scrollContentRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
-  const bookingFormRef = useRef<HTMLDivElement>(null);
+  const latestPrimaryMessageRef = useRef<HTMLDivElement>(null);
   const scrollModeRef = useRef<"bottom" | "latest" | "free">("bottom");
   const autoScrollingRef = useRef(false);
   const wasOpenRef = useRef(false);
@@ -532,16 +532,16 @@ export function SiteChatWidget() {
     const scroller = scrollRef.current;
     if (!scroller) return;
     const latest = latestMessageRef.current;
-    const form = bookingFormRef.current;
+    const first = latestPrimaryMessageRef.current || latest;
     const bottom = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     let target = bottom;
     let mode: "bottom" | "latest" = "bottom";
-    if (latest && !loading && messages.at(-1)?.role === "assistant") {
+    if (latest && first && messages.at(-1)?.role === "assistant") {
       const scrollerRect = scroller.getBoundingClientRect();
       const latestRect = latest.getBoundingClientRect();
-      const lastRect = form?.getBoundingClientRect() || latestRect;
-      if (lastRect.bottom - latestRect.top > scroller.clientHeight - 16) {
-        target = Math.max(0, Math.min(bottom, scroller.scrollTop + latestRect.top - scrollerRect.top - 8));
+      const firstRect = first.getBoundingClientRect();
+      if (latestRect.bottom - firstRect.top > scroller.clientHeight - 16) {
+        target = Math.max(0, Math.min(bottom, scroller.scrollTop + firstRect.top - scrollerRect.top - 8));
         mode = "latest";
       }
     }
@@ -550,7 +550,7 @@ export function SiteChatWidget() {
     scrollModeRef.current = mode;
     setShowNewMessages(false);
     requestAnimationFrame(() => requestAnimationFrame(() => { autoScrollingRef.current = false; }));
-  }, [loading, messages]);
+  }, [messages]);
 
   useLayoutEffect(() => {
     const justOpened = open && !wasOpenRef.current;
@@ -580,7 +580,7 @@ export function SiteChatWidget() {
     }
     const frame = requestAnimationFrame(scrollToLatest);
     return () => cancelAnimationFrame(frame);
-  }, [bookingUi, fullScreen, loading, messages, open, scrollToLatest, viewport.height, viewport.top]);
+  }, [bookingUi, expandedMessageId, fullScreen, loading, messages, open, scrollToLatest, viewport.height, viewport.top]);
 
   useLayoutEffect(() => {
     if (!open || !showHistory || !bookingUi || !scrollRef.current) return;
@@ -781,14 +781,19 @@ export function SiteChatWidget() {
   };
 
   const focusedHistory = Boolean(bookingUi && !humanMode && !showHistory && messages.length > 1);
-  const visibleMessages = focusedHistory ? messages.slice(-1) : messages;
+  const activeStageMessage = bookingUi && !humanMode
+    ? loading && messages.at(-1)?.role === "user"
+      ? [...messages].reverse().find((message) => message.role === "assistant")
+      : messages.at(-1)?.role === "assistant" ? messages.at(-1) : undefined
+    : undefined;
+  const visibleMessages = focusedHistory ? activeStageMessage ? [activeStageMessage] : messages.slice(-1) : messages;
   const olderMessageCount = bookingUi && !humanMode ? Math.max(0, messages.length - 1) : 0;
-  const activeBookingMessageId = !loading && !humanMode && bookingUi && bookingUi.step !== "availability" && !messages.at(-1)?.animate && messages.at(-1)?.role === "assistant"
-    ? messages.at(-1)?.id : null;
+  const activeBookingMessageId = !humanMode && bookingUi && bookingUi.step !== "availability" ? activeStageMessage?.id : null;
   const isCompactReply = (message: ChatMessage) => message.role === "assistant"
     && message.id === messages.at(-1)?.id
-    && Boolean(bookingUi && ["phone", "experiences", "date", "time", "participants"].includes(bookingUi.step))
-    && message.content.length > (bookingUi?.step === "experiences" ? 180 : 420)
+    && !bookingUi
+    && message.media?.type !== "pix"
+    && message.content.length > (["gallery", "image"].includes(message.media?.type || "") ? 240 : 500)
     && !extractOfficialCardCheckout(message.content);
 
   if (hidden) return null;
@@ -810,6 +815,9 @@ export function SiteChatWidget() {
                 <h2 className="font-display text-lg leading-tight">Jatobá</h2>
                 <p className="text-[10px] leading-tight text-white/80 sm:text-xs">Atendimento da Fazenda Vagafogo</p>
               </div>
+              {olderMessageCount > 0 && <button type="button" onClick={() => { setShowHistory((value) => !value); if (showHistory) { scrollModeRef.current = "bottom"; requestAnimationFrame(scrollToLatest); } }} aria-label={showHistory ? "Voltar à etapa atual" : `Ver conversa anterior (${olderMessageCount})`} aria-expanded={showHistory} title={showHistory ? "Voltar à etapa atual" : "Ver conversa anterior"} className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 sm:h-10 sm:w-10">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-9.5a7.5 7.5 0 0 1 7.5-7.5h3A7.5 7.5 0 0 1 20 11.5Z" /><path d="M8 11h8M8 14h5" /></svg>
+              </button>}
               <button type="button" onClick={() => { if (window.confirm("Reiniciar o atendimento? A conversa exibida neste aparelho será limpa e você começará do início.")) resetConversation(); }} aria-label="Reiniciar atendimento" title="Reiniciar atendimento" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 sm:h-10 sm:w-10">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.5 6.2M3 4v7h7" /></svg>
               </button>
@@ -823,24 +831,21 @@ export function SiteChatWidget() {
 
             <>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                  <div ref={scrollRef} onScroll={(event) => { if (autoScrollingRef.current) return; const node = event.currentTarget; const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; scrollModeRef.current = nearBottom ? "bottom" : "free"; if (nearBottom) setShowNewMessages(false); }} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
+                  <div ref={scrollRef} onScroll={(event) => { if (autoScrollingRef.current) return; const node = event.currentTarget; const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; const primaryTop = latestPrimaryMessageRef.current?.getBoundingClientRect().top ?? Infinity; const viewportTop = node.getBoundingClientRect().top; const latestAligned = primaryTop >= viewportTop - 12 && primaryTop <= viewportTop + 20; scrollModeRef.current = nearBottom ? "bottom" : scrollModeRef.current === "latest" && latestAligned ? "latest" : "free"; if (nearBottom) setShowNewMessages(false); }} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
                   <div ref={scrollContentRef} className="space-y-3">
-                  {olderMessageCount > 0 && <button type="button" aria-expanded={showHistory} onClick={() => { setShowHistory((value) => !value); if (showHistory) { scrollModeRef.current = "bottom"; requestAnimationFrame(scrollToLatest); } }} className="mx-auto flex items-center gap-2 rounded-full border border-[#dbe6d8] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b6d58] shadow-sm transition hover:border-[#a8c8ac] hover:bg-[#f1f7ee] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">
-                    <span aria-hidden="true">{showHistory ? "⌃" : "⌄"}</span>{showHistory ? "Ocultar conversa anterior" : `Ver conversa anterior (${olderMessageCount})`}
-                  </button>}
                   {visibleMessages.map((message, index) => {
                     const interactive = message.id === activeBookingMessageId;
                     return (
                     <Fragment key={message.id}>
-                    <div ref={index === visibleMessages.length - 1 && (interactive || !(message.visibleAdditional ?? message.additional?.length)) ? latestMessageRef : undefined} className={`flex min-w-0 gap-2 ${interactive || message.environmentalEducationCard ? "items-start" : "items-end"} ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
+                    <div ref={index === visibleMessages.length - 1 ? (message.visibleAdditional ?? message.additional?.length) ? latestPrimaryMessageRef : (node) => { latestPrimaryMessageRef.current = node; latestMessageRef.current = node; } : undefined} className={`flex min-w-0 gap-2 ${interactive || message.environmentalEducationCard ? "items-start" : "items-end"} ${message.role === "user" ? "justify-end" : "justify-start"} ${message.animate ? "site-chat-message-pop" : ""}`}>
                       {message.role === "assistant" && (
                         <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]">
                           <img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" />
                         </span>
                       )}
                       <div className={`min-w-0 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] ${interactive || message.environmentalEducationCard ? "w-[calc(100%-2.25rem)] max-w-[720px] overflow-hidden" : "max-w-[calc(100%-2.25rem)] sm:max-w-[min(88%,720px)]"} ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                        <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? "line-clamp-2" : ""}`}>{interactive && bookingUi?.step === "summary" ? "Confira todos os dados da sua reserva abaixo. 🌿" : <RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText>}</p>
-                        {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => setExpandedMessageId((current) => current === message.id ? "" : message.id)} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
+                        {!interactive && <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? ["gallery", "image"].includes(message.media?.type || "") ? "line-clamp-4" : "line-clamp-6" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>}
+                        {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => { scrollModeRef.current = "latest"; setExpandedMessageId((current) => current === message.id ? "" : message.id); }} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.environmentalEducationCard && (
                           <div className="mt-3 border-t border-[#e1e9df] pt-3 text-[#254a38]">
@@ -851,7 +856,7 @@ export function SiteChatWidget() {
                             <a href={ENVIRONMENTAL_EDUCATION_URL} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]" aria-label="Conversar com Uirá pelo WhatsApp sobre Educação Ambiental"><FaWhatsapp aria-hidden="true" className="h-4 w-4" /> Falar com o Uirá no WhatsApp</a>
                           </div>
                         )}
-                        {interactive && <div ref={bookingFormRef} className="-mx-3.5 -mb-2.5 mt-3 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} progress={bookingProgress} onProgress={updateBookingProgress} summaryText={bookingUi?.step === "summary" ? message.content : undefined} /></div>}
+                        {interactive && <div className="-mx-3.5 -mb-2.5 border-t border-[#e2eadf]"><SiteBookingForm key={`${message.id}:${bookingUi?.step}`} ui={bookingUi!} sending={loading} onAnswer={send} progress={bookingProgress} onProgress={updateBookingProgress} summaryText={bookingUi?.step === "summary" ? message.content : undefined} /></div>}
                       </div>
                     </div>
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
@@ -863,7 +868,7 @@ export function SiteChatWidget() {
                     ))}
                     </Fragment>
                   )})}
-                  {loading && (
+                  {loading && (!bookingUi || humanMode) && (
                     <div className="flex items-end gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f4eddd]"><img src={jatobaIcon} alt="" className="h-full w-full object-contain p-0.5" /></span>
                       <div role="status" className="flex items-end rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-4 py-3 text-sm text-[#607064]">

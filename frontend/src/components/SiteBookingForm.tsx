@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -180,8 +180,6 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const [pet, setPet] = useState("");
   const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
-  const submitButtonRef = useRef<HTMLButtonElement>(null);
-  const revealContinue = () => requestAnimationFrame(() => submitButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
 
   useEffect(() => {
     if (ui.step === "identity_phone" || ui.step === "booking_mode") return;
@@ -442,7 +440,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
         : step !== "payment" && liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
       <div className="space-y-2.5 p-3 sm:p-3.5">
         {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
-        {(step === "date" || step === "time" || step === "participants") && trailPackages.map((item) => (
+        {(step === "date" || step === "time") && trailPackages.map((item) => (
           <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2 text-[11px] leading-[1.45] text-[#3d6147]">
             <strong className="block text-xs">{item.nome} · {item.horarioInicio && item.horarioFim ? `${displayHour(item.horarioInicio)}–${displayHour(item.horarioFim)}` : "faixa de funcionamento"}</strong>
             <span>Sem hora marcada{scheduled.length ? ": faça antes ou depois do brunch" : ""}. Entrada até 15h; saída até 16h. Sem pets ou alimentos; água permitida.</span>
@@ -452,21 +450,22 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
 
         {step === "date" && (
           <div className="min-w-0">
-            <p className="mb-2 text-xs font-semibold text-[#425c49]">Data da visita</p>
+            {date && <button type="submit" disabled={sending || !dateHasTimes(date)} className="mb-2 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Continuar com {readableDate(date)} <FaArrowRight aria-hidden="true" /></button>}
+            <p className="mb-2 text-xs font-semibold text-[#425c49]">Escolha um dia disponível</p>
             <div className="overflow-hidden rounded-2xl border border-[#dce6d8] bg-white p-1.5 sm:p-2">
               <DayPicker
                 mode="single"
                 selected={dateFromKey(date)}
                 month={dateFromKey(`${calendarMonth}-01`)}
                 onMonthChange={(month) => { setCalendarMonth(keyFromDate(month).slice(0, 7)); setDate(""); onProgress({ date: "", times: {} }); setError(""); }}
-                onSelect={(day) => { const next = day ? keyFromDate(day) : ""; setDate(next); setTimes({}); onProgress({ date: next, times: {} }); setError(""); if (day) revealContinue(); }}
-                disabled={(day) => { const key = keyFromDate(day); return key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())) || !dateHasTimes(key); }}
+                onSelect={(day) => { const next = day ? keyFromDate(day) : ""; setDate(next); setTimes({}); onProgress({ date: next, times: {} }); setError(""); if (next && dateHasTimes(next)) void answer(`Gostaria de reservar para ${readableDate(next)}.`); }}
+                disabled={(day) => { const key = keyFromDate(day); return sending || key < today() || selected.some((item) => packageUnavailableOn(item, key, day.getDay())) || !dateHasTimes(key); }}
                 today={dateFromKey(today())}
                 locale={ptBR}
                 className="rdp-vagafogo site-chat-calendar"
               />
             </div>
-            <p className="mt-1.5 text-center text-[11px] text-[#718075]">{agendaError ? "Não consegui consultar os horários agora. Você pode informar a data por mensagem." : !agenda ? "Consultando os horários disponíveis…" : "Dias cinzas: sem horários disponíveis. Vagas a confirmar."}</p>
+            {(agendaError || !agenda) && <p className="mt-1.5 text-center text-[11px] text-[#718075]">{agendaError ? "Não consegui consultar os horários agora. Você pode informar a data por mensagem." : "Consultando os horários disponíveis…"}</p>}
           </div>
         )}
 
@@ -506,7 +505,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
                 const places = [remainingFor(item, hour), ...selected.filter((other) => other.id !== item.id && (other.modoHorario === "intervalo" || knownTime(other))).map((other) => remainingFor(other, other.modoHorario === "intervalo" ? "" : knownTime(other)))];
                 const finitePlaces = places.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
                 const remaining = places.some((value) => value === undefined) ? undefined : finitePlaces.length ? Math.min(...finitePlaces) : null;
-                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={isSelected && available} onClick={() => { const next = { ...times, [item.id]: hour }; setTimes(next); onProgress({ times: next }); setError(""); if (scheduled.length === 1) revealContinue(); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${isSelected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
+                return <button key={hour} type="button" disabled={sending || !available} aria-pressed={isSelected && available} onClick={() => { const next = { ...times, [item.id]: hour }; setTimes(next); onProgress({ times: next }); setError(""); }} className={`min-h-16 min-w-0 rounded-xl border px-2 py-2 text-center transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] disabled:cursor-not-allowed disabled:opacity-40 ${isSelected && available ? "border-[#20745a] bg-[#20745a] text-white shadow-md" : "border-[#d4e2d2] bg-white text-[#294c39] hover:border-[#76a98c] hover:bg-[#f3f8ef]"}`}>
                   <span className="block text-base font-bold">{displayHour(hour)}</span>
                   <span className={`mt-0.5 block text-[10px] ${isSelected && available ? "text-white/85" : "text-[#718075]"}`}>{!available && agenda ? "Indisponível" : typeof remaining === "number" ? `${remaining} vaga${remaining === 1 ? "" : "s"} restante${remaining === 1 ? "" : "s"}` : remaining === null ? "Vagas disponíveis" : "Vagas a confirmar"}</span>
                 </button>;
@@ -515,21 +514,21 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
           </div>
         ))}{agendaError && <p role="alert" className="text-xs text-amber-800">Não consegui consultar os horários agora. Você pode escolher por mensagem.</p>}{agenda && date && !dateHasTimes(date) && <p role="alert" className="text-xs text-amber-800">Não há mais horários nessa data. Diga outra data no chat para eu verificar.</p>}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
-        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{!availabilityReady && <p className="text-xs text-[#718075]">{agendaError ? "Não consegui atualizar as vagas. Você pode informar as pessoas por mensagem." : "Atualizando as vagas disponíveis…"}</p>}{availabilityReady && remainingPlaces !== null && <p className="text-xs font-medium text-[#46664d]">{remainingPlaces} {remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta visita.</p>}{orderedTypes.map((type) => {
+        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{!availabilityReady && <p className="text-xs text-[#718075]">{agendaError ? "Não consegui atualizar as vagas. Você pode informar as pessoas por mensagem." : "Atualizando as vagas disponíveis…"}</p>}{availabilityReady && remainingPlaces !== null && <p className="text-xs font-medium text-[#46664d]">{remainingPlaces} {remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta visita.</p>}<div className="grid gap-1.5 min-[430px]:grid-cols-2">{orderedTypes.map((type) => {
           const count = quantityOf(counts, type.id);
           const hint = participantHint(type);
-          return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2.5">
-            <div className="min-w-0 flex-1">
+          return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2 min-[430px]:min-h-[88px] min-[430px]:flex-col min-[430px]:items-stretch">
+            <div className="min-w-0 flex-1 min-[430px]:flex-none">
               <span className="block text-xs font-semibold text-[#33483a]">{type.nome}</span>
-              {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e]">{hint}</span>}
+              {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e] min-[430px]:line-clamp-2" title={hint}>{hint}</span>}
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex shrink-0 items-center gap-1.5 min-[430px]:justify-end">
               <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.max(0, count - 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
               <output className="w-5 text-center text-sm font-bold">{count}</output>
               <button type="button" onClick={() => { if (!availabilityReady || (remainingPlaces !== null && participantCount >= remainingPlaces)) return; const next = { ...counts, [type.id]: Math.min(99, count + 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={!availabilityReady || count >= 99 || (remainingPlaces !== null && participantCount >= remainingPlaces)} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
             </div>
           </div>;
-        })}{participantsExceedCapacity && <p role="alert" className="text-xs text-amber-800">As vagas disponíveis mudaram. Reduza a quantidade de pessoas para continuar.</p>}</div>)}
+        })}</div>{participantsExceedCapacity && <p role="alert" className="text-xs text-amber-800">As vagas disponíveis mudaram. Reduza a quantidade de pessoas para continuar.</p>}</div>)}
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <div role="group" aria-label="Vai levar pet?" className="text-xs font-semibold"><span className="block">Vai levar pet?</span><div className="mt-1.5 grid grid-cols-2 gap-2">{([ ["yes", "Sim"], ["no", "Não"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={pet === value} onClick={() => setPet(value)} className={`min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${pet === value ? "border-[#20745a] bg-[#e7f3e9] text-[#184f3c]" : "border-[#cddfcf] bg-white text-[#305944] hover:border-[#20745a]"}`}>{label}</button>)}</div>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</div>}</div>}
 
@@ -541,8 +540,8 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
         </div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment"].includes(step) && <button ref={submitButtonRef} type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "date" && !dateHasTimes(date)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Conferir vagas" : step === "date" && date ? `Continuar com ${readableDate(date)}` : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
-        {step !== "date" && step !== "summary" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
+        {!["summary", "payment", "date"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Conferir vagas" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {step !== "date" && step !== "summary" && step !== "participants" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>
   );
