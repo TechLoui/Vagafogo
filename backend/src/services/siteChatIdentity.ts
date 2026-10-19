@@ -2,6 +2,24 @@ import { shouldOfferEnvironmentalEducationContact } from "./siteEnvironmentalEdu
 
 type ClientMessage = { from: string; text: string };
 const NAME_INTRO = /^(?:(?:(?:eu\s+)?sou|me chamo|meu nome [ée]|pode me chamar de)\s+(?:(?:o|a)\s+)?|nome(?: completo)?\s*:\s*)/i;
+const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[.!?]+$/, "");
+const isIdentityDecline = (value: string) => /^(?:prefiro|nao quero|nao vou)\s+(?:nao\s+)?informar(?:\s+(?:(?:o|meu)\s+)?(?:nome|whatsapp|telefone))?$/.test(plain(value));
+
+export const siteIdentityDeclines = (messages: ClientMessage[]) => {
+  let lastPrompt: "name" | "phone" | null = null;
+  let name = false;
+  let phone = false;
+  for (const message of messages) {
+    if (message.from === "bot") {
+      lastPrompt = isSiteNamePrompt(message.text) ? "name" : isSitePhonePrompt(message.text) ? "phone" : null;
+    } else if (message.from === "client" && isIdentityDecline(message.text)) {
+      const declined = plain(message.text);
+      if (/\bnome$/.test(declined) || (!/\b(?:whatsapp|telefone)$/.test(declined) && lastPrompt === "name")) name = true;
+      if (/\b(?:whatsapp|telefone)$/.test(declined) || (!/\bnome$/.test(declined) && lastPrompt === "phone")) phone = true;
+    }
+  }
+  return { name, phone };
+};
 
 export const isSiteNamePrompt = (text: string): boolean => {
   const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -15,6 +33,7 @@ export const isSitePhonePrompt = (text: string): boolean => {
 
 export const normalizeSiteVisitorName = (value: unknown): string => {
   const name = String(value ?? "").replace(/\s+/g, " ").trim().replace(NAME_INTRO, "").replace(/[.!?]+$/, "").trim().slice(0, 120);
+  if (isIdentityDecline(name)) return "";
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
   if (/^(?:sou\s+(?:do|da|de)\b|(?:do|da|de)\s)/i.test(name)) return "";
   if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio|sim|n[aã]o|ok|certo|hoje|amanh[aã]|obrigad[oa]|tudo bem|eu|sou)$/i.test(name)) return "";
@@ -34,6 +53,7 @@ export const pendingSiteVisitorRequest = (messages: ClientMessage[]): string => 
     if (message.from !== "client") continue;
     const text = String(message.text ?? "").trim();
     if (!text || /^(?:oi|ol[aá]|bom dia|boa tarde|boa noite)[!.,\s]*$/i.test(text)) continue;
+    if (isIdentityDecline(text)) continue;
     if (NAME_INTRO.test(text)) continue;
     if (/^(?:meu (?:n[uú]mero de )?whatsapp|whatsapp|telefone|celular)\b/i.test(text)) continue;
     if (/^(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[\s-]?\d{4}$/.test(text)) continue;
@@ -50,8 +70,9 @@ export const siteVisitorIdentityDecision = (input: {
   hadPhone: boolean;
   messages: ClientMessage[];
 }) => {
+  const declines = siteIdentityDeclines(input.messages);
   const firstName = input.name.split(" ")[0];
-  if (!input.name) {
+  if (!input.name && !declines.name) {
     const priorNamePrompts = input.messages.filter((message) => message.from === "bot" && isSiteNamePrompt(message.text)).length;
     const lastClientMessage = [...input.messages].reverse().find((message) => message.from === "client")?.text.trim() ?? "";
     const isGreeting = /^(?:oi|ol[aá]|bom dia|boa tarde|boa noite)[!.,\s]*$/i.test(lastClientMessage);
@@ -66,22 +87,24 @@ export const siteVisitorIdentityDecision = (input: {
         : "Estou por aqui para ajudar. 🌿 Quando puder, me diga seu nome e seguimos.";
     return {
       reply,
-      step: null,
+      step: "identity_name" as const,
       pendingRequest: "",
     };
   }
-  if (!input.phone) {
+  if (!input.phone && !declines.phone) {
     return {
-      reply: `Obrigada, ${firstName}! Qual é o seu WhatsApp com DDD? Se nossa conversa parar, posso enviar um único lembrete após 15 minutos para você retomar por aqui. 🌿`,
+      reply: `${firstName ? `Obrigada, ${firstName}! ` : "Tudo bem! "}Se quiser, me informe seu WhatsApp com DDD. Assim, se a conversa parar, posso enviar um único lembrete para você retomar. Se preferir não informar, seguimos por aqui. 🌿`,
       step: "identity_phone" as const,
       pendingRequest: "",
     };
   }
-  if (!input.hadName || !input.hadPhone) {
+  const lastClientMessage = [...input.messages].reverse().find((message) => message.from === "client")?.text ?? "";
+  const justFinishedIdentity = (!input.hadName && Boolean(input.name)) || (!input.hadPhone && Boolean(input.phone)) || isIdentityDecline(lastClientMessage);
+  if (justFinishedIdentity) {
     const pendingRequest = pendingSiteVisitorRequest(input.messages);
     if (!pendingRequest) {
       return {
-        reply: `Obrigada, ${firstName}! 🌿 Me conta como posso te ajudar hoje.`,
+        reply: `${firstName ? `Obrigada, ${firstName}!` : "Tudo bem!"} 🌿 Me conta como posso te ajudar hoje.`,
         step: null,
         pendingRequest: "",
       };

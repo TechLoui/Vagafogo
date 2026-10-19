@@ -53,7 +53,7 @@ type SiteManualMessage = {
 };
 
 const BOOKING_UI_STEPS = new Set<BookingUi["step"]>([
-  "identity_phone", "booking_mode", "phone", "experiences", "date", "time",
+  "identity_name", "identity_phone", "booking_mode", "phone", "experiences", "date", "time",
   "participants", "guidance", "contact", "summary", "payment", "availability",
 ]);
 
@@ -723,8 +723,9 @@ export function SiteChatWidget() {
     const content = (override ?? draft).trim();
     if (!content || loading || resuming || sendingRef.current) return false;
     const answeringPhone = !phone && (bookingUi?.step === "phone" || bookingUi?.step === "identity_phone");
-    const answerPhone = answeringPhone ? normalizePhone(submittedPhone || content) : "";
-    if (answeringPhone && (answerPhone.length < 12 || answerPhone.length > 13)) {
+    const decliningPhone = answeringPhone && /^(?:prefiro (?:não |nao )?informar|(?:não|nao) (?:quero|vou) informar)(?: (?:meu )?(?:whatsapp|telefone))?\.?$/i.test(content);
+    const answerPhone = answeringPhone && !decliningPhone ? normalizePhone(submittedPhone || content) : "";
+    if (answeringPhone && !decliningPhone && (answerPhone.length < 12 || answerPhone.length > 13)) {
       setError("Informe um WhatsApp válido com DDD.");
       return false;
     }
@@ -906,7 +907,7 @@ export function SiteChatWidget() {
                         </span>
                       )}
                       <div className={`min-w-0 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] ${interactive || message.environmentalEducationCard ? "w-[calc(100%-2.25rem)] max-w-[720px] overflow-hidden" : "max-w-[calc(100%-2.25rem)] sm:max-w-[min(88%,720px)]"} ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                        {!interactive && <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? ["gallery", "image"].includes(message.media?.type || "") ? "line-clamp-4" : "line-clamp-6" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>}
+                        {(!interactive || bookingUi?.step === "identity_name") && <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? ["gallery", "image"].includes(message.media?.type || "") ? "line-clamp-4" : "line-clamp-6" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>}
                         {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => { scrollModeRef.current = "latest"; setExpandedMessageId((current) => current === message.id ? "" : message.id); }} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.environmentalEducationCard && (

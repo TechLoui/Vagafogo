@@ -40,7 +40,7 @@ export type BookingProgress = {
 };
 
 export type BookingUi = {
-  step: "identity_phone" | "booking_mode" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
+  step: "identity_name" | "identity_phone" | "booking_mode" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
   reminderOptIn?: boolean;
   fields?: string[];
   draft?: {
@@ -143,7 +143,8 @@ function OfferIcon({ name, url, emoji, combo = false, small = false }: {
 }
 
 const stages = {
-  identity_phone: { title: "Seu WhatsApp", hint: "Se parar, enviaremos um único lembrete após 15 minutos para retomar.", icon: FaWhatsapp },
+  identity_name: { title: "Seu nome", hint: "Você também pode continuar sem informar.", icon: FaUser },
+  identity_phone: { title: "Seu WhatsApp (opcional)", hint: "Se informar, podemos enviar um único lembrete para retomar a conversa.", icon: FaWhatsapp },
   booking_mode: { title: "Como prefere reservar?", hint: "Escolha o jeito mais confortável para você.", icon: FaLeaf },
   phone: { title: "Seu WhatsApp", hint: "Para acompanhar sua reserva e retomar se você parar por 15 minutos.", icon: FaUser },
   experiences: { title: "Escolha a experiência", hint: "Marque o brunch, a trilha ou os dois.", icon: FaLeaf },
@@ -182,7 +183,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (ui.step === "identity_phone" || ui.step === "booking_mode") return;
+    if (ui.step === "identity_name" || ui.step === "identity_phone" || ui.step === "booking_mode") return;
     const controller = new AbortController();
     fetch(`${API_BASE}/atendimento/site/catalogo`, { signal: controller.signal })
       .then(async (response) => {
@@ -410,6 +411,13 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
     </div>
   );
 
+  if (step === "identity_name") return (
+    <div className="bg-white px-3.5 py-3 text-[#263d31]">
+      <button type="button" disabled={sending} onClick={() => void answer("Prefiro não informar meu nome.")} className="min-h-10 rounded-xl border border-[#cddfcf] bg-[#f8fbf6] px-3 py-2 text-xs font-semibold text-[#305944] transition hover:border-[#20745a] hover:bg-[#edf6eb] disabled:opacity-50">Prefiro não informar</button>
+      <p className="mt-2 text-[11px] text-[#718075]">Se quiser informar, é só responder no campo de mensagem.</p>
+    </div>
+  );
+
   if (step === "guidance") return (
     <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Orientações da reserva">
       <div className="flex items-center gap-2.5 text-sm font-bold text-[#244b38]"><FaRegCheckCircle className="text-[#20745a]" aria-hidden="true" />Antes de continuar</div>
@@ -440,6 +448,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
         : step !== "payment" && liveSummary && <div className="px-3 pt-3 sm:px-3.5">{liveSummary}</div>}
       <div className="space-y-2.5 p-3 sm:p-3.5">
         {(step === "identity_phone" || step === "phone") && <label className="block text-xs font-semibold text-[#425c49]">WhatsApp com DDD<input type="tel" inputMode="tel" autoComplete="tel" value={formatPhone(phone)} onChange={(event) => setPhone(event.target.value)} placeholder="(62) 99999-9999" required className={inputClass} /></label>}
+        {step === "identity_phone" && <button type="button" disabled={sending} onClick={() => void answer("Prefiro não informar meu WhatsApp.")} className="min-h-10 w-full rounded-xl border border-[#cddfcf] bg-[#f8fbf6] px-3 py-2 text-xs font-semibold text-[#305944] transition hover:border-[#20745a] hover:bg-[#edf6eb] disabled:opacity-50">Prefiro não informar</button>}
         {(step === "date" || step === "time") && trailPackages.map((item) => (
           <div key={`trail-${item.id}`} className="rounded-xl border border-[#dbe9d8] bg-[#f3f8ef] px-3 py-2 text-[11px] leading-[1.45] text-[#3d6147]">
             <strong className="block text-xs">{item.nome} · {item.horarioInicio && item.horarioFim ? `${displayHour(item.horarioInicio)}–${displayHour(item.horarioFim)}` : "faixa de funcionamento"}</strong>

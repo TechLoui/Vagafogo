@@ -220,7 +220,7 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
     { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
   ];
   const askName = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
-  assert.equal(askName.step, null);
+  assert.equal(askName.step, "identity_name");
   assert.match(askName.reply, /Como posso chamar você/);
   assert.doesNotMatch(askName.reply, /equipe|campanhas/i);
   assert.doesNotMatch(askName.reply, /Claro!/i);
@@ -256,6 +256,40 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
     name: "Patrícia", phone: "5561998722812", hadName: true, hadPhone: false,
     messages: [{ from: "client", text: "Olá" }, { from: "client", text: "Patrícia" }, { from: "client", text: "Meu WhatsApp para este atendimento é (61) 99872-2812." }],
   }).reply, /fico à disposição|brunch|trilha|combo|dados já estão vinculados/i);
+});
+
+test("permite pular nome e WhatsApp sem perder a pergunta anterior", () => {
+  const messages = [
+    { from: "client", text: "Olá" },
+    { from: "bot", text: "Como posso chamar você?" },
+    { from: "client", text: "Aí tem arvorismo?" },
+    { from: "bot", text: "Entendi. Para continuar, me diga seu primeiro nome, por favor. 🌿" },
+    { from: "client", text: "Prefiro não informar meu nome." },
+  ];
+  assert.equal(normalizeSiteVisitorName(messages.at(-1).text), "");
+  const askPhone = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
+  assert.equal(askPhone.step, "identity_phone");
+  assert.doesNotMatch(askPhone.reply, /Obrigada,\s*!/);
+  messages.push({ from: "bot", text: askPhone.reply }, { from: "client", text: "Prefiro não informar meu WhatsApp." });
+  const continueWithoutIdentity = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
+  assert.equal(continueWithoutIdentity.reply, "");
+  assert.equal(continueWithoutIdentity.pendingRequest, "Aí tem arvorismo?");
+  messages.push({ from: "bot", text: "Não temos arvorismo, mas temos uma trilha ecológica." }, { from: "client", text: "Como funciona a trilha?" });
+  const nextQuestion = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
+  assert.equal(nextQuestion.reply, "");
+  assert.equal(nextQuestion.pendingRequest, "");
+});
+
+test("a recusa curta vale somente para a etapa que a Jatobá perguntou", () => {
+  const messages = [
+    { from: "client", text: "Oi" },
+    { from: "bot", text: "Como posso chamar você?" },
+    { from: "client", text: "Prefiro não informar" },
+  ];
+  const askPhone = siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages });
+  assert.equal(askPhone.step, "identity_phone");
+  messages.push({ from: "bot", text: askPhone.reply }, { from: "client", text: "Prefiro não informar" });
+  assert.match(siteVisitorIdentityDecision({ name: "", phone: "", hadName: false, hadPhone: false, messages }).reply, /como posso te ajudar hoje/i);
 });
 
 test("o atendimento guarda apenas o nome extraído de uma apresentação", async () => {
