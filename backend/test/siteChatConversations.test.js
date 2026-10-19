@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { isSiteNamePrompt, nameFromSiteMessage, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
+const { isSiteNamePrompt, nameFromSiteMessage, normalizeSiteVisitorName, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
 
 process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
@@ -183,6 +183,12 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
   assert.equal(nameFromSiteMessage("Qual o valor da trilha?"), "");
   assert.equal(nameFromSiteMessage("Sou do Instituto Federal de Brasília"), "");
   assert.equal(nameFromSiteMessage("Meu nome é Maria Silva."), "Maria Silva");
+  assert.equal(nameFromSiteMessage("Eu sou Paulo Henrique", true), "Paulo Henrique");
+  assert.equal(nameFromSiteMessage("Eu sou Paulo Henrique"), "Paulo Henrique");
+  assert.equal(nameFromSiteMessage("Eu sou o Paulo Henrique, quero reservar"), "Paulo Henrique");
+  assert.equal(nameFromSiteMessage("Me chamo Ana Paula"), "Ana Paula");
+  assert.equal(nameFromSiteMessage("Eu sou do Instituto Federal de Brasília", true), "");
+  assert.equal(normalizeSiteVisitorName("Eu sou Paulo Henrique"), "Paulo Henrique");
   assert.equal(nameFromSiteMessage("Maria Silva", true), "Maria Silva");
   assert.equal(nameFromSiteMessage("Maria", true), "Maria");
   assert.equal(nameFromSiteMessage("Amanhã", true), "");
@@ -201,6 +207,11 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
   assert.equal(pendingSiteVisitorRequest([
     { from: "client", text: "Maria Silva" },
     { from: "client", text: "(62) 99999-9999" },
+  ]), "");
+  assert.equal(pendingSiteVisitorRequest([
+    { from: "client", text: "Bom dia" },
+    { from: "client", text: "Eu sou Paulo Henrique" },
+    { from: "client", text: "Meu WhatsApp é (62) 99999-9999." },
   ]), "");
   const messages = [
     { from: "client", text: "Quero consultar minha reserva" },
@@ -240,6 +251,18 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
     name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false,
     messages: [{ from: "client", text: "Bom dia" }, { from: "client", text: "Meu nome é Maria Silva." }, { from: "client", text: "Meu WhatsApp é (62) 99999-9999." }],
   }).reply, /Como posso ajudar/);
+});
+
+test("o atendimento guarda apenas o nome extraído de uma apresentação", async () => {
+  const sessionId = `site_test_${Date.now()}_name_intro`;
+  const first = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Eu sou Paulo Henrique", name: "Eu sou Paulo Henrique",
+  });
+  assert.equal(first.conversation.name, "Paulo Henrique");
+  const next = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Quero reservar para amanhã", name: "Eu sou Paulo Henrique",
+  });
+  assert.equal(next.conversation.name, "Paulo Henrique");
 });
 
 test("encaminhamento do site permanece pendente até um atendente assumir", async () => {

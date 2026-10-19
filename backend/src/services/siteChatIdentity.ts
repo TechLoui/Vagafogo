@@ -1,6 +1,7 @@
 import { shouldOfferEnvironmentalEducationContact } from "./siteEnvironmentalEducation";
 
 type ClientMessage = { from: string; text: string };
+const NAME_INTRO = /^(?:(?:(?:eu\s+)?sou|me chamo|meu nome [ée]|pode me chamar de)\s+(?:(?:o|a)\s+)?|nome(?: completo)?\s*:\s*)/i;
 
 export const isSiteNamePrompt = (text: string): boolean => {
   const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -8,17 +9,19 @@ export const isSiteNamePrompt = (text: string): boolean => {
 };
 
 export const normalizeSiteVisitorName = (value: unknown): string => {
-  const name = String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const name = String(value ?? "").replace(/\s+/g, " ").trim().replace(NAME_INTRO, "").replace(/[.!?]+$/, "").trim().slice(0, 120);
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
   if (/^(?:sou\s+(?:do|da|de)\b|(?:do|da|de)\s)/i.test(name)) return "";
-  if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio|sim|n[aã]o|ok|certo|hoje|amanh[aã]|obrigad[oa]|tudo bem)$/i.test(name)) return "";
+  if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio|sim|n[aã]o|ok|certo|hoje|amanh[aã]|obrigad[oa]|tudo bem|eu|sou)$/i.test(name)) return "";
   if (/\b(?:quero|gostaria|preciso|reservar|reserva|consulta|consultar|valor(?:es)?|pre[cç]o(?:s)?|hor[aá]rio(?:s)?|brunch|trilha|combo|ajuda|d[uú]vida(?:s)?|foto(?:s)?|endere[cç]o|localiza[cç][aã]o|atendente|pagamento|pix|cart[aã]o|quanto|como|tem|voc[eê]s|podem|pode|aberto(?:s)?)\b/i.test(name)) return "";
   return name;
 };
 
 export const nameFromSiteMessage = (message: string, allowPlain = false): string => {
-  const match = message.trim().match(/^(?:(?:meu nome [ée]|pode me chamar de|sou|nome(?: completo)?\s*:)\s*)([^.!?\n]+)[.!]?$/i);
-  return normalizeSiteVisitorName(match?.[1] ?? (allowPlain ? message : ""));
+  const text = message.trim();
+  if (!NAME_INTRO.test(text) && !allowPlain) return "";
+  const candidate = NAME_INTRO.test(text) ? text.replace(NAME_INTRO, "").split(/[,.!?\n]/)[0] : text;
+  return normalizeSiteVisitorName(candidate);
 };
 
 export const pendingSiteVisitorRequest = (messages: ClientMessage[]): string => {
@@ -26,7 +29,7 @@ export const pendingSiteVisitorRequest = (messages: ClientMessage[]): string => 
     if (message.from !== "client") continue;
     const text = String(message.text ?? "").trim();
     if (!text || /^(?:oi|ol[aá]|bom dia|boa tarde|boa noite)[!.,\s]*$/i.test(text)) continue;
-    if (/^(?:meu nome [ée]|pode me chamar de|sou|nome(?: completo)?\s*:)/i.test(text)) continue;
+    if (NAME_INTRO.test(text)) continue;
     if (/^(?:meu (?:n[uú]mero de )?whatsapp|whatsapp|telefone|celular)\b/i.test(text)) continue;
     if (/^(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[\s-]?\d{4}$/.test(text)) continue;
     if (normalizeSiteVisitorName(text) === text && text.split(" ").length <= 4 && !shouldOfferEnvironmentalEducationContact(text)) continue;

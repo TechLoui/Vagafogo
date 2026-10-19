@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
+import { normalizeSiteVisitorName } from "./siteChatIdentity";
 
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
 const MESSAGE_COLLECTION = process.env.SITE_CHAT_MESSAGES_COLLECTION?.trim() || `${COLLECTION}_messages`;
@@ -146,7 +147,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     jid: `site:${sessionId}`,
     sessionId,
     channel: "site",
-    name: String(value.name ?? "").trim().slice(0, 120),
+    name: normalizeSiteVisitorName(value.name) || String(value.name ?? "").trim().slice(0, 120),
     phone: String(value.phone ?? "").replace(/\D/g, "").slice(0, 15),
     mode,
     status: mode,
@@ -235,7 +236,8 @@ const hydrate = async () => {
         const conversation = normalizeConversation(document.id, data);
         if (conversation) {
           conversations.set(conversation.sessionId, conversation);
-          if (Array.isArray(data.messages) && data.messages.length !== conversation.messages.length) stale.push(conversation);
+          if ((Array.isArray(data.messages) && data.messages.length !== conversation.messages.length)
+            || String(data.name ?? "").trim() !== conversation.name) stale.push(conversation);
         }
       });
       if (stale.length) await Promise.all(stale.map(persist));
@@ -360,7 +362,8 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
     ts: now,
     mediaType: input.mediaType ? String(input.mediaType).slice(0, 80) : undefined,
   };
-  conversation.name = String(input.name ?? conversation.name).trim().slice(0, 120);
+  conversation.name = normalizeSiteVisitorName(input.name ?? conversation.name)
+    || String(input.name ?? conversation.name).trim().slice(0, 120);
   conversation.phone = String(input.phone ?? conversation.phone).replace(/\D/g, "").slice(0, 15);
   conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
   conversation.lastMessage = message.text;

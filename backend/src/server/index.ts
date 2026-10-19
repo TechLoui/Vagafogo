@@ -335,7 +335,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     phone: telefoneAtendimento,
     incrementUnread: true,
   });
-  if (!existingConversation || (!existingConversation.name && nome) || (!existingConversation.phone && telefoneAtendimento)) {
+  if (!existingConversation || (nome && existingConversation.name !== nome) || (!existingConversation.phone && telefoneAtendimento)) {
     try {
       await registrarLeadAgente({
         sessionId,
