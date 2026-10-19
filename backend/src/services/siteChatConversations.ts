@@ -79,6 +79,7 @@ type SiteConversation = {
     lastClientAt: number;
     sentAt: number | null;
     lastAttemptAt: number | null;
+    lastError: string | null;
   } | null;
   bookingUi: Record<string, unknown> | null;
   createdAt: number;
@@ -175,6 +176,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       lastClientAt: normalizeTimestamp(rawFollowup.lastClientAt),
       sentAt: rawFollowup.sentAt ? normalizeTimestamp(rawFollowup.sentAt) : null,
       lastAttemptAt: rawFollowup.lastAttemptAt ? normalizeTimestamp(rawFollowup.lastAttemptAt) : null,
+      lastError: rawFollowup.lastError ? String(rawFollowup.lastError).slice(0, 160) : null,
     } : null,
     bookingUi: value.bookingUi && typeof value.bookingUi === "object" && !Array.isArray(value.bookingUi)
       ? value.bookingUi as Record<string, unknown> : null,
@@ -242,6 +244,7 @@ const hydrate = async () => {
       });
       if (stale.length) await Promise.all(stale.map(persist));
     } catch (error) {
+      hydrationPromise = null;
       console.error("[site-chat] Nao foi possivel restaurar as conversas do site:", error);
     }
   })();
@@ -380,7 +383,31 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
 export const obterConversaSite = async (sessionId: string) => {
   await hydrate();
   await removeExpired();
-  return conversations.get(sessionId) ?? null;
+  const cached = conversations.get(sessionId) ?? null;
+  const persisted = await obterConversaSitePersistida(sessionId);
+  if (persisted && (!cached || persisted.updatedAt > cached.updatedAt)) {
+    conversations.set(sessionId, persisted);
+    return persisted;
+  }
+  return cached;
+};
+
+// The reminder worker must read shared storage, not the process-local chat cache:
+// the visitor request and the worker may run in different instances.
+export const obterConversaSitePersistida = async (sessionId: string) => {
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) return null;
+  const snapshot = await firestore.collection(COLLECTION).doc(sessionId).get();
+  return snapshot.exists ? normalizeConversation(snapshot.id, snapshot.data() as Record<string, unknown>) : null;
+};
+
+export const listarConversasSitePersistidas = async () => {
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) return [];
+  const snapshot = await firestore.collection(COLLECTION).where("expiresAt", ">", new Date()).get();
+  return snapshot.docs
+    .map((document) => normalizeConversation(document.id, document.data() as Record<string, unknown>))
+    .filter((conversation): conversation is SiteConversation => Boolean(conversation));
 };
 
 export const atualizarProgressoReservaSite = async (sessionId: string, ui: unknown, lastClientAt: number) => mutate(sessionId, async () => {
@@ -408,24 +435,41 @@ export const atualizarProgressoReservaSite = async (sessionId: string, ui: unkno
     lastClientAt: Math.max(0, lastClientAt),
     sentAt: previous?.sentAt ?? null,
     lastAttemptAt: previous?.lastAttemptAt ?? null,
+    lastError: previous?.lastError ?? null,
   };
   await persist(conversation);
   return conversation.bookingFollowup;
 });
 
-export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean) => mutate(sessionId, async () => {
-  await hydrate();
+export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean, reason = "") => {
+  const firestore = obterFirestoreAdmin();
+  if (!firestore) throw new Error("SITE_CHAT_FIRESTORE_UNAVAILABLE");
+  const timestamp = Date.now();
+  const lastError = sent ? null : reason.slice(0, 160) || "envio_nao_confirmado";
+  await firestore.collection(COLLECTION).doc(sessionId).update({
+    "bookingFollowup.lastAttemptAt": timestamp,
+    "bookingFollowup.lastError": lastError,
+    ...(sent ? { "bookingFollowup.sentAt": timestamp } : {}),
+    updatedAt: new Date(timestamp),
+  });
   const conversation = conversations.get(sessionId);
-  if (!conversation?.bookingFollowup) return;
-  conversation.bookingFollowup.lastAttemptAt = Date.now();
-  if (sent) conversation.bookingFollowup.sentAt = Date.now();
-  await persist(conversation);
-});
+  if (conversation?.bookingFollowup) {
+    conversation.bookingFollowup.lastAttemptAt = timestamp;
+    if (sent) conversation.bookingFollowup.sentAt = timestamp;
+    conversation.bookingFollowup.lastError = lastError;
+    conversation.updatedAt = timestamp;
+  }
+};
 
 export const listarConversasSite = async () => {
   await hydrate();
   await removeExpired();
-  return Array.from(conversations.values())
+  const merged = new Map(conversations);
+  for (const persisted of await listarConversasSitePersistidas()) {
+    const cached = merged.get(persisted.sessionId);
+    if (!cached || persisted.updatedAt > cached.updatedAt) merged.set(persisted.sessionId, persisted);
+  }
+  return Array.from(merged.values())
     .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
     .map(({ messages: _messages, ...conversation }) => ({ ...conversation }));
 };

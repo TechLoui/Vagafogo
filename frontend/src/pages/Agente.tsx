@@ -9,6 +9,7 @@ import {
   FaBell,
   FaChartLine,
   FaCheckCircle,
+  FaClock,
   FaCog,
   FaComments,
   FaEdit,
@@ -70,6 +71,13 @@ type Contact = {
   handoffRequestedAt?: number | null;
   channel?: "whatsapp" | "site";
   sessionId?: string;
+  followupStatus?: string;
+  bookingFollowup?: {
+    lastClientAt?: number;
+    lastAttemptAt?: number | null;
+    sentAt?: number | null;
+    lastError?: string | null;
+  } | null;
 };
 
 type Message = {
@@ -225,6 +233,28 @@ const contactChannel = (contact?: Contact | null): "whatsapp" | "site" => contac
 const contactPhone = (contact?: Contact | null) => contact?.phone || contact?.jid?.split("@")[0]?.split(":")[0] || "";
 const contactName = (contact?: Contact | null) => contact?.name || contactPhone(contact) || "Contato";
 const timeLabel = (value?: number) => value ? new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
+const siteFollowupLabel = (contact: Contact) => {
+  const progress = contact.bookingFollowup;
+  const status = contact.followupStatus;
+  if (status === "enviada") return `Lembrete enviado${progress?.sentAt ? ` às ${timeLabel(progress.sentAt)}` : ""}.`;
+  if (status === "aguardando_15_min") return `Lembrete previsto para ${progress?.lastClientAt ? timeLabel(progress.lastClientAt + 15 * 60_000) : "15 minutos após a última resposta"}, se o cliente não voltar.`;
+  if (status === "pronta") return "Lembrete pronto; aguardando a próxima verificação de envio.";
+  if (status === "aguardando_nova_tentativa") return "O envio não foi confirmado. Uma nova tentativa será feita automaticamente.";
+  if (status === "sem_whatsapp") return "Sem WhatsApp válido para enviar o lembrete.";
+  if (status === "sem_autorizacao") return "Lembrete desativado para este atendimento.";
+  if (status === "atendimento_pausado") return "Lembrete pausado porque o atendimento está com a equipe.";
+  if (status === "aguardando_bot") return "Aguardando a resposta da Jatobá antes de contar a inatividade.";
+  if (status === "sessao_expirada") return "A sessão de 2 horas expirou; o link antigo não será enviado.";
+  if (status === "data_passada" || status === "visita_proxima") return "Lembrete não enviado para evitar mensagem após ou perto da visita.";
+  return "Aguardando o andamento do atendimento.";
+};
+const siteFollowupErrorLabel = (error?: string | null) => {
+  if (!error) return "";
+  if (/WhatsApp nao conectado/i.test(error)) return " O WhatsApp do agente está desconectado.";
+  if (/DISPATCH_PACED/i.test(error)) return " O envio está aguardando o intervalo de segurança.";
+  if (/CONTACT_BLOCKED/i.test(error)) return " O contato está bloqueado.";
+  return ` Última falha: ${error}.`;
+};
 const dateTimeLabel = (value?: string | number | null) => value ? new Date(value).toLocaleString("pt-BR") : "—";
 const normalizeTimestamp = (value: unknown) => {
   if (!value) return undefined;
@@ -1107,6 +1137,7 @@ function Sessions(props: SessionsProps) {
         </div></header>
         {isPendingHandoff(props.selected) ? <div className="agent-pending-banner"><FaBell /><span>Cliente aguardando atendimento humano. Clique em <strong>Assumir</strong> para responder.</span></div> : null}
         {contactMode(props.selected) === "blocked" ? <div className="agent-blocked-banner"><FaBan /><span><strong>Contato bloqueado</strong>O bot e os envios manuais não mandarão mensagens para este número.</span></div> : null}
+        {contactChannel(props.selected) === "site" && props.selected.followupStatus ? <div className="agent-site-followup-banner"><FaClock /><span><strong>Retomada pelo WhatsApp</strong>{siteFollowupLabel(props.selected)}{siteFollowupErrorLabel(props.selected.bookingFollowup?.lastError)}</span></div> : null}
         <div className="agent-thread-scroll" ref={threadRef} onScroll={(event) => {
           const element = event.currentTarget;
           stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 72;

@@ -76,7 +76,8 @@ import {
   siteSessionIdFromJid,
   type SiteConversationMode,
 } from "../services/siteChatConversations";
-import { iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
+import { estadoRetomadaSite, iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
+import { obterFirestoreAdmin } from "../services/firebaseAdmin";
 import { isSiteNamePrompt, nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
@@ -187,7 +188,9 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-17.3-site-environmental-education-card',
+    build: '2026-10-19.1-site-followup-diagnostics',
+    revision: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 12) || null,
+    siteChatPersistence: obterFirestoreAdmin() ? 'configured' : 'unavailable',
     timestamp: new Date().toISOString(),
   });
 });
@@ -716,7 +719,11 @@ app.get('/crm/agente/contatos', exigirAdminCrm, async (_req, res) => {
   const whatsappContacts = Array.isArray(gatewayBody.contacts)
     ? gatewayBody.contacts.map((contact) => ({ ...(contact as Record<string, unknown>), channel: "whatsapp" }))
     : [];
-  const contacts = ([...whatsappContacts, ...siteContacts] as Array<Record<string, unknown> & { lastMessageAt?: number }>)
+  const siteContactsWithFollowup = siteContacts.map((contact) => ({
+    ...contact,
+    followupStatus: estadoRetomadaSite(contact),
+  }));
+  const contacts = ([...whatsappContacts, ...siteContactsWithFollowup] as Array<Record<string, unknown> & { lastMessageAt?: number }>)
     .sort((a, b) => Number(b.lastMessageAt ?? 0) - Number(a.lastMessageAt ?? 0));
   res.json({
     contacts,

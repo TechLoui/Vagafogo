@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { reservaSiteElegivelParaLembrete, mensagemRetomadaSite } = require("../dist/services/siteBookingFollowups");
+const { estadoRetomadaSite, reservaSiteElegivelParaLembrete, mensagemRetomadaSite } = require("../dist/services/siteBookingFollowups");
 
 const now = Date.parse("2026-10-17T13:00:00Z"); // 10h in Sao Paulo
 const candidate = (override = {}) => ({
@@ -26,9 +26,18 @@ const candidate = (override = {}) => ({
 
 test("permite um único lembrete após 15 minutos sem resposta", () => {
   assert.equal(reservaSiteElegivelParaLembrete(candidate(), now), true);
+  assert.equal(estadoRetomadaSite(candidate(), now), "pronta");
   assert.equal(reservaSiteElegivelParaLembrete(candidate({ bookingFollowup: { lastClientAt: now - 14 * 60 * 1000 } }), now), false);
+  assert.equal(estadoRetomadaSite(candidate({ bookingFollowup: { lastClientAt: now - 14 * 60 * 1000 } }), now), "aguardando_15_min");
   assert.equal(reservaSiteElegivelParaLembrete(candidate({ bookingFollowup: { sentAt: now - 1000 } }), now), false);
+  assert.equal(estadoRetomadaSite(candidate({ bookingFollowup: { sentAt: now - 1000 } }), now), "enviada");
   assert.equal(reservaSiteElegivelParaLembrete(candidate({ lastFrom: "client" }), now), false);
+});
+
+test("mostra quando uma tentativa falhou e precisa ser repetida", () => {
+  const failed = candidate({ bookingFollowup: { lastAttemptAt: now - 60_000, lastError: "WhatsApp nao conectado" } });
+  assert.equal(estadoRetomadaSite(failed, now), "aguardando_nova_tentativa");
+  assert.equal(reservaSiteElegivelParaLembrete(failed, now + 5 * 60_000), true);
 });
 
 test("retoma também conversa sem reserva e gera link para a mesma sessão", () => {
