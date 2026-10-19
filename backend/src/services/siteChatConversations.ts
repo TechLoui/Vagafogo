@@ -357,6 +357,12 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
     return { conversation, message: duplicate, duplicated: true };
   }
 
+  const previousSnapshot = conversations.has(sessionId) ? {
+    ...conversation,
+    messages: [...conversation.messages],
+    bookingFollowup: conversation.bookingFollowup ? { ...conversation.bookingFollowup } : null,
+  } : null;
+
   const message: SiteConversationMessage = {
     id: sourceId || randomUUID(),
     sourceId: sourceId || undefined,
@@ -392,7 +398,13 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
   conversation.expiresAt = now + TTL_MS;
   if (input.incrementUnread) conversation.unread += 1;
   conversations.set(sessionId, conversation);
-  await persistMessageAndConversation(conversation, message);
+  try {
+    await persistMessageAndConversation(conversation, message);
+  } catch (error) {
+    if (previousSnapshot) conversations.set(sessionId, previousSnapshot);
+    else conversations.delete(sessionId);
+    throw error;
+  }
   return { conversation, message, duplicated: false };
 });
 
@@ -401,7 +413,7 @@ export const obterConversaSite = async (sessionId: string) => {
   await removeExpired();
   const cached = conversations.get(sessionId) ?? null;
   const persisted = await obterConversaSitePersistida(sessionId);
-  if (persisted && (!cached || persisted.updatedAt > cached.updatedAt)) {
+  if (persisted && (!cached || persisted.updatedAt >= cached.updatedAt)) {
     conversations.set(sessionId, persisted);
     return persisted;
   }
@@ -483,7 +495,7 @@ export const listarConversasSite = async () => {
   const merged = new Map(conversations);
   for (const persisted of await listarConversasSitePersistidas()) {
     const cached = merged.get(persisted.sessionId);
-    if (!cached || persisted.updatedAt > cached.updatedAt) merged.set(persisted.sessionId, persisted);
+    if (!cached || persisted.updatedAt >= cached.updatedAt) merged.set(persisted.sessionId, persisted);
   }
   return Array.from(merged.values())
     .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
