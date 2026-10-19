@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { isSiteNamePrompt, nameFromSiteMessage, normalizeSiteVisitorName, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
+const { isSiteNamePrompt, isSitePhonePrompt, nameFromSiteMessage, normalizeSiteVisitorName, pendingSiteVisitorRequest, siteVisitorIdentityDecision } = require("../dist/services/siteChatIdentity");
+const { estadoRetomadaSite } = require("../dist/services/siteBookingFollowups");
 
 process.env.FIREBASE_SERVICE_ACCOUNT = "";
 
@@ -263,6 +264,33 @@ test("o atendimento guarda apenas o nome extraído de uma apresentação", async
     from: "client", text: "Quero reservar para amanhã", name: "Eu sou Paulo Henrique",
   });
   assert.equal(next.conversation.name, "Paulo Henrique");
+});
+
+test("continua a conversa apos receber o WhatsApp e recupera uma resposta interrompida", async () => {
+  const sessionId = `site_test_${Date.now()}_phone_recovery`;
+  await registrarMensagemConversaSite(sessionId, { from: "client", text: "Patrícia", name: "Patrícia" });
+  await registrarMensagemConversaSite(sessionId, {
+    from: "bot", text: "Qual é o seu WhatsApp com DDD?", name: "Patrícia",
+  });
+  const beforePhone = await obterConversaSite(sessionId);
+  const hadPhone = Boolean(beforePhone.phone);
+  assert.equal(isSitePhonePrompt(beforePhone.lastMessage), true);
+  const received = await registrarMensagemConversaSite(sessionId, {
+    from: "client", text: "Meu WhatsApp para este atendimento é (61) 99872-2812.",
+    name: "Patrícia", phone: "5561998722812",
+  });
+  assert.equal(hadPhone, false);
+  assert.equal(received.conversation.phone, "5561998722812");
+  assert.equal(received.conversation.bookingFollowup.step, "identity_phone");
+  assert.equal(received.conversation.bookingFollowup.optedIn, true);
+  assert.equal(estadoRetomadaSite(received.conversation, received.message.ts + 16 * 60_000), "pronta");
+  const decision = siteVisitorIdentityDecision({
+    name: received.conversation.name, phone: received.conversation.phone,
+    hadName: true, hadPhone,
+    messages: received.conversation.messages,
+  });
+  assert.match(decision.reply, /Como posso ajudar/);
+  await removerConversaSite(sessionId);
 });
 
 test("encaminhamento do site permanece pendente até um atendente assumir", async () => {

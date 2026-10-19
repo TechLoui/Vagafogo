@@ -47,7 +47,7 @@ export const estadoRetomadaSite = (conversation: FollowupCandidate, now = Date.n
   if (!/^55\d{10,11}$/.test(conversation.phone)) return "sem_whatsapp";
   if (!progress.optedIn) return "sem_autorizacao";
   if (conversation.mode !== "bot") return "atendimento_pausado";
-  if (conversation.lastFrom === "client") return "aguardando_bot";
+  if (conversation.lastFrom === "client" && progress.step !== "identity_phone") return "aguardando_bot";
   const idle = now - progress.lastClientAt;
   if (progress.lastClientAt <= 0) return "sem_atividade";
   if (idle >= SESSION_MS) return "sessao_expirada";
@@ -94,7 +94,10 @@ export const mensagemRetomadaSite = (candidate: FollowupCandidate) => {
   const reservationNote = progress.offerId && progress.date
     ? "Sua reserva ainda não foi concluída; a vaga só fica garantida após o pagamento aprovado.\n\n"
     : "";
-  return `${greeting}\n\nNossa conversa no site ficou em pausa. Se quiser retomar de onde parou, é só tocar aqui:\n${link}\n\n${reservationNote}A Jatobá está por lá para tirar dúvidas e ajudar você com sua reserva. Se já resolveu tudo, pode desconsiderar esta mensagem. 💚`;
+  const introduction = candidate.lastFrom === "client"
+    ? "Desculpe, nossa conversa no site foi interrompida antes de eu responder. Podemos continuar de onde paramos por aqui:"
+    : "Nossa conversa no site ficou em pausa. Se quiser retomar de onde parou, é só tocar aqui:";
+  return `${greeting}\n\n${introduction}\n${link}\n\n${reservationNote}A Jatobá está por lá para tirar dúvidas e ajudar você com sua reserva. Se já resolveu tudo, pode desconsiderar esta mensagem. 💚`;
 };
 
 export const processarLembretesReservaSite = async (now = Date.now()) => {

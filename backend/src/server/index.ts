@@ -78,7 +78,7 @@ import {
 } from "../services/siteChatConversations";
 import { estadoRetomadaSite, iniciarProcessadorLembretesReservaSite } from "../services/siteBookingFollowups";
 import { obterFirestoreAdmin } from "../services/firebaseAdmin";
-import { isSiteNamePrompt, nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
+import { isSiteNamePrompt, isSitePhonePrompt, nameFromSiteMessage, normalizeSiteVisitorName, siteVisitorIdentityDecision } from "../services/siteChatIdentity";
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
 import { requireTimeBeforeParticipants } from "../services/siteBookingStepOrder";
@@ -188,7 +188,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-19.1-site-followup-diagnostics',
+    build: '2026-10-19.2-site-phone-continuation',
     revision: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 12) || null,
     siteChatPersistence: obterFirestoreAdmin() ? 'configured' : 'unavailable',
     timestamp: new Date().toISOString(),
@@ -321,6 +321,12 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
 
   const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
   const awaitingName = lastSiteMessage?.from === "bot" && isSiteNamePrompt(lastSiteMessage.text);
+  // registrarMensagemConversaSite mutates the cached conversation in place. Capture
+  // the identity that existed before this client message for the next decision.
+  const previousName = existingConversation?.name ?? "";
+  const previousPhone = existingConversation?.phone ?? "";
+  const previousLastFrom = existingConversation?.lastFrom ?? "";
+  const priorPhonePrompt = [...(existingConversation?.messages ?? [])].reverse().find((item) => item.from === "bot")?.text ?? "";
   const nome = nameFromSiteMessage(mensagem, awaitingName) || nomeRecebido || existingConversation?.name || "";
   const telefoneInformado = telefone || (
     nome && !existingConversation?.phone ? normalizeSiteChatPhone(mensagem) : ""
@@ -338,7 +344,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     phone: telefoneAtendimento,
     incrementUnread: true,
   });
-  if (!existingConversation || (nome && existingConversation.name !== nome) || (!existingConversation.phone && telefoneAtendimento)) {
+  if (!existingConversation || (nome && previousName !== nome) || (!previousPhone && telefoneAtendimento)) {
     try {
       await registrarLeadAgente({
         sessionId,
@@ -368,11 +374,14 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
 
   const contactName = storedClientMessage.conversation.name;
   const contactPhone = storedClientMessage.conversation.phone;
+  const retryingUnansweredPhone = previousLastFrom === "client"
+    && isSitePhonePrompt(priorPhonePrompt)
+    && normalizeSiteChatPhone(mensagem) === contactPhone;
   const identity = siteVisitorIdentityDecision({
     name: contactName,
     phone: contactPhone,
-    hadName: Boolean(existingConversation?.name),
-    hadPhone: Boolean(existingConversation?.phone),
+    hadName: Boolean(previousName),
+    hadPhone: Boolean(previousPhone) && !retryingUnansweredPhone,
     messages: storedClientMessage.conversation.messages,
   });
   if (identity.reply) {

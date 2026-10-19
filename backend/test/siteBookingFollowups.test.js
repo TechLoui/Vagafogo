@@ -40,6 +40,13 @@ test("mostra quando uma tentativa falhou e precisa ser repetida", () => {
   assert.equal(reservaSiteElegivelParaLembrete(failed, now + 5 * 60_000), true);
 });
 
+test("retoma a identificacao quando o telefone foi recebido mas o bot nao respondeu", () => {
+  const interrupted = candidate({ lastFrom: "client", bookingFollowup: { step: "identity_phone" } });
+  assert.equal(estadoRetomadaSite(interrupted, now), "pronta");
+  assert.match(mensagemRetomadaSite(interrupted), /interrompida antes de eu responder/);
+  assert.equal(reservaSiteElegivelParaLembrete(candidate({ lastFrom: "client" }), now), false);
+});
+
 test("retoma também conversa sem reserva e gera link para a mesma sessão", () => {
   const generic = candidate({ bookingFollowup: { step: "", date: "", hour: "", offerId: "" } });
   assert.equal(reservaSiteElegivelParaLembrete(generic, now), true);

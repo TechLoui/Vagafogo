@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { normalizeSiteVisitorName } from "./siteChatIdentity";
+import { isSitePhonePrompt, normalizeSiteVisitorName } from "./siteChatIdentity";
 
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
 const MESSAGE_COLLECTION = process.env.SITE_CHAT_MESSAGES_COLLECTION?.trim() || `${COLLECTION}_messages`;
@@ -365,9 +365,25 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
     ts: now,
     mediaType: input.mediaType ? String(input.mediaType).slice(0, 80) : undefined,
   };
+  const awaitingIdentityPhone = input.from === "client" && !conversation.phone
+    && isSitePhonePrompt([...conversation.messages].reverse().find((item) => item.from === "bot")?.text ?? "");
   conversation.name = normalizeSiteVisitorName(input.name ?? conversation.name)
     || String(input.name ?? conversation.name).trim().slice(0, 120);
   conversation.phone = String(input.phone ?? conversation.phone).replace(/\D/g, "").slice(0, 15);
+  if (awaitingIdentityPhone && /^55\d{10,11}$/.test(conversation.phone)) {
+    conversation.bookingFollowup = {
+      step: "identity_phone",
+      date: conversation.bookingFollowup?.date ?? "",
+      hour: conversation.bookingFollowup?.hour ?? "",
+      offerId: conversation.bookingFollowup?.offerId ?? "",
+      offerName: conversation.bookingFollowup?.offerName ?? "",
+      optedIn: !/n[aã]o\s+(?:me\s+)?(?:envie|mande)/i.test(text),
+      lastClientAt: now,
+      sentAt: conversation.bookingFollowup?.sentAt ?? null,
+      lastAttemptAt: conversation.bookingFollowup?.lastAttemptAt ?? null,
+      lastError: conversation.bookingFollowup?.lastError ?? null,
+    };
+  }
   conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
   conversation.lastMessage = message.text;
   conversation.lastMessageAt = message.ts;

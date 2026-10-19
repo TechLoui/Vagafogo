@@ -8,6 +8,11 @@ export const isSiteNamePrompt = (text: string): boolean => {
   return /como posso chamar voce|me (?:diga|diz) (?:o )?seu (?:primeiro )?nome/.test(normalized);
 };
 
+export const isSitePhonePrompt = (text: string): boolean => {
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /qual e o seu whatsapp com ddd|informe (?:o )?(?:seu )?whatsapp com ddd/.test(normalized);
+};
+
 export const normalizeSiteVisitorName = (value: unknown): string => {
   const name = String(value ?? "").replace(/\s+/g, " ").trim().replace(NAME_INTRO, "").replace(/[.!?]+$/, "").trim().slice(0, 120);
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
