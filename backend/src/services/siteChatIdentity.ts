@@ -81,7 +81,7 @@ export const siteVisitorIdentityDecision = (input: {
     const pendingRequest = pendingSiteVisitorRequest(input.messages);
     if (!pendingRequest) {
       return {
-        reply: `Obrigada, ${firstName}! Seus dados já estão vinculados a este atendimento. Como posso ajudar você? 🌿`,
+        reply: `Obrigada, ${firstName}! 🌿 Me conta como posso te ajudar hoje.`,
         step: null,
         pendingRequest: "",
       };

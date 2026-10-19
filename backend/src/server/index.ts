@@ -188,7 +188,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    build: '2026-10-19.3-site-phone-continuation',
+    build: '2026-10-19.4-site-natural-phone-reply',
     revision: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 12) || null,
     siteChatPersistence: obterFirestoreAdmin() ? 'configured' : 'unavailable',
     timestamp: new Date().toISOString(),

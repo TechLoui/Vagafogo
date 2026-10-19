@@ -251,7 +251,11 @@ test("identificacao inicial preserva a pergunta feita antes do nome e do WhatsAp
   assert.match(siteVisitorIdentityDecision({
     name: "Maria Silva", phone: "5562999999999", hadName: true, hadPhone: false,
     messages: [{ from: "client", text: "Bom dia" }, { from: "client", text: "Meu nome é Maria Silva." }, { from: "client", text: "Meu WhatsApp é (62) 99999-9999." }],
-  }).reply, /Como posso ajudar/);
+  }).reply, /Me conta como posso te ajudar hoje/);
+  assert.doesNotMatch(siteVisitorIdentityDecision({
+    name: "Patrícia", phone: "5561998722812", hadName: true, hadPhone: false,
+    messages: [{ from: "client", text: "Olá" }, { from: "client", text: "Patrícia" }, { from: "client", text: "Meu WhatsApp para este atendimento é (61) 99872-2812." }],
+  }).reply, /fico à disposição|brunch|trilha|combo|dados já estão vinculados/i);
 });
 
 test("o atendimento guarda apenas o nome extraído de uma apresentação", async () => {
@@ -289,7 +293,7 @@ test("continua a conversa apos receber o WhatsApp e recupera uma resposta interr
     hadName: true, hadPhone,
     messages: received.conversation.messages,
   });
-  assert.match(decision.reply, /Como posso ajudar/);
+  assert.match(decision.reply, /Me conta como posso te ajudar hoje/);
   await removerConversaSite(sessionId);
 });
 
