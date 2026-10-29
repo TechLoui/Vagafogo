@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { FaWhatsapp } from "react-icons/fa";
 import jatobaIcon from "../assets/jatoba-crest.webp";
+import { buildWhatsAppLink } from "../config/whatsapp";
 import { SiteBookingForm } from "./SiteBookingForm";
 import type { BookingProgress, BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 
@@ -95,8 +96,7 @@ const readViewportBounds = (): ViewportBounds => ({
 });
 
 const normalizePhone = (value: string) => {
-  const digits = value.replace(/\D/g, "").slice(0, 13);
-  if (digits.startsWith("55")) return digits;
+  const digits = value.replace(/\D/g, "");
   return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
 };
 
@@ -155,6 +155,29 @@ const checkoutModalUrl = (value: string) => {
   return url.toString();
 };
 
+const officialBookingFormUrl = (value: unknown) => {
+  if (typeof value !== "string") return "";
+  try {
+    const url = new URL(cleanUrl(value));
+    return url.protocol === "https:" && OFFICIAL_CHECKOUT_HOSTS.has(url.hostname.toLowerCase())
+      && !url.username && !url.password && url.pathname.replace(/\/+$/, "") === "/reservar"
+      && !url.searchParams.has("agent_checkout") ? url.toString() : "";
+  } catch {
+    return "";
+  }
+};
+
+const extractOfficialBookingForm = (content: string) => (content.match(/https?:\/\/[^\s<>\]]+/g) || [])
+  .map(cleanUrl).find((url) => officialBookingFormUrl(url)) || "";
+
+function BookingFormLink({ href, onOpen }: { href: string; onOpen: (url: string) => void }) {
+  return <a href={href} onClick={(event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onOpen(href);
+  }} className="my-1 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#20745a] px-3.5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">Abrir formulário da reserva <span aria-hidden="true">→</span></a>;
+}
+
 function PaymentLink({ href, label, onOpen }: { href: string; label: string; onOpen: (url: string) => void }) {
   return (
     <button
@@ -171,7 +194,7 @@ function PaymentLink({ href, label, onOpen }: { href: string; label: string; onO
   );
 }
 
-function RichText({ children, onOpenCheckout }: { children: string; onOpenCheckout: (url: string) => void }) {
+function RichText({ children, onOpenCheckout, onOpenBookingForm }: { children: string; onOpenCheckout: (url: string) => void; onOpenBookingForm: (url: string) => void }) {
   const parts = children.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
   return (
     <>
@@ -181,6 +204,8 @@ function RichText({ children, onOpenCheckout }: { children: string; onOpenChecko
           if (isOfficialCardCheckout(markdownLink[2])) {
             return <PaymentLink key={index} href={markdownLink[2]} label={markdownLink[1] || "Abrir pagamento seguro"} onOpen={onOpenCheckout} />;
           }
+          const formUrl = officialBookingFormUrl(markdownLink[2]);
+          if (formUrl) return <BookingFormLink key={index} href={formUrl} onOpen={onOpenBookingForm} />;
           return <a key={index} href={cleanUrl(markdownLink[2])} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{markdownLink[1]}</a>;
         }
         if (part.startsWith("http")) {
@@ -188,6 +213,8 @@ function RichText({ children, onOpenCheckout }: { children: string; onOpenChecko
           if (isOfficialCardCheckout(url)) {
             return <PaymentLink key={`${part}-${index}`} href={url} label="Abrir pagamento seguro" onOpen={onOpenCheckout} />;
           }
+          const formUrl = officialBookingFormUrl(url);
+          if (formUrl) return <BookingFormLink key={`${part}-${index}`} href={formUrl} onOpen={onOpenBookingForm} />;
           return <a key={`${part}-${index}`} href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#20745a] underline underline-offset-2">{url}</a>;
         }
         if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("*") && part.endsWith("*"))) {
@@ -378,6 +405,7 @@ function SecureCheckoutModal({ url, viewport, onClose }: { url: string; viewport
 
 export function SiteChatWidget() {
   const location = useLocation();
+  const navigate = useNavigate();
   const isBookingPage = /^\/reservar\/?$/i.test(location.pathname);
   const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
@@ -385,7 +413,7 @@ export function SiteChatWidget() {
     const params = new URLSearchParams(location.search);
     if (!["whatsapp", "retomada"].includes(params.get("origem") || "")) return "";
     const normalized = normalizePhone(params.get("telefone") || "");
-    return normalized.length >= 12 && normalized.length <= 13 ? normalized : "";
+    return /^55[1-9]\d{9,10}$/.test(normalized) ? normalized : "";
   });
   const [resumeSessionId] = useState(() => {
     if (!redirectedPhone) return "";
@@ -401,11 +429,18 @@ export function SiteChatWidget() {
     return stored;
   }, [redirectedPhone, resumeSessionId, stored]);
   const [open, setOpen] = useState(false);
+  const openBookingForm = useCallback((value: string) => {
+    const officialUrl = officialBookingFormUrl(value);
+    if (!officialUrl) return;
+    const url = new URL(officialUrl);
+    setOpen(false);
+    navigate(`${url.pathname}${url.search}${url.hash}`);
+  }, [navigate]);
   const [sessionId, setSessionId] = useState(resumeSessionId || initial?.sessionId || createSessionId());
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.name ? initial.bookingUi || null : null);
+  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.name || initial?.bookingUi?.step === "identity_phone" ? initial.bookingUi || null : null);
   const [bookingProgress, setBookingProgress] = useState<BookingProgress>(initial?.bookingProgress || emptyBookingProgress());
   const updateBookingProgress = useCallback((patch: Partial<BookingProgress>) => {
     setBookingProgress((current) => ({ ...current, ...patch }));
@@ -419,6 +454,7 @@ export function SiteChatWidget() {
   const [checkoutUrl, setCheckoutUrl] = useState("");
   const [photoPreview, setPhotoPreview] = useState<PhotoPreviewState | null>(null);
   const [humanMode, setHumanMode] = useState(false);
+  const [whatsappContinuationAvailable, setWhatsappContinuationAvailable] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
   const [viewport, setViewport] = useState<ViewportBounds>(readViewportBounds);
   const [showNewMessages, setShowNewMessages] = useState(false);
@@ -455,6 +491,7 @@ export function SiteChatWidget() {
     setCheckoutUrl("");
     setPhotoPreview(null);
     setHumanMode(false);
+    setWhatsappContinuationAvailable(false);
     manualCursorRef.current = 0;
     sendingRef.current = false;
     scrollModeRef.current = "bottom";
@@ -514,6 +551,7 @@ export function SiteChatWidget() {
           : "Não foi possível retomar o atendimento anterior. Você pode começar uma nova conversa por aqui.");
         const result = await response.json() as {
           name?: string; phone?: string; mode?: string; booking_ui?: BookingUi | null;
+          whatsapp_continuation_available?: boolean;
           messages?: Array<{ id: string; from: "client" | "bot" | "agent"; text: string; ts: number }>;
         };
         if (disposed) return;
@@ -530,6 +568,7 @@ export function SiteChatWidget() {
         if (restoredMessages.length) setMessages(restoredMessages);
         setBookingUi(result.mode === "bot" ? safeBookingUi(result.booking_ui) : null);
         setHumanMode(result.mode === "human");
+        setWhatsappContinuationAvailable(result.whatsapp_continuation_available === true);
         setSessionRegistered(true);
         setExpiresAt((restoredMessages.at(-1)?.createdAt || Date.now()) + STORAGE_TTL_MS);
         setShowHistory(false);
@@ -686,9 +725,10 @@ export function SiteChatWidget() {
           return;
         }
         if (!response.ok || disposed || generation !== generationRef.current) return;
-        const result = await response.json() as { mode?: string; messages?: SiteManualMessage[] };
+        const result = await response.json() as { mode?: string; messages?: SiteManualMessage[]; whatsapp_continuation_available?: boolean };
         if (disposed || generation !== generationRef.current) return;
         setHumanMode(result.mode === "human");
+        setWhatsappContinuationAvailable(result.whatsapp_continuation_available === true);
         if (result.mode === "human" || result.mode === "blocked") setBookingUi(null);
         const incoming = Array.isArray(result.messages) ? result.messages : [];
         if (!incoming.length) return;
@@ -725,7 +765,7 @@ export function SiteChatWidget() {
     const answeringPhone = !phone && (bookingUi?.step === "phone" || bookingUi?.step === "identity_phone");
     const decliningPhone = answeringPhone && /^(?:prefiro (?:não |nao )?informar|(?:não|nao) (?:quero|vou) informar)(?: (?:meu )?(?:whatsapp|telefone))?\.?$/i.test(content);
     const answerPhone = answeringPhone && !decliningPhone ? normalizePhone(submittedPhone || content) : "";
-    if (answeringPhone && !decliningPhone && (answerPhone.length < 12 || answerPhone.length > 13)) {
+    if (answeringPhone && !decliningPhone && !/^55[1-9]\d{9,10}$/.test(answerPhone)) {
       setError("Informe um WhatsApp válido com DDD.");
       return false;
     }
@@ -781,8 +821,11 @@ export function SiteChatWidget() {
       if (!response.ok || (!result.resposta && !result.atendimento_humano)) throw new Error(result.mensagem || "Não foi possível responder agora.");
       const returnedName = typeof result.nome_contato === "string" ? result.nome_contato.trim().slice(0, 120) : "";
       if (returnedName || answerName) setName(returnedName || answerName);
+      const returnedPhone = typeof result.telefone_contato === "string" ? normalizePhone(result.telefone_contato) : "";
+      if (/^55\d{10,11}$/.test(returnedPhone)) setPhone(returnedPhone);
       if (result.session_id) setSessionId(String(result.session_id));
       setHumanMode(result.atendimento_humano === true);
+      setWhatsappContinuationAvailable(result.whatsapp_continuation_available === true);
       const nextBookingUi = result.atendimento_humano ? null : safeBookingUi(result.booking_ui);
       setBookingUi(nextBookingUi);
       if (nextBookingUi?.step === "experiences" && !nextBookingUi.draft?.ofertaId) {
@@ -819,6 +862,10 @@ export function SiteChatWidget() {
           .find(Boolean);
         if (checkout) setCheckoutUrl(checkout);
       }
+      const formUrl = officialBookingFormUrl(result.booking_form_url);
+      const selectedSelfService = selection?.step === "booking_mode" && selection.mode === "self_service"
+        || result.booking_mode_selected === "self_service";
+      if (formUrl && selectedSelfService && result.booking_form_saved !== false) openBookingForm(formUrl);
       return result.atendimento_humano !== true;
     } catch (cause) {
       if (generation !== generationRef.current) return false;
@@ -857,7 +904,8 @@ export function SiteChatWidget() {
     && !bookingUi
     && message.media?.type !== "pix"
     && message.content.length > (["gallery", "image"].includes(message.media?.type || "") ? 240 : 500)
-    && !extractOfficialCardCheckout(message.content);
+    && !extractOfficialCardCheckout(message.content)
+    && !extractOfficialBookingForm(message.content);
 
   if (hidden) return null;
 
@@ -907,7 +955,7 @@ export function SiteChatWidget() {
                         </span>
                       )}
                       <div className={`min-w-0 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm [overflow-wrap:anywhere] ${interactive || message.environmentalEducationCard ? "w-[calc(100%-2.25rem)] max-w-[720px] overflow-hidden" : "max-w-[calc(100%-2.25rem)] sm:max-w-[min(88%,720px)]"} ${message.role === "user" ? "rounded-br-md bg-[#8b4f23] text-white" : "rounded-bl-md border border-[#e4eadf] bg-white text-[#2d382f]"}`}>
-                        {(!interactive || bookingUi?.step === "identity_name") && <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? ["gallery", "image"].includes(message.media?.type || "") ? "line-clamp-4" : "line-clamp-6" : ""}`}><RichText onOpenCheckout={setCheckoutUrl}>{message.content}</RichText></p>}
+                        {(!interactive || bookingUi?.step === "identity_name") && <p className={`whitespace-pre-wrap ${isCompactReply(message) && expandedMessageId !== message.id ? ["gallery", "image"].includes(message.media?.type || "") ? "line-clamp-4" : "line-clamp-6" : ""}`}><RichText onOpenCheckout={setCheckoutUrl} onOpenBookingForm={openBookingForm}>{message.content}</RichText></p>}
                         {isCompactReply(message) && <button type="button" aria-expanded={expandedMessageId === message.id} onClick={() => { scrollModeRef.current = "latest"; setExpandedMessageId((current) => current === message.id ? "" : message.id); }} className="mt-2 rounded-full border border-[#d7e6d5] bg-[#f5faf2] px-2.5 py-1 text-[11px] font-semibold text-[#277052] transition hover:bg-[#eaf5e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]">{expandedMessageId === message.id ? "Mostrar menos" : "Ler resposta completa"}</button>}
                         <MediaBlock media={message.media} onOpenPreview={(items, index) => setPhotoPreview({ items, index })} />
                         {message.environmentalEducationCard && (
@@ -925,7 +973,7 @@ export function SiteChatWidget() {
                     {message.additional?.slice(0, message.visibleAdditional ?? message.additional.length).map((extra, extraIndex) => (
                       <div key={`${message.id}:extra:${extraIndex}`} ref={index === visibleMessages.length - 1 && extraIndex === (message.visibleAdditional ?? message.additional?.length ?? 0) - 1 ? latestMessageRef : undefined} className={`ml-9 flex min-w-0 justify-start ${message.animate ? "site-chat-message-pop" : ""}`}>
                         <div className="min-w-0 max-w-full rounded-2xl rounded-bl-md border border-[#e4eadf] bg-white px-3.5 py-2.5 text-sm leading-relaxed text-[#2d382f] shadow-sm [overflow-wrap:anywhere] sm:max-w-[min(88%,720px)]">
-                          <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl}>{extra}</RichText></p>
+                          <p className="whitespace-pre-wrap"><RichText onOpenCheckout={setCheckoutUrl} onOpenBookingForm={openBookingForm}>{extra}</RichText></p>
                         </div>
                       </div>
                     ))}
@@ -948,7 +996,20 @@ export function SiteChatWidget() {
                   {showNewMessages && <button type="button" onClick={scrollToLatest} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-[#214f3e] px-4 py-2 text-xs font-semibold text-white shadow-lg">Ver nova resposta ↓</button>}
                 </div>
                 <div className="shrink-0 border-t border-[#e0e7dc] bg-white p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
-                  {humanMode && <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-2 text-xs text-[#315c49]">Um atendente da Fazenda está acompanhando esta conversa.</div>}
+                  {(humanMode || whatsappContinuationAvailable) && (
+                    <div className="mb-2 rounded-xl bg-[#eef6f1] px-3 py-3 text-xs text-[#315c49]">
+                      <p>Continue seu atendimento com a equipe da Fazenda pelo WhatsApp.</p>
+                      <a
+                        href={buildWhatsAppLink("Olá! Vim pelo chat do site da Fazenda Vagafogo e gostaria de continuar meu atendimento com a equipe.")}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#195e49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a]"
+                      >
+                        <FaWhatsapp aria-hidden="true" className="h-4 w-4 shrink-0" />
+                        Continuar no WhatsApp
+                      </a>
+                    </div>
+                  )}
                   {error && <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700"><span>{error}{draft.trim() ? " Sua mensagem continua no campo." : ""}</span>{draft.trim() && <button type="button" onClick={() => void send()} disabled={loading || resuming} className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1 font-semibold disabled:opacity-50">Tentar enviar</button>}</div>}
                   <div className="flex items-end gap-2 rounded-2xl border border-[#d5ded0] bg-[#f8faf5] p-2 focus-within:border-[#4d856b]">
                     <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 4096))} onKeyDown={onKeyDown} disabled={loading || resuming} rows={1} placeholder="Digite sua mensagem…" className="max-h-28 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm outline-none" />

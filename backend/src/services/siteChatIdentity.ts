@@ -37,7 +37,7 @@ export const normalizeSiteVisitorName = (value: unknown): string => {
   if (name.length < 2 || /[\d@?]/.test(name)) return "";
   if (/^(?:sou\s+(?:do|da|de)\b|(?:do|da|de)\s)/i.test(name)) return "";
   if (/^(?:oi|ol[aá]|bom dia|boa tarde|boa noite|cliente|visitante|contato|usu[aá]rio|sim|n[aã]o|ok|certo|hoje|amanh[aã]|obrigad[oa]|tudo bem|eu|sou)$/i.test(name)) return "";
-  if (/\b(?:quero|gostaria|preciso|reservar|reserva|consulta|consultar|valor(?:es)?|pre[cç]o(?:s)?|hor[aá]rio(?:s)?|brunch|trilha|combo|ajuda|d[uú]vida(?:s)?|foto(?:s)?|endere[cç]o|localiza[cç][aã]o|atendente|pagamento|pix|cart[aã]o|quanto|como|tem|voc[eê]s|podem|pode|aberto(?:s)?)\b/i.test(name)) return "";
+  if (/\b(?:quero|gostaria|preciso|reservar|reserva|consulta|consultar|valor(?:es)?|pre[cç]o(?:s)?|hor[aá]rio(?:s)?|brunch|trilha|combo|ajuda|d[uú]vida(?:s)?|foto(?:s)?|endere[cç]o|localiza[cç][aã]o|atendente|pagamento|pix|cart[aã]o|quanto|como|tem|voc[eê]s|podem|pode|aberto(?:s)?|whatsapp|whats|wpp|zap)\b/i.test(name)) return "";
   return name;
 };
 
@@ -55,7 +55,7 @@ export const pendingSiteVisitorRequest = (messages: ClientMessage[]): string => 
     if (!text || /^(?:oi|ol[aá]|bom dia|boa tarde|boa noite)[!.,\s]*$/i.test(text)) continue;
     if (isIdentityDecline(text)) continue;
     if (NAME_INTRO.test(text)) continue;
-    if (/^(?:meu (?:n[uú]mero de )?whatsapp|whatsapp|telefone|celular)\b/i.test(text)) continue;
+    if (/^(?:meu (?:n[uú]mero de )?whatsapp|whatsapp|telefone|celular)\b/i.test(text) && /\d/.test(text)) continue;
     if (/^(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[\s-]?\d{4}$/.test(text)) continue;
     if (normalizeSiteVisitorName(text) === text && text.split(" ").length <= 4 && !shouldOfferEnvironmentalEducationContact(text)) continue;
     return text.slice(0, 4096);

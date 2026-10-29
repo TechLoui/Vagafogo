@@ -43,6 +43,7 @@ export type ResultadoEnvio = {
   mensagem?: string;
   telefone?: string;
   messageId?: string;
+  jid?: string;
   midiaEnviada?: boolean;
 };
 

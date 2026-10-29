@@ -42,6 +42,7 @@ export type BookingProgress = {
 export type BookingUi = {
   step: "identity_name" | "identity_phone" | "booking_mode" | "phone" | "experiences" | "date" | "time" | "participants" | "guidance" | "contact" | "summary" | "payment" | "availability";
   reminderOptIn?: boolean;
+  whatsappContinuation?: boolean;
   fields?: string[];
   draft?: {
     tipoOferta?: string;
@@ -59,7 +60,8 @@ export type SiteBookingSelection = {
   ofertaId: string;
   data: string;
   horariosPorPacote: Record<string, string>;
-} | { step: "guidance"; accepted: boolean };
+} | { step: "guidance"; accepted: boolean }
+  | { step: "booking_mode"; mode: "self_service" | "guided" };
 
 const validCpf = (input: string) => {
   const cpf = input.replace(/\D/g, "");
@@ -74,14 +76,14 @@ const validCpf = (input: string) => {
 
 const normalizePhone = (value: string) => {
   const digits = value.replace(/\D/g, "");
-  if (digits.startsWith("55")) return digits.slice(0, 13);
-  return digits.length === 10 || digits.length === 11 ? `55${digits}` : "";
+  const normalized = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+  return /^55[1-9]\d{9,10}$/.test(normalized) ? normalized : "";
 };
 
 const formatPhone = (value: string) => {
   let digits = value.replace(/\D/g, "");
-  if (digits.startsWith("55")) digits = digits.slice(2);
-  digits = digits.slice(0, 11);
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) digits = digits.slice(2);
+  if (digits.length > 11) return digits;
   if (!digits) return "";
   if (digits.length <= 2) return `(${digits}`;
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
@@ -306,7 +308,10 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const needsPet = fields.includes("presenca de pet") && selected.some((item) => item.aceitaPet);
   const petRestricted = selected.some((item) => !item.aceitaPet);
   const brunchHasScheduledTime = scheduled.some((item) => /brunch|gastron/i.test(item.nome));
-  const stage = step === "date" && selected.length
+  const continuingOnWhatsapp = step === "identity_phone" && ui.whatsappContinuation === true;
+  const stage = continuingOnWhatsapp
+    ? { title: "Continuar pelo WhatsApp", hint: "Informe seu número com DDD para receber uma mensagem e continuar o atendimento por lá.", icon: FaWhatsapp }
+    : step === "date" && selected.length
     ? { ...stages.date, hint: combo?.nome || selected.map((item) => item.nome).join(" + ") }
     : step === "time" && brunchHasScheduledTime
     ? { title: "Escolha o horário do brunch", hint: "Esse é o horário de sentar à mesa. A trilha, se incluída, não tem horário marcado.", icon: FaClock }
@@ -405,8 +410,8 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
     <div className="min-w-0 bg-[#f8fbf6] p-3.5 text-[#263d31]" aria-label="Escolha como reservar">
       <p className="text-sm font-bold text-[#244b38]">Como prefere reservar?</p>
       <div className="mt-3 grid gap-2" style={choiceColumns}>
-        <button type="button" disabled={sending} onClick={() => void answer("Quero fazer a reserva guiada pela Jatobá, passo a passo.")} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#bcdcc7] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#245139] transition hover:border-[#20745a] hover:bg-[#f0f8f1] disabled:opacity-50"><FaUser className="shrink-0 text-[#20745a]" aria-hidden="true" /><span>Reservar com a Jatobá<small className="mt-0.5 block text-[11px] font-normal text-[#617267]">Acompanhamento pelo chat, passo a passo</small></span></button>
-        <button type="button" disabled={sending} onClick={() => void answer("Prefiro preencher o formulário da reserva por conta própria.")} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#e4d5c3] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#58412d] transition hover:border-[#a97a4b] hover:bg-[#fffaf3] disabled:opacity-50"><FaArrowRight className="shrink-0 text-[#8b4f23]" aria-hidden="true" /><span>Preencher por conta própria<small className="mt-0.5 block text-[11px] font-normal text-[#806c56]">Abrir o formulário oficial de reservas</small></span></button>
+        <button type="button" disabled={sending} onClick={() => void answer("Quero fazer a reserva guiada pela Jatobá, passo a passo.", undefined, { step: "booking_mode", mode: "guided" })} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#bcdcc7] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#245139] transition hover:border-[#20745a] hover:bg-[#f0f8f1] disabled:opacity-50"><FaUser className="shrink-0 text-[#20745a]" aria-hidden="true" /><span>Reservar com a Jatobá<small className="mt-0.5 block text-[11px] font-normal text-[#617267]">Acompanhamento pelo chat, passo a passo</small></span></button>
+        <button type="button" disabled={sending} onClick={() => void answer("Prefiro preencher o formulário da reserva por conta própria.", undefined, { step: "booking_mode", mode: "self_service" })} className="flex min-h-16 items-center gap-3 rounded-xl border border-[#e4d5c3] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#58412d] transition hover:border-[#a97a4b] hover:bg-[#fffaf3] disabled:opacity-50"><FaArrowRight className="shrink-0 text-[#8b4f23]" aria-hidden="true" /><span>Preencher por conta própria<small className="mt-0.5 block text-[11px] font-normal text-[#806c56]">Abrir o formulário oficial de reservas</small></span></button>
       </div>
     </div>
   );
@@ -549,7 +554,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
         </div>}
 
         {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-        {!["summary", "payment", "date"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : step === "participants" ? "Conferir vagas" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
+        {!["summary", "payment", "date"].includes(step) && <button type="submit" disabled={sending || (["experiences", "time", "participants"].includes(step) && !catalog) || (step === "experiences" && (!selected.length || unavailable.length > 0)) || (step === "time" && scheduled.some((item) => !hourAvailable(item, times[item.id] || knownTime(item)))) || (step === "participants" && (!availabilityReady || !quote.length || participantsExceedCapacity))} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#20745a] px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#185d47] disabled:cursor-not-allowed disabled:opacity-40">{sending ? "Jatobá está respondendo…" : continuingOnWhatsapp ? "Receber no WhatsApp" : step === "participants" ? "Conferir vagas" : "Continuar"}{!sending && <FaArrowRight className="text-xs" aria-hidden="true" />}</button>}
         {step !== "date" && step !== "summary" && step !== "participants" && <p className="text-center text-[11px] leading-relaxed text-[#718075]">Se preferir, você também pode responder por mensagem.</p>}
       </div>
     </form>

@@ -61,6 +61,7 @@ export const enviarMensagemTransacionalPeloAgente = async (
     mensagem,
     telefone,
     messageId: body.messageId ? String(body.messageId) : undefined,
+    jid: body.jid ? String(body.jid) : undefined,
   };
 };
 

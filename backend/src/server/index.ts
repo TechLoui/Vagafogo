@@ -22,6 +22,7 @@ import {
 } from "../services/emailReservas";
 import { prepararBoasVindasWhatsapp } from "../services/whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
+import { enfileirarAlertaAtendimentoHumano, iniciarProcessadorAlertasAtendimentoHumano } from "../services/whatsappHumanHandoffAlerts";
 import {
   atualizarCampanhaWhatsapp,
   cancelarCampanhaWhatsapp,
@@ -72,6 +73,7 @@ import {
   marcarConversaSiteLida,
   obterConversaSite,
   registrarMensagemConversaSite,
+  recuperarBotAposOfertaHumanaSite,
   removerConversaSite,
   siteSessionIdFromJid,
   type SiteConversationMode,
@@ -82,6 +84,22 @@ import { isSiteNamePrompt, isSitePhonePrompt, nameFromSiteMessage, normalizeSite
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
 import { requireTimeBeforeParticipants } from "../services/siteBookingStepOrder";
+import { deveEfetivarHandoffSite } from "../services/siteHumanHandoffPolicy";
+import { podeEscalonarLigacaoSite, podeResponderContinuacaoAutomaticaSite } from "../services/siteOwnerEscalation";
+import {
+  escolhaModoReservaSite,
+  carregarContextoModoReservaSite,
+  corrigirRepeticaoModoReservaSite,
+  selecionarModoReservaSite,
+} from "../services/siteBookingMode";
+import {
+  dadosContinuacaoWhatsapp,
+  processarContinuacaoWhatsappSite,
+  recusouContinuacaoWhatsapp,
+  solicitouContinuacaoWhatsapp,
+  solicitouNovaTentativaWhatsapp,
+  telefoneContinuacaoWhatsapp,
+} from "../services/siteWhatsAppContinuation";
 import { exigirServicoAgente } from "../middleware/agentInternalAuth";
 import {
   armazenarFotoGaleriaAgente,
@@ -203,9 +221,8 @@ const SITE_CHAT_MAX_MESSAGES = 30;
 const SITE_CHAT_INACTIVITY_MS = 2 * 60 * 60 * 1000;
 
 const normalizeSiteChatPhone = (value: unknown) => {
-  const digits = String(value ?? "").replace(/\D/g, "").slice(0, 15);
+  const digits = String(value ?? "").replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.startsWith("55")) return digits;
   return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
 };
 
@@ -280,7 +297,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const telefone = normalizeSiteChatPhone(req.body?.telefone);
   const sessionId = String(req.body?.sessionId ?? "").trim().slice(0, 120);
   const messageId = String(req.body?.messageId ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 160);
-  if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || (telefone && (telefone.length < 12 || telefone.length > 13))) {
+  if (!mensagem || !/^site_[A-Za-z0-9_-]{12,110}$/.test(sessionId) || (telefone && !/^55[1-9]\d{9,10}$/.test(telefone))) {
     res.status(400).json({ error: "SITE_CHAT_REQUEST_INVALID" });
     return;
   }
@@ -302,7 +319,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     return;
   }
 
-  const existingConversation = await obterConversaSite(sessionId);
+  let existingConversation = await obterConversaSite(sessionId);
   if (existingConversation?.phone && telefone && existingConversation.phone !== telefone) {
     res.status(403).json({ error: "SITE_CHAT_SESSION_PHONE_MISMATCH" });
     return;
@@ -318,6 +335,14 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     });
     return;
   }
+  if (existingConversation?.mode === "human" && existingConversation.updatedBy === "jatoba") {
+    const recovered = await recuperarBotAposOfertaHumanaSite(sessionId);
+    if (recovered) existingConversation = recovered.conversation;
+    if (existingConversation?.mode === "blocked") {
+      res.status(403).json({ error: "SITE_CHAT_SESSION_BLOCKED", mensagem: "Este atendimento está indisponível no momento." });
+      return;
+    }
+  }
 
   const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
   const awaitingName = lastSiteMessage?.from === "bot" && isSiteNamePrompt(lastSiteMessage.text);
@@ -328,8 +353,20 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const previousLastFrom = existingConversation?.lastFrom ?? "";
   const priorPhonePrompt = [...(existingConversation?.messages ?? [])].reverse().find((item) => item.from === "bot")?.text ?? "";
   const nome = nameFromSiteMessage(mensagem, awaitingName) || nomeRecebido || existingConversation?.name || "";
+  const wantsWhatsapp = solicitouContinuacaoWhatsapp(mensagem);
+  const ownerEscalation = podeEscalonarLigacaoSite(mensagem, existingConversation);
+  const awaitingWhatsappPhone = existingConversation?.whatsappContinuation?.status === "awaiting_phone";
+  const collectingOwnerPhone = awaitingWhatsappPhone && existingConversation?.whatsappContinuation?.reason === "ligacao_nao_atendida";
+  const suppliedOwnerPhone = Boolean(telefone || (telefoneContinuacaoWhatsapp(mensagem)
+    && (/^[\d\s()+.\-]+$/.test(mensagem) || /\bmeu (?:whatsapp|telefone|numero|número)\b/i.test(mensagem))));
+  const collectingWhatsapp = awaitingWhatsappPhone;
+  const retryingWhatsapp = existingConversation?.whatsappContinuation?.status === "failed"
+    && solicitouNovaTentativaWhatsapp(mensagem);
   const telefoneInformado = telefone || (
-    nome && !existingConversation?.phone ? normalizeSiteChatPhone(mensagem) : ""
+    !existingConversation?.phone && (nome || wantsWhatsapp || collectingWhatsapp)
+      && (!ownerEscalation || /\bmeu (?:whatsapp|telefone|numero|número)\b/i.test(mensagem))
+      && (!collectingOwnerPhone || suppliedOwnerPhone)
+      ? telefoneContinuacaoWhatsapp(mensagem) : ""
   );
   const telefoneAtendimento = telefoneInformado.length >= 12 && telefoneInformado.length <= 13
     ? telefoneInformado
@@ -360,6 +397,46 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       console.error("[site-chat] Nao foi possivel registrar o lead do site:", error);
     }
   }
+  if ((wantsWhatsapp || collectingWhatsapp || retryingWhatsapp || ownerEscalation)
+    && podeResponderContinuacaoAutomaticaSite(storedClientMessage.conversation)) {
+    const continuation = await processarContinuacaoWhatsappSite({
+      sessionId,
+      sourceId: clientSourceId,
+      human: wantsWhatsapp || ownerEscalation,
+      ownerEscalation,
+      ...(ownerEscalation ? { reason: "ligacao_nao_atendida" } : {}),
+      cancelled: collectingWhatsapp && recusouContinuacaoWhatsapp(mensagem),
+    }).catch((error) => {
+      if (error instanceof Error && error.message === "SITE_CHAT_OPERATOR_ACTIVE") return null;
+      throw error;
+    });
+    if (!continuation) {
+      res.json({
+        resposta: "", session_id: sessionId, atendimento_humano: true,
+        media: null, mensagens_adicionais: [], handoff: null,
+        ...dadosContinuacaoWhatsapp(storedClientMessage.conversation.whatsappContinuation),
+      });
+      return;
+    }
+    await registrarMensagemConversaSite(sessionId, {
+      from: "bot", text: continuation.reply,
+      sourceId: `bot:${clientSourceId}:whatsapp-continuation`,
+      name: storedClientMessage.conversation.name,
+      phone: storedClientMessage.conversation.phone,
+    });
+    await atualizarProgressoReservaSite(sessionId, continuation.bookingUi, storedClientMessage.message.ts);
+    res.json({
+      resposta: continuation.reply,
+      session_id: sessionId,
+      nome_contato: storedClientMessage.conversation.name,
+      telefone_contato: storedClientMessage.conversation.phone,
+      atendimento_humano: continuation.human,
+      media: null, mensagens_adicionais: [], handoff: null,
+      booking_ui: continuation.bookingUi,
+      ...dadosContinuacaoWhatsapp(continuation.continuation),
+    });
+    return;
+  }
   if (storedClientMessage.conversation.mode === "human") {
     res.json({
       resposta: "",
@@ -368,8 +445,40 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       media: null,
       mensagens_adicionais: [],
       handoff: null,
+      ...dadosContinuacaoWhatsapp(storedClientMessage.conversation.whatsappContinuation),
     });
     return;
+  }
+  if (storedClientMessage.conversation.mode === "blocked") {
+    res.status(403).json({ error: "SITE_CHAT_SESSION_BLOCKED", mensagem: "Este atendimento está indisponível no momento." });
+    return;
+  }
+
+  const bookingModeChoice = escolhaModoReservaSite(mensagem, req.body?.respostaInterativa);
+  let bookingModeSelection: Awaited<ReturnType<typeof selecionarModoReservaSite>> | null = null;
+  if (bookingModeChoice) {
+    bookingModeSelection = await selecionarModoReservaSite({
+      sessionId, phone: storedClientMessage.conversation.phone, mode: bookingModeChoice,
+      bookingUi: storedClientMessage.conversation.bookingUi,
+    });
+    if (bookingModeChoice === "site") {
+      await registrarMensagemConversaSite(sessionId, {
+        from: "bot", text: bookingModeSelection.reply,
+        sourceId: `bot:${clientSourceId}:booking-mode`,
+        name: storedClientMessage.conversation.name, phone: storedClientMessage.conversation.phone,
+      });
+      await atualizarProgressoReservaSite(sessionId, null, storedClientMessage.message.ts, bookingModeSelection.draft);
+      res.json({
+        resposta: bookingModeSelection.reply, session_id: sessionId,
+        nome_contato: storedClientMessage.conversation.name,
+        atendimento_humano: false, media: null, mensagens_adicionais: [], handoff: null, booking_ui: null,
+        booking_form_url: bookingModeSelection.booking_form_url,
+        booking_mode_selected: "self_service",
+        booking_form_saved: bookingModeSelection.saved,
+        ...dadosContinuacaoWhatsapp(storedClientMessage.conversation.whatsappContinuation),
+      });
+      return;
+    }
   }
 
   const contactName = storedClientMessage.conversation.name;
@@ -402,6 +511,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       atendimento_humano: false,
       handoff: null,
       booking_ui: identity.step ? { step: identity.step } : null,
+      ...dadosContinuacaoWhatsapp(storedClientMessage.conversation.whatsappContinuation),
     });
     return;
   }
@@ -415,9 +525,9 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       telefone: contactPhone,
       nome_contato: contactName,
       historico,
-      resposta_interativa: req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object" && !Array.isArray(req.body.respostaInterativa)
+      resposta_interativa: bookingModeSelection?.selection || (req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object" && !Array.isArray(req.body.respostaInterativa)
         ? req.body.respostaInterativa
-        : null,
+        : null),
     },
     timeoutMs: 100_000,
   });
@@ -429,14 +539,37 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const body = response.body as Record<string, any>;
+  if (body.handoff && typeof body.handoff === "object" && !deveEfetivarHandoffSite({
+    message: identity.pendingRequest || mensagem,
+    reply: String(body.resposta || ""),
+    messages: storedClientMessage.conversation.messages,
+  })) {
+    body.handoff = null;
+  }
+  if (body.booking_ui?.step === "booking_mode" && !body.handoff) {
+    const draftObject = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const chosen = await carregarContextoModoReservaSite({
+      sessionId, phone: contactPhone,
+      mode: bookingModeSelection?.mode || storedClientMessage.conversation.bookingMode,
+      draft: {
+        ...draftObject(storedClientMessage.conversation.bookingUi?.draft),
+        ...draftObject(bookingModeSelection?.draft),
+        ...draftObject(body.booking_ui.draft),
+      },
+    });
+    corrigirRepeticaoModoReservaSite(body, chosen.mode, chosen.draft, storedClientMessage.conversation.bookingFormUrl);
+  }
   if (body.booking_ui && typeof body.booking_ui === "object"
-    && body.booking_ui.step === "participants" && body.booking_ui.draft?.ofertaId) {
+    && ["participants", "availability"].includes(body.booking_ui.step) && body.booking_ui.draft?.ofertaId) {
     try {
       const catalog = await listarCatalogoAgente();
-      const corrected = requireTimeBeforeParticipants(body.booking_ui, catalog.pacotes, catalog.combos);
+      const checkingAvailability = body.booking_ui.step === "availability";
+      const corrected = requireTimeBeforeParticipants(checkingAvailability ? { ...body.booking_ui, step: "participants" } : body.booking_ui, catalog.pacotes, catalog.combos);
       if (corrected) {
         body.booking_ui = corrected;
-        body.resposta = "Perfeito! Antes de informar quantas pessoas vão participar, escolha o horário do brunch. Depois seguimos com os participantes e o resumo da visita. 🌿";
+        body.resposta = checkingAvailability
+          ? "Já tenho os participantes informados. Antes de conferir as vagas, escolha o horário do brunch. 🌿"
+          : "Perfeito! Antes de informar quantas pessoas vão participar, escolha o horário do brunch. Depois seguimos com os participantes e o resumo da visita. 🌿";
         body.mensagens_adicionais = [];
       }
     } catch (error) {
@@ -444,7 +577,11 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     }
   }
   const currentConversation = await obterConversaSite(sessionId);
-  if (currentConversation?.mode === "human" && !body.handoff) {
+  if (currentConversation?.mode === "blocked") {
+    res.status(403).json({ error: "SITE_CHAT_SESSION_BLOCKED", mensagem: "Este atendimento está indisponível no momento." });
+    return;
+  }
+  if (currentConversation?.mode === "human") {
     res.json({
       resposta: "",
       session_id: sessionId,
@@ -452,13 +589,25 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       media: null,
       mensagens_adicionais: [],
       handoff: null,
+      ...dadosContinuacaoWhatsapp(currentConversation.whatsappContinuation),
     });
     return;
   }
-  const resposta = String(body.resposta ?? "").slice(0, 12_000);
-  const mensagensAdicionais = Array.isArray(body.mensagens_adicionais)
+  let resposta = String(body.resposta ?? "").slice(0, 12_000);
+  let mensagensAdicionais = Array.isArray(body.mensagens_adicionais)
     ? body.mensagens_adicionais.map((item: unknown) => String(item ?? "").slice(0, 4096)).filter(Boolean).slice(0, 3)
     : [];
+  let continuation: Awaited<ReturnType<typeof processarContinuacaoWhatsappSite>> | null = null;
+  if (body.handoff && typeof body.handoff === "object") {
+    continuation = await processarContinuacaoWhatsappSite({
+      sessionId, sourceId: clientSourceId, human: true,
+      reason: String(body.handoff.motivo ?? "excecao_operacional"),
+      handoffText: resposta,
+    });
+    resposta = continuation.reply;
+    mensagensAdicionais = [];
+    body.booking_ui = continuation.bookingUi;
+  }
   if (resposta) {
     await registrarMensagemConversaSite(sessionId, {
       from: "bot",
@@ -478,14 +627,6 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       phone: contactPhone,
     });
   }
-  if (body.handoff && typeof body.handoff === "object") {
-    await alterarModoConversaSite(sessionId, {
-      mode: "human",
-      reason: String(body.handoff.motivo ?? "excecao_operacional"),
-      updatedBy: "jatoba",
-    });
-  }
-
   await atualizarProgressoReservaSite(sessionId, body.booking_ui, storedClientMessage.message.ts);
 
   res.json({
@@ -494,10 +635,12 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     nome_contato: contactName,
     media: body.media && typeof body.media === "object" ? body.media : null,
     mensagens_adicionais: mensagensAdicionais,
-    atendimento_humano: Boolean(body.handoff),
-    handoff: body.handoff && typeof body.handoff === "object" ? body.handoff : null,
+    atendimento_humano: continuation ? continuation.human : Boolean(body.handoff),
+    handoff: body.handoff && typeof body.handoff === "object" && continuation?.continuation.status !== "awaiting_phone" ? body.handoff : null,
     booking_ui: body.booking_ui && typeof body.booking_ui === "object" ? body.booking_ui : null,
     environmental_education_card: shouldOfferEnvironmentalEducationContact(identity.pendingRequest || mensagem),
+    ...(typeof body.booking_form_url === "string" ? { booking_form_url: body.booking_form_url } : {}),
+    ...dadosContinuacaoWhatsapp(continuation?.continuation || currentConversation?.whatsappContinuation),
   });
   } catch (error) {
     console.error("[site-chat] Falha ao responder mensagem:", error);
@@ -531,8 +674,10 @@ app.get('/atendimento/site/sessao/:sessionId/mensagens', async (req, res) => {
   const resuming = req.query.retomar === "1";
   res.json({
     session_id: sessionId,
-    mode: conversation.mode,
-    ...(resuming ? { name: conversation.name, phone: conversation.phone, booking_ui: conversation.bookingUi } : {}),
+    mode: conversation.whatsappContinuation?.status === "awaiting_phone" && podeResponderContinuacaoAutomaticaSite(conversation) ? "bot" : conversation.mode,
+    ...dadosContinuacaoWhatsapp(conversation.whatsappContinuation),
+    ...(resuming ? { name: conversation.name, phone: conversation.phone, booking_ui: conversation.bookingUi,
+      booking_mode: conversation.bookingMode, booking_form_url: conversation.bookingFormUrl } : {}),
     messages: await listarMensagensConversaSite(sessionId, after, !resuming),
   });
 });
@@ -1141,8 +1286,14 @@ app.post('/internal/agente/eventos/atendimento-resolvido', exigirServicoAgente, 
 });
 
 app.post('/internal/agente/eventos/atendimento-humano', exigirServicoAgente, async (req, res) => {
-  // Compatibilidade com versoes antigas do bot; o painel le o estado da conversa.
-  res.status(202).json({ recebido: true, notificacao: "painel" });
+  try {
+    const alert = await enfileirarAlertaAtendimentoHumano(req.body ?? {});
+    res.status(202).json({ recebido: true, notificacao: "whatsapp", ...alert });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message === "FIREBASE_ADMIN_UNAVAILABLE" ? 503 : message.startsWith("HANDOFF_") ? 400 : 500;
+    res.status(status).json({ error: message });
+  }
 });
 
 app.post('/internal/agente/eventos/retorno-bot', exigirServicoAgente, async (req, res) => {
@@ -1753,6 +1904,7 @@ app.listen(port, async () => {
   );
   siteChatCleanupTimer.unref();
   iniciarProcessadorLembretesReservaSite();
+  iniciarProcessadorAlertasAtendimentoHumano();
   iniciarLimpezaAutomaticaReservas();
   try {
     const migrada = await garantirConfiguracaoAutomacoesWhatsapp();

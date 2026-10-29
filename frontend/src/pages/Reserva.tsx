@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import logo from "../assets/logo.jpg";
 import { BookingSection } from "../components/BookingSection";
 import { carregarCheckoutAgente, type AgentCheckoutHandoff } from "../features/agentCheckout";
+import { parseBookingPrefill } from "../utils/bookingPrefill";
 
 export function Reserva() {
   const [searchParams] = useSearchParams();
+  const initialPrefill = useMemo(() => parseBookingPrefill(searchParams), [searchParams]);
   const isCheckoutModal = searchParams.get("checkout_modal") === "1";
   const experienceParam = searchParams.get("experiencia");
   const initialExperience =
@@ -127,6 +129,9 @@ export function Reserva() {
               initialComboId={initialComboId}
               initialDate={initialDate}
               initialTime={initialTime}
+              initialParticipantsByType={initialPrefill.participants}
+              initialAgesByType={initialPrefill.ages}
+              initialTimesByPackage={initialPrefill.times}
               initialAgentCheckout={agentCheckout}
             />
           </>

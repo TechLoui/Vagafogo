@@ -1,13 +1,18 @@
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { listarConversasSitePersistidas, obterConversaSitePersistida, registrarTentativaLembreteReservaSite } from "./siteChatConversations";
+import { montarMensagemRetomadaSiteContextual } from "./siteFollowupMessage";
+import { verificarConclusaoRetomadaSite } from "./siteFollowupCompletion";
+import { canonicalLeadPhone } from "./agentReservationTools";
+import { politicaContatoRetomadaSite } from "./siteFollowupContactPolicy";
 
 const TIMEZONE = "America/Sao_Paulo";
 const INACTIVITY_MS = 15 * 60 * 1000;
 const SESSION_MS = 2 * 60 * 60 * 1000;
 const RETRY_MS = 5 * 60 * 1000;
 const CLAIMS = "site_booking_followup_claims";
+const LEASE_MS = 2 * 60 * 1000;
 let running = false;
 let timer: NodeJS.Timeout | null = null;
 let lastCleanupAt = 0;
@@ -19,6 +24,10 @@ type FollowupCandidate = {
   name: string;
   mode: string;
   lastFrom: string;
+  lastMessageAt?: number;
+  createdAt?: number;
+  bookingMode?: "site" | "site_chat" | null;
+  messages?: Array<{ from: "client" | "bot" | "agent"; text: string; ts?: number }>;
   bookingFollowup: {
     step: string;
     date: string;
@@ -26,6 +35,7 @@ type FollowupCandidate = {
     offerId: string;
     offerName: string;
     optedIn: boolean;
+    optedOut?: boolean;
     lastClientAt: number;
     sentAt: number | null;
     lastAttemptAt: number | null;
@@ -46,9 +56,14 @@ export const estadoRetomadaSite = (conversation: FollowupCandidate, now = Date.n
   if (progress.sentAt) return "enviada";
   if (!/^55\d{10,11}$/.test(conversation.phone)) return "sem_whatsapp";
   if (!progress.optedIn) return "sem_autorizacao";
+  if (progress.optedOut) return "sem_autorizacao";
+  const contactPolicy = politicaContatoRetomadaSite(conversation.messages || [], progress.optedOut);
+  if (contactPolicy.optedOut) return "sem_autorizacao";
+  if (contactPolicy.finished) return "atendimento_encerrado";
   if (conversation.mode !== "bot") return "atendimento_pausado";
   if (conversation.lastFrom === "client" && progress.step !== "identity_phone") return "aguardando_bot";
-  const idle = now - progress.lastClientAt;
+  const awaitingSince = Math.max(progress.lastClientAt, Number(conversation.lastMessageAt) || 0);
+  const idle = now - awaitingSince;
   if (progress.lastClientAt <= 0) return "sem_atividade";
   if (idle >= SESSION_MS) return "sessao_expirada";
   const today = localDate(now);
@@ -67,44 +82,60 @@ export const estadoRetomadaSite = (conversation: FollowupCandidate, now = Date.n
 export const reservaSiteElegivelParaLembrete = (conversation: FollowupCandidate, now = Date.now()) =>
   estadoRetomadaSite(conversation, now) === "pronta";
 
-const matchingReservationExists = async (phone: string, date: string) => {
-  const db = obterFirestoreAdmin();
-  if (!db) return true; // fail closed: do not contact without a reliable status check
-  const local = phone.slice(2);
-  const formatted = local.length === 11
-    ? `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`
-    : `(${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`;
-  const candidates = await Promise.all([phone, local, formatted, `+55 ${formatted}`].map((value) =>
-    db.collection("reservas").where("telefone", "==", value).limit(30).get(),
-  ));
-  return candidates.some((snapshot) => snapshot.docs.some((doc) => {
-    const data = doc.data();
-    const reservationDate = String(data.data ?? data.Data ?? "").slice(0, 10);
-    const status = String(data.status ?? data.Status ?? "").toLowerCase();
-    return reservationDate === date && (data.confirmada === true || ["pago", "confirmada", "confirmado", "approved"].includes(status));
-  }));
+export const mensagemRetomadaSite = (candidate: FollowupCandidate) => montarMensagemRetomadaSiteContextual(candidate);
+
+type FollowupDependencies = {
+  db?: FirebaseFirestore.Firestore | null;
+  now?: () => number;
+  list?: () => Promise<FollowupCandidate[]>;
+  get?: (sessionId: string) => Promise<FollowupCandidate | null>;
+  completed?: (candidate: FollowupCandidate) => Promise<boolean>;
+  send?: typeof enviarMensagemTransacionalPeloAgente;
+  recordAttempt?: typeof registrarTentativaLembreteReservaSite;
 };
 
-export const mensagemRetomadaSite = (candidate: FollowupCandidate) => {
-  const progress = candidate.bookingFollowup!;
-  const firstName = candidate.name.trim().split(/\s+/)[0] || "";
-  const greeting = firstName ? `Oi, ${firstName}! 🌿` : "Oi! 🌿";
-  const params = new URLSearchParams({ atendimento: "1", origem: "retomada", sessao: candidate.sessionId, telefone: candidate.phone });
-  const link = `https://vagafogo.com.br/?${params.toString()}`;
-  const reservationNote = progress.offerId && progress.date
-    ? "Sua reserva ainda não foi concluída; a vaga só fica garantida após o pagamento aprovado.\n\n"
-    : "";
-  const introduction = candidate.lastFrom === "client"
-    ? "Desculpe, nossa conversa no site foi interrompida antes de eu responder. Podemos continuar de onde paramos por aqui:"
-    : "Nossa conversa no site ficou em pausa. Se quiser retomar de onde parou, é só tocar aqui:";
-  return `${greeting}\n\n${introduction}\n${link}\n\n${reservationNote}A Jatobá está por lá para tirar dúvidas e ajudar você com sua reserva. Se já resolveu tudo, pode desconsiderar esta mensagem. 💚`;
+const millis = (value: unknown) => value && typeof value === "object" && "toMillis" in value
+  ? Number((value as { toMillis: () => number }).toMillis()) : Number(value) || 0;
+
+const activityVersion = (candidate: FollowupCandidate) => JSON.stringify([
+  candidate.phone, candidate.mode, candidate.lastFrom, candidate.lastMessageAt,
+  candidate.bookingFollowup, candidate.bookingMode,
+]);
+
+const claimReminder = async (db: FirebaseFirestore.Firestore, candidate: FollowupCandidate, now: number) => {
+  const claimId = createHash("sha256").update(`${canonicalLeadPhone(candidate.phone)}:${localDate(candidate.bookingFollowup!.lastClientAt)}`).digest("hex");
+  const ref = db.collection(CLAIMS).doc(claimId);
+  const leaseId = randomUUID();
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const previous = snapshot.data();
+    // Old claims lack delivery status; do not risk replaying an already sent reminder.
+    if (snapshot.exists && (!previous?.status || ["sent", "suppressed"].includes(previous.status)
+      || millis(previous.leaseUntil) > now)) return null;
+    const requestId = String(previous?.requestId || `site-booking-followup:${claimId}`);
+    transaction.set(ref, {
+      sessionId: candidate.sessionId, requestId, status: "sending", leaseId, leaseUntil: now + LEASE_MS,
+      createdAt: previous?.createdAt || new Date(now), updatedAt: new Date(now),
+    }, { merge: true });
+    return { ref, leaseId, requestId };
+  });
 };
 
-export const processarLembretesReservaSite = async (now = Date.now()) => {
+const finishReminderClaim = async (db: FirebaseFirestore.Firestore, claim: NonNullable<Awaited<ReturnType<typeof claimReminder>>>,
+  status: "pending" | "sent" | "suppressed", now: number) => db.runTransaction(async (transaction) => {
+  const snapshot = await transaction.get(claim.ref);
+  if (snapshot.data()?.leaseId !== claim.leaseId) return;
+  transaction.set(claim.ref, { status, leaseUntil: 0, updatedAt: new Date(now) }, { merge: true });
+});
+
+export const processarLembretesReservaSite = async (now = Date.now(), dependencies: FollowupDependencies = {}) => {
   if (running) return 0;
   running = true;
   try {
-    const db = obterFirestoreAdmin();
+    const db = dependencies.db === undefined ? obterFirestoreAdmin() : dependencies.db;
+    const clock = dependencies.now || Date.now;
+    const get = dependencies.get || obterConversaSitePersistida;
+    const recordAttempt = dependencies.recordAttempt || registrarTentativaLembreteReservaSite;
     if (!db) {
       if (now - lastMissingFirestoreLogAt >= 60 * 60 * 1000) {
         lastMissingFirestoreLogAt = now;
@@ -121,46 +152,59 @@ export const processarLembretesReservaSite = async (now = Date.now()) => {
         await batch.commit();
       }
     }
-    const candidates = (await listarConversasSitePersistidas()).filter((item) => reservaSiteElegivelParaLembrete(item, now)).slice(0, 20);
+    const latestByPhone = new Map<string, FollowupCandidate>();
+    for (const item of await (dependencies.list || listarConversasSitePersistidas)()) {
+      const phone = canonicalLeadPhone(item.phone);
+      const previous = latestByPhone.get(phone);
+      const activity = (value: FollowupCandidate) => Math.max(value.lastMessageAt || 0, value.bookingFollowup?.lastClientAt || 0);
+      if (!previous || activity(item) > activity(previous)
+        || (activity(item) === activity(previous) && item.mode !== "bot")) latestByPhone.set(phone, item);
+    }
+    const candidates = [...latestByPhone.values()].filter((item) => reservaSiteElegivelParaLembrete(item, now));
     let sent = 0;
+    let attempts = 0;
     for (const candidate of candidates) {
-      const claimId = createHash("sha256").update(`${candidate.phone}:${localDate(candidate.bookingFollowup!.lastClientAt)}`).digest("hex");
-      const claim = db.collection(CLAIMS).doc(claimId);
+      if (attempts >= 20) break;
+      const claim = await claimReminder(db, candidate, clock());
+      if (!claim) continue;
+      attempts += 1;
+      let deliveryConfirmed = false;
       try {
-        await claim.create({ sessionId: candidate.sessionId, createdAt: new Date() });
-      } catch (error) {
-        const code = (error as { code?: unknown })?.code;
-        if (code !== 6 && code !== "already-exists") console.error("[site-followup] Falha ao reservar lembrete:", error);
-        continue; // another worker already claimed this one-time reminder
-      }
-      try {
-        const current = await obterConversaSitePersistida(candidate.sessionId);
-        if (!current || !reservaSiteElegivelParaLembrete(current, Date.now())) {
-          await claim.delete();
+        const current = await get(candidate.sessionId);
+        if (!current || !reservaSiteElegivelParaLembrete(current, clock())) {
+          await finishReminderClaim(db, claim, "pending", clock());
           continue;
         }
-        if (current.bookingFollowup!.date && await matchingReservationExists(current.phone, current.bookingFollowup!.date)) {
-          console.info("[site-followup] Reserva ja confirmada; lembrete ignorado:", current.sessionId);
+        if (await (dependencies.completed || ((item) => verificarConclusaoRetomadaSite(item, { db })))(current)) {
+          await finishReminderClaim(db, claim, "suppressed", clock());
           continue;
         }
-        const result = await enviarMensagemTransacionalPeloAgente(
-          current.phone,
-          mensagemRetomadaSite(current),
-          `site-booking-followup:${current.sessionId}`,
-          current.name,
-          { ...(current.bookingFollowup!.date ? { dataLimite: current.bookingFollowup!.date } : {}), tipoDisparo: "retomada_site" },
+        // Status/payment checks are asynchronous. Re-read shared storage so a
+        // visitor who just returned, opted out or reached an operator is not nudged.
+        const latest = await get(candidate.sessionId);
+        if (!latest || !reservaSiteElegivelParaLembrete(latest, clock()) || activityVersion(current) !== activityVersion(latest)) {
+          await finishReminderClaim(db, claim, "pending", clock());
+          continue;
+        }
+        const result = await (dependencies.send || enviarMensagemTransacionalPeloAgente)(
+          latest.phone,
+          mensagemRetomadaSite(latest),
+          claim.requestId,
+          latest.name,
+          { ...(latest.bookingFollowup!.date ? { dataLimite: latest.bookingFollowup!.date } : {}), tipoDisparo: "retomada_site" },
         );
-        await registrarTentativaLembreteReservaSite(current.sessionId, result.enviado, result.motivo);
+        deliveryConfirmed = result.enviado;
+        await finishReminderClaim(db, claim, result.enviado ? "sent" : "pending", clock());
+        await recordAttempt(latest.sessionId, result.enviado, result.motivo);
         if (result.enviado) {
           sent += 1;
-          console.info("[site-followup] Lembrete enviado:", current.sessionId);
+          console.info("[site-followup] Lembrete enviado:", latest.sessionId);
         } else {
-          console.error("[site-followup] Lembrete nao enviado:", current.sessionId, result.motivo);
-          await claim.delete();
+          console.error("[site-followup] Lembrete nao enviado:", latest.sessionId, result.motivo);
         }
       } catch (error) {
-        await registrarTentativaLembreteReservaSite(candidate.sessionId, false, error instanceof Error ? error.message : String(error)).catch(() => undefined);
-        await claim.delete().catch(() => undefined);
+        await recordAttempt(candidate.sessionId, deliveryConfirmed, error instanceof Error ? error.message : String(error)).catch(() => undefined);
+        await finishReminderClaim(db, claim, deliveryConfirmed ? "sent" : "pending", clock()).catch(() => undefined);
         console.error("[site-booking] Falha no lembrete de reserva incompleta:", error);
       }
     }

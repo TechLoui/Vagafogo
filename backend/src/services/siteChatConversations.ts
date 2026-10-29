@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { isSitePhonePrompt, normalizeSiteVisitorName } from "./siteChatIdentity";
+import { ofertaHumanaAutomaticaSemConfirmacao } from "./siteHumanHandoffPolicy";
+import { politicaContatoRetomadaSite } from "./siteFollowupContactPolicy";
 
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
 const MESSAGE_COLLECTION = process.env.SITE_CHAT_MESSAGES_COLLECTION?.trim() || `${COLLECTION}_messages`;
@@ -50,6 +52,20 @@ export type SiteConversationMessage = {
   mediaType?: string;
 };
 
+export type SiteWhatsAppContinuation = {
+  requestId: string;
+  status: "awaiting_phone" | "pending" | "sent" | "failed" | "cancelled";
+  requestedAt: number;
+  requestedHuman: boolean;
+  reason: string;
+  context: string;
+  phone: string;
+  sentAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+  gatewayJid: string;
+};
+
 type SiteConversation = {
   id: string;
   jid: string;
@@ -76,12 +92,16 @@ type SiteConversation = {
     offerId: string;
     offerName: string;
     optedIn: boolean;
+    optedOut: boolean;
     lastClientAt: number;
     sentAt: number | null;
     lastAttemptAt: number | null;
     lastError: string | null;
   } | null;
   bookingUi: Record<string, unknown> | null;
+  bookingMode: "site" | "site_chat" | null;
+  bookingFormUrl: string | null;
+  whatsappContinuation: SiteWhatsAppContinuation | null;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;
@@ -143,6 +163,8 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
   const lastMessageAt = normalizeTimestamp(value.lastMessageAt, last?.ts ?? now);
   const rawFollowup = value.bookingFollowup && typeof value.bookingFollowup === "object"
     ? value.bookingFollowup as Record<string, unknown> : null;
+  const rawContinuation = value.whatsappContinuation && typeof value.whatsappContinuation === "object"
+    ? value.whatsappContinuation as Record<string, unknown> : null;
   return {
     id: sessionId,
     jid: `site:${sessionId}`,
@@ -173,6 +195,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       offerId: String(rawFollowup.offerId ?? "").slice(0, 100),
       offerName: String(rawFollowup.offerName ?? "").slice(0, 160),
       optedIn: rawFollowup.optedIn === true,
+      optedOut: rawFollowup.optedOut === true,
       lastClientAt: normalizeTimestamp(rawFollowup.lastClientAt),
       sentAt: rawFollowup.sentAt ? normalizeTimestamp(rawFollowup.sentAt) : null,
       lastAttemptAt: rawFollowup.lastAttemptAt ? normalizeTimestamp(rawFollowup.lastAttemptAt) : null,
@@ -180,6 +203,22 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
     } : null,
     bookingUi: value.bookingUi && typeof value.bookingUi === "object" && !Array.isArray(value.bookingUi)
       ? value.bookingUi as Record<string, unknown> : null,
+    bookingMode: value.bookingMode === "site" || value.bookingMode === "site_chat" ? value.bookingMode : null,
+    bookingFormUrl: typeof value.bookingFormUrl === "string" && value.bookingFormUrl.startsWith("https://vagafogo.com.br/reservar")
+      ? value.bookingFormUrl.slice(0, 12000) : null,
+    whatsappContinuation: rawContinuation && ["awaiting_phone", "pending", "sent", "failed", "cancelled"].includes(String(rawContinuation.status)) ? {
+      requestId: String(rawContinuation.requestId ?? "").slice(0, 160),
+      status: rawContinuation.status as SiteWhatsAppContinuation["status"],
+      requestedAt: normalizeTimestamp(rawContinuation.requestedAt, now),
+      requestedHuman: rawContinuation.requestedHuman === true,
+      reason: String(rawContinuation.reason ?? "").slice(0, 250),
+      context: String(rawContinuation.context ?? "").slice(0, 2600),
+      phone: String(rawContinuation.phone ?? "").replace(/\D/g, "").slice(0, 15),
+      sentAt: rawContinuation.sentAt ? normalizeTimestamp(rawContinuation.sentAt) : null,
+      lastAttemptAt: rawContinuation.lastAttemptAt ? normalizeTimestamp(rawContinuation.lastAttemptAt) : null,
+      lastError: rawContinuation.lastError ? String(rawContinuation.lastError).slice(0, 160) : null,
+      gatewayJid: String(rawContinuation.gatewayJid ?? "").slice(0, 160),
+    } : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, last?.ts ?? now),
     expiresAt: normalizeTimestamp(value.expiresAt, now + TTL_MS),
@@ -199,17 +238,41 @@ const serializeConversation = (conversation: SiteConversation) => ({
 const archiveMessageId = (sessionId: string, messageId: string) =>
   createHash("sha256").update(`${sessionId}\0${messageId}`).digest("hex");
 
+export const preservarEntregaRetomadaSite = <T extends { sentAt: number | null; lastAttemptAt: number | null; lastError: string | null }>(incoming: T, persisted: unknown): T => {
+  const previous = persisted && typeof persisted === "object" ? persisted as Record<string, unknown> : {};
+  const sentAt = Math.max(incoming.sentAt || 0, normalizeTimestamp(previous.sentAt));
+  const previousAttempt = normalizeTimestamp(previous.lastAttemptAt);
+  return {
+    ...incoming,
+    sentAt: sentAt || null,
+    lastAttemptAt: Math.max(incoming.lastAttemptAt || 0, previousAttempt) || null,
+    lastError: sentAt ? null : previousAttempt > (incoming.lastAttemptAt || 0)
+      ? previous.lastError ? String(previous.lastError).slice(0, 160) : null : incoming.lastError,
+  };
+};
+
+const conversationWithPreservedDelivery = (conversation: SiteConversation, persisted: Record<string, unknown> | undefined) => ({
+  ...serializeConversation(conversation),
+  bookingFollowup: conversation.bookingFollowup
+    ? preservarEntregaRetomadaSite(conversation.bookingFollowup, persisted?.bookingFollowup) : null,
+});
+
 const persistMessageAndConversation = async (conversation: SiteConversation, message: SiteConversationMessage) => {
   const firestore = obterFirestoreAdmin();
   if (!firestore) return;
-  const batch = firestore.batch();
-  batch.set(firestore.collection(COLLECTION).doc(conversation.sessionId), serializeConversation(conversation));
-  batch.set(firestore.collection(MESSAGE_COLLECTION).doc(archiveMessageId(conversation.sessionId, message.id)), {
-    ...serializarMensagemConversaSite(message),
-    sessionId: conversation.sessionId,
-    expiresAt: new Date(message.ts + TTL_MS),
+  const ref = firestore.collection(COLLECTION).doc(conversation.sessionId);
+  const saved = await firestore.runTransaction(async (transaction) => {
+    const current = await transaction.get(ref);
+    const value = conversationWithPreservedDelivery(conversation, current.data());
+    transaction.set(ref, value);
+    transaction.set(firestore.collection(MESSAGE_COLLECTION).doc(archiveMessageId(conversation.sessionId, message.id)), {
+      ...serializarMensagemConversaSite(message),
+      sessionId: conversation.sessionId,
+      expiresAt: new Date(message.ts + TTL_MS),
+    });
+    return value.bookingFollowup;
   });
-  await batch.commit();
+  if (conversation.bookingFollowup && saved) Object.assign(conversation.bookingFollowup, saved);
 };
 
 const deleteArchivedMessages = async (query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData>) => {
@@ -255,7 +318,14 @@ const persist = async (conversation: SiteConversation) => {
   const firestore = obterFirestoreAdmin();
   if (!firestore) return;
   try {
-    await firestore.collection(COLLECTION).doc(conversation.sessionId).set(serializeConversation(conversation));
+    const ref = firestore.collection(COLLECTION).doc(conversation.sessionId);
+    const saved = await firestore.runTransaction(async (transaction) => {
+      const current = await transaction.get(ref);
+      const value = conversationWithPreservedDelivery(conversation, current.data());
+      transaction.set(ref, value);
+      return value.bookingFollowup;
+    });
+    if (conversation.bookingFollowup && saved) Object.assign(conversation.bookingFollowup, saved);
   } catch (error) {
     console.error("[site-chat] Nao foi possivel persistir a conversa:", error);
   }
@@ -377,18 +447,26 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
     || String(input.name ?? conversation.name).trim().slice(0, 120);
   conversation.phone = String(input.phone ?? conversation.phone).replace(/\D/g, "").slice(0, 15);
   if (awaitingIdentityPhone && /^55\d{10,11}$/.test(conversation.phone)) {
+    const policy = politicaContatoRetomadaSite([...conversation.messages, message], conversation.bookingFollowup?.optedOut);
     conversation.bookingFollowup = {
       step: "identity_phone",
       date: conversation.bookingFollowup?.date ?? "",
       hour: conversation.bookingFollowup?.hour ?? "",
       offerId: conversation.bookingFollowup?.offerId ?? "",
       offerName: conversation.bookingFollowup?.offerName ?? "",
-      optedIn: !/n[aã]o\s+(?:me\s+)?(?:envie|mande)/i.test(text),
+      optedIn: !policy.optedOut && !policy.finished,
+      optedOut: policy.optedOut,
       lastClientAt: now,
       sentAt: conversation.bookingFollowup?.sentAt ?? null,
       lastAttemptAt: conversation.bookingFollowup?.lastAttemptAt ?? null,
       lastError: conversation.bookingFollowup?.lastError ?? null,
     };
+  }
+  if (input.from === "client" && conversation.bookingFollowup) {
+    const policy = politicaContatoRetomadaSite([...conversation.messages, message], conversation.bookingFollowup.optedOut);
+    conversation.bookingFollowup.lastClientAt = Math.max(conversation.bookingFollowup.lastClientAt, now);
+    conversation.bookingFollowup.optedOut = policy.optedOut;
+    conversation.bookingFollowup.optedIn = /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished;
   }
   conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
   conversation.lastMessage = message.text;
@@ -438,29 +516,35 @@ export const listarConversasSitePersistidas = async () => {
     .filter((conversation): conversation is SiteConversation => Boolean(conversation));
 };
 
-export const atualizarProgressoReservaSite = async (sessionId: string, ui: unknown, lastClientAt: number) => mutate(sessionId, async () => {
+const FOLLOWUP_UI_STEPS = new Set([
+  "identity_name", "identity_phone", "booking_mode", "phone", "experiences", "date", "time",
+  "participants", "guidance", "contact", "summary", "payment", "availability",
+]);
+
+export const atualizarProgressoReservaSite = async (sessionId: string, ui: unknown, lastClientAt: number, contextDraft?: unknown) => mutate(sessionId, async () => {
   await hydrate();
   const conversation = conversations.get(sessionId);
   if (!conversation) return null;
   const raw = ui && typeof ui === "object" ? ui as Record<string, unknown> : {};
-  const draft = raw.draft && typeof raw.draft === "object" ? raw.draft as Record<string, unknown> : {};
+  const draft = {
+    ...(contextDraft && typeof contextDraft === "object" && !Array.isArray(contextDraft) ? contextDraft as Record<string, unknown> : {}),
+    ...(raw.draft && typeof raw.draft === "object" && !Array.isArray(raw.draft) ? raw.draft as Record<string, unknown> : {}),
+  };
   const previous = conversation.bookingFollowup;
   const step = String(raw.step ?? "");
-  const latestClientText = [...conversation.messages].reverse().find((message) => message.from === "client")?.text ?? "";
-  const declined = /\b(n[aã]o concordo|n[aã]o me (?:envie|mande)|n[aã]o quero receber|pare de me enviar)\b/i.test(latestClientText);
-  const normalizedLastClientText = latestClientText.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-  const finished = /^(?:obrigad[oa](?: por tudo)?|valeu|tudo certo|perfeito obrigad[oa]|ja resolvi|resolvido|nao preciso mais|pode encerrar|vou decidir depois|depois eu volto)$/.test(normalizedLastClientText);
+  const policy = politicaContatoRetomadaSite(conversation.messages, previous?.optedOut);
   const serializedUi = ui && typeof ui === "object" ? JSON.stringify(ui) : "";
   conversation.bookingUi = serializedUi && serializedUi.length <= 100_000
     ? JSON.parse(serializedUi) as Record<string, unknown> : null;
   conversation.bookingFollowup = {
-    step: ["contact", "summary", "payment"].includes(step) ? step : "",
+    step: FOLLOWUP_UI_STEPS.has(step) ? step : "",
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(draft.data ?? "")) ? String(draft.data) : previous?.date ?? "",
     hour: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(draft.horario ?? "")) ? String(draft.horario) : previous?.hour ?? "",
     offerId: String(draft.ofertaId ?? previous?.offerId ?? "").slice(0, 100),
     offerName: String(draft.ofertaNome ?? previous?.offerName ?? "").slice(0, 160),
-    optedIn: /^55\d{10,11}$/.test(conversation.phone) && !declined && !finished,
-    lastClientAt: Math.max(0, lastClientAt),
+    optedIn: /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished,
+    optedOut: policy.optedOut,
+    lastClientAt: Math.max(0, lastClientAt, previous?.lastClientAt || 0),
     sentAt: previous?.sentAt ?? null,
     lastAttemptAt: previous?.lastAttemptAt ?? null,
     lastError: previous?.lastError ?? null,
@@ -469,25 +553,59 @@ export const atualizarProgressoReservaSite = async (sessionId: string, ui: unkno
   return conversation.bookingFollowup;
 });
 
-export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean, reason = "") => {
+export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean, reason = "") => mutate(sessionId, async () => {
   const firestore = obterFirestoreAdmin();
   if (!firestore) throw new Error("SITE_CHAT_FIRESTORE_UNAVAILABLE");
   const timestamp = Date.now();
   const lastError = sent ? null : reason.slice(0, 160) || "envio_nao_confirmado";
-  await firestore.collection(COLLECTION).doc(sessionId).update({
-    "bookingFollowup.lastAttemptAt": timestamp,
-    "bookingFollowup.lastError": lastError,
-    ...(sent ? { "bookingFollowup.sentAt": timestamp } : {}),
-    updatedAt: new Date(timestamp),
+  const ref = firestore.collection(COLLECTION).doc(sessionId);
+  const delivery = await firestore.runTransaction(async (transaction) => {
+    const current = await transaction.get(ref);
+    if (!current.exists) throw new Error("SITE_CHAT_SESSION_NOT_FOUND");
+    const value = preservarEntregaRetomadaSite({ sentAt: sent ? timestamp : null, lastAttemptAt: timestamp, lastError }, current.data()?.bookingFollowup);
+    transaction.update(ref, {
+      "bookingFollowup.lastAttemptAt": value.lastAttemptAt,
+      "bookingFollowup.lastError": value.lastError,
+      "bookingFollowup.sentAt": value.sentAt,
+      updatedAt: new Date(timestamp),
+    });
+    return value;
   });
   const conversation = conversations.get(sessionId);
   if (conversation?.bookingFollowup) {
-    conversation.bookingFollowup.lastAttemptAt = timestamp;
-    if (sent) conversation.bookingFollowup.sentAt = timestamp;
-    conversation.bookingFollowup.lastError = lastError;
+    Object.assign(conversation.bookingFollowup, delivery);
     conversation.updatedAt = timestamp;
   }
-};
+});
+
+export const salvarContinuacaoWhatsappSite = async (sessionId: string, continuation: SiteWhatsAppContinuation) => mutate(sessionId, async () => {
+  await hydrate();
+  const conversation = conversations.get(sessionId);
+  if (!conversation) throw new Error("SITE_CHAT_SESSION_NOT_FOUND");
+  const previous = conversation.whatsappContinuation;
+  conversation.whatsappContinuation = { ...continuation };
+  conversation.updatedAt = Date.now();
+  try {
+    await persist(conversation);
+  } catch (error) {
+    conversation.whatsappContinuation = previous;
+    throw error;
+  }
+  return conversation.whatsappContinuation;
+});
+
+export const salvarModoReservaConversaSite = async (sessionId: string, mode: "site" | "site_chat", formUrl: string | null) => mutate(sessionId, async () => {
+  await hydrate();
+  const conversation = conversations.get(sessionId);
+  if (!conversation) throw new Error("SITE_CHAT_SESSION_NOT_FOUND");
+  if (conversation.mode !== "bot") throw new Error("SITE_CHAT_MODE_CHANGED");
+  const previous = { bookingMode: conversation.bookingMode, bookingFormUrl: conversation.bookingFormUrl };
+  conversation.bookingMode = mode;
+  conversation.bookingFormUrl = formUrl;
+  conversation.updatedAt = Date.now();
+  try { await persist(conversation); } catch (error) { Object.assign(conversation, previous); throw error; }
+  return conversation;
+});
 
 export const listarConversasSite = async () => {
   await hydrate();
@@ -554,6 +672,41 @@ export const alterarModoConversaSite = async (sessionId: string, input: {
   conversations.set(sessionId, conversation);
   await persist(conversation);
   return conversation;
+});
+
+export const recuperarBotAposOfertaHumanaSite = async (sessionId: string) => mutate(sessionId, async () => {
+  await hydrate();
+  const repair = (conversation: SiteConversation) => {
+    if (!ofertaHumanaAutomaticaSemConfirmacao(conversation)) return { conversation, recovered: false };
+    const now = Date.now();
+    const recovered: SiteConversation = {
+      ...conversation, mode: "bot", status: "bot", updatedBy: "jatoba_offer_recovery",
+      handoffPending: false, handoffRequestedAt: null, controlUpdatedAt: now, updatedAt: now,
+    };
+    return { conversation: recovered, recovered: true };
+  };
+  const firestore = obterFirestoreAdmin();
+  if (firestore) {
+    const reference = firestore.collection(COLLECTION).doc(sessionId);
+    // Revalidar os controles dentro da transação impede que o reparo de uma
+    // oferta antiga sobrescreva um operador que acabou de assumir ou bloquear.
+    const result = await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists) return null;
+      const conversation = normalizeConversation(snapshot.id, snapshot.data() as Record<string, unknown>);
+      if (!conversation) return null;
+      const result = repair(conversation);
+      if (result.recovered) transaction.set(reference, serializeConversation(result.conversation));
+      return result;
+    });
+    if (result) conversations.set(sessionId, result.conversation);
+    return result;
+  }
+  const conversation = conversations.get(sessionId);
+  if (!conversation) return null;
+  const result = repair(conversation);
+  if (result.recovered) conversations.set(sessionId, result.conversation);
+  return result;
 });
 
 export const removerConversaSite = async (sessionId: string) => mutate(sessionId, async () => {

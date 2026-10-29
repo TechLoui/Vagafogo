@@ -20,6 +20,7 @@ import {
   obterVagasExtrasDisponibilidade,
 } from "../utils/disponibilidade";
 import type { AgentCheckoutHandoff } from "../features/agentCheckout";
+import { knownBookingParticipants, knownBookingTimes } from "../utils/bookingPrefill";
 
 type PerguntaCondicional = {
   condicao: "sim" | "nao";
@@ -514,10 +515,13 @@ type BookingSectionProps = {
   initialComboId?: string;
   initialDate?: string;
   initialTime?: string;
+  initialParticipantsByType?: Record<string, number>;
+  initialAgesByType?: Record<string, number[]>;
+  initialTimesByPackage?: Record<string, string>;
   initialAgentCheckout?: AgentCheckoutHandoff;
 };
 
-export function BookingSection({ initialExperience, initialPackageId, initialComboId, initialDate, initialTime, initialAgentCheckout }: BookingSectionProps = {}) {
+export function BookingSection({ initialExperience, initialPackageId, initialComboId, initialDate, initialTime, initialParticipantsByType, initialAgesByType, initialTimesByPackage, initialAgentCheckout }: BookingSectionProps = {}) {
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
@@ -526,6 +530,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
   const [etapa, setEtapa] = useState<EtapaReserva>(0);
   const initialSelectionAppliedRef = useRef<string | null>(null);
+  const initialParticipantsAppliedRef = useRef<string | null>(null);
+  const initialSelectionKey = JSON.stringify([initialPackageId, initialComboId, initialExperience, initialDate, initialTime,
+    initialParticipantsByType, initialAgesByType, initialTimesByPackage]);
 
   // Formulário
   const [nome, setNome] = useState<string>("");
@@ -1049,8 +1056,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     if (loadingPacotes || pacotes.length === 0) return;
     if (initialAgentCheckout) return;
 
-    const selectionKey = `${initialPackageId ?? ""}:${initialComboId ?? ""}:${initialExperience ?? ""}:${initialDate ?? ""}:${initialTime ?? ""}`;
-    if (selectionKey === "::::" || initialSelectionAppliedRef.current === selectionKey) return;
+    const selectionKey = initialSelectionKey;
+    if (!(initialPackageId || initialComboId || initialExperience) || initialSelectionAppliedRef.current === selectionKey) return;
     const linkAnterior = initialSelectionAppliedRef.current;
 
     const comboInicial = initialComboId ? combos.find((combo) => combo.id === initialComboId) : undefined;
@@ -1072,19 +1079,17 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     );
 
     const dataInicial = initialDate ? new Date(`${initialDate}T12:00:00`) : undefined;
-    const dataInicialValida = dataInicial && !Number.isNaN(dataInicial.getTime()) ? dataInicial : undefined;
+    const dataInicialValida = dataInicial && !Number.isNaN(dataInicial.getTime())
+      && dataInicial.getFullYear() === Number(initialDate?.slice(0, 4))
+      && dataInicial.getMonth() + 1 === Number(initialDate?.slice(5, 7))
+      && dataInicial.getDate() === Number(initialDate?.slice(8, 10)) ? dataInicial : undefined;
     if (dataInicialValida) {
       setSelectedDay(dataInicialValida);
-      setEtapa(initialTime ? 2 : 1);
-      if (initialTime) {
-        setHorario(initialTime);
-        const horariosIniciais = Object.fromEntries(
-          pacotes
-            .filter((pacote) => pacote.id && pacoteIdsIniciais.includes(pacote.id) && pacote.modoHorario !== "intervalo" && (pacote.horarios ?? []).includes(initialTime))
-            .map((pacote) => [pacote.id!, initialTime])
-        );
-        setHorariosPorPacote(horariosIniciais);
-      }
+      const horariosIniciais = knownBookingTimes(initialTimesByPackage, pacotes, pacoteIdsIniciais, initialTime);
+      const primeiroHorario = Object.values(horariosIniciais)[0] || "";
+      setEtapa(primeiroHorario ? 2 : 1);
+      setHorario(primeiroHorario);
+      setHorariosPorPacote(horariosIniciais);
     }
 
     if (linkFoiTrocado && !dataInicialValida) {
@@ -1097,7 +1102,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       setTemPet(null);
       setFormErrors({});
     }
-  }, [combos, initialAgentCheckout, initialComboId, initialDate, initialExperience, initialPackageId, initialTime, loadingPacotes, pacotes]);
+  }, [combos, initialAgentCheckout, initialComboId, initialDate, initialExperience, initialPackageId, initialTime, initialTimesByPackage, initialSelectionKey, loadingPacotes, pacotes]);
 
   useEffect(() => {
     if (!initialAgentCheckout || loadingPacotes || pacotes.length === 0 || tiposClientes.length === 0) return;
@@ -1526,6 +1531,24 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       return proximo;
     });
   }, [gruposParticipacao, tiposClientesAtivos, participantesPorGrupo]);
+
+  useEffect(() => {
+    if (initialAgentCheckout || !initialParticipantsByType || loadingPacotes || !tiposClientes.length
+      || initialSelectionAppliedRef.current !== initialSelectionKey
+      || initialParticipantsAppliedRef.current === initialSelectionKey) return;
+    const comboInicial = initialComboId ? combos.find((combo) => combo.id === initialComboId) : undefined;
+    const pacoteInicial = pacotes.find((pacote) => pacote.id === initialPackageId)
+      || (initialExperience ? pacotes.find((pacote) => pacoteCorrespondeExperiencia(pacote, initialExperience)) : undefined);
+    const expectedIds = comboInicial?.pacoteIds?.length ? comboInicial.pacoteIds : pacoteInicial?.id ? [pacoteInicial.id] : [];
+    const group = gruposParticipacao[0];
+    if (!group || group.pacoteIds.length !== expectedIds.length || !expectedIds.every((id) => group.pacoteIds.includes(id))) return;
+    initialParticipantsAppliedRef.current = initialSelectionKey;
+    const known = knownBookingParticipants(initialParticipantsByType, initialAgesByType, tiposClientes);
+    if (!Object.keys(known.quantities).length) return;
+    setParticipantesPorGrupo({ [group.chave]: known.quantities });
+    setIdadesPorGrupoETipo(Object.keys(known.ages).length ? { [group.chave]: known.ages } : {});
+  }, [combos, gruposParticipacao, initialAgentCheckout, initialAgesByType, initialComboId, initialExperience,
+    initialPackageId, initialParticipantsByType, initialSelectionKey, loadingPacotes, pacotes, tiposClientes]);
 
   const participantesPorTipo = useMemo(
     () =>

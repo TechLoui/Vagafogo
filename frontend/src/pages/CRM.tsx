@@ -54,6 +54,13 @@ import "dayjs/locale/pt-br";
 import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import heroImage from "../assets/Carrossel-1.jpg";
+import {
+  apurarComissaoCheckout,
+  hojeEmSaoPaulo,
+  normalizarDiaFinanceiro,
+  referenciaFinanceira,
+  reservaNoPeriodoFinanceiro,
+} from "../utils/financeiro";
 import "./CRM.css";
 
 dayjs.locale("pt-br");
@@ -67,7 +74,7 @@ type SectionKey =
   | "relatorios"
   | "financeiro"
   | "configuracoes";
-type PeriodKey = "today" | "7days" | "30days" | "month" | "custom";
+type PeriodKey = "today" | "7days" | "30days" | "month" | "lastMonth" | "custom";
 type FinanceOriginFilter = "all" | "manual" | "checkout" | "other";
 type BookingSource = Exclude<FinanceOriginFilter, "all">;
 type CampaignSegment =
@@ -737,9 +744,9 @@ export function CRM() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [period, setPeriod] = useState<PeriodKey>("30days");
   const [customStart, setCustomStart] = useState(
-    dayjs().subtract(29, "day").format("YYYY-MM-DD"),
+    dayjs(hojeEmSaoPaulo()).subtract(29, "day").format("YYYY-MM-DD"),
   );
-  const [customEnd, setCustomEnd] = useState(dayjs().format("YYYY-MM-DD"));
+  const [customEnd, setCustomEnd] = useState(hojeEmSaoPaulo());
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1180,12 +1187,16 @@ export function CRM() {
   }, []);
 
   const periodBounds = useMemo(() => {
-    const today = dayjs().startOf("day");
+    const today = dayjs(hojeEmSaoPaulo()).startOf("day");
     if (period === "today") return { start: today, end: today.endOf("day") };
     if (period === "7days")
       return { start: today.subtract(6, "day"), end: today.endOf("day") };
     if (period === "month")
       return { start: today.startOf("month"), end: today.endOf("month") };
+    if (period === "lastMonth") {
+      const previousMonth = today.subtract(1, "month");
+      return { start: previousMonth.startOf("month"), end: previousMonth.endOf("month") };
+    }
     if (period === "custom")
       return {
         start: dayjs(customStart).startOf("day"),
@@ -1209,10 +1220,15 @@ export function CRM() {
       }),
     [periodBounds, reservations],
   );
+  const financialPeriodReservations = useMemo(() => {
+    const inicio = periodBounds.start.format("YYYY-MM-DD");
+    const fim = periodBounds.end.format("YYYY-MM-DD");
+    return reservations.filter((item) => reservaNoPeriodoFinanceiro(item, inicio, fim));
+  }, [periodBounds, reservations]);
   const financialReservations = useMemo(
-    () => filteredReservations.filter((item) =>
+    () => financialPeriodReservations.filter((item) =>
       financeOriginFilter === "all" || item.bookingSource === financeOriginFilter),
-    [filteredReservations, financeOriginFilter],
+    [financialPeriodReservations, financeOriginFilter],
   );
 
   const customers = useMemo<Customer[]>(() => {
@@ -1420,6 +1436,8 @@ export function CRM() {
           ? "30 dias"
           : period === "month"
             ? "Este mês"
+            : period === "lastMonth"
+              ? "Mês passado"
             : `${dayjs(customStart).format("DD/MM/YYYY")} a ${dayjs(customEnd).format("DD/MM/YYYY")}`;
   const originCoverage = percent(
     reservations.filter((item) => item.origin !== "unknown").length,
@@ -1445,6 +1463,10 @@ export function CRM() {
       status: statusLabel(item.status),
       origem: originLabel(item.origin),
       tipoReserva: item.bookingSource === "manual" ? "Manual" : item.bookingSource === "checkout" ? "Checkout" : "Não identificada",
+      ...(activeSection === "financeiro" ? {
+        dataFechamento: normalizarDiaFinanceiro(referenciaFinanceira(item)),
+        baseComissao1PorCento: item.bookingSource === "checkout" && isPaid(item.status) && item.paidAt ? item.value : 0,
+      } : {}),
       dominioOrigem: item.sourceDomain ?? "",
       campanhaId: item.campaignId ?? "",
       tipoAtribuicao:
@@ -1860,7 +1882,7 @@ export function CRM() {
               <p>{sectionMeta[activeSection].subtitle}</p>
             </div>
             <div className="crm-page-head__tools">
-              {(["today", "7days", "30days", "month"] as PeriodKey[]).map(
+              {(["today", "7days", "30days", "month", "lastMonth"] as PeriodKey[]).map(
                 (key) => (
                   <button
                     key={key}
@@ -1873,7 +1895,7 @@ export function CRM() {
                         ? "7 dias"
                         : key === "30days"
                           ? "30 dias"
-                          : "Este mês"}
+                        : key === "month" ? "Este mês" : "Mês passado"}
                   </button>
                 ),
               )}
@@ -1994,11 +2016,13 @@ export function CRM() {
             />
           ) : activeSection === "financeiro" ? (
             <FinanceSection
-              reservations={filteredReservations}
+              reservations={financialPeriodReservations}
               selectedReservations={financialReservations}
               originFilter={financeOriginFilter}
               onOriginFilterChange={setFinanceOriginFilter}
               periodLabel={periodLabel}
+              periodStart={periodBounds.start.format("YYYY-MM-DD")}
+              periodEnd={periodBounds.end.format("YYYY-MM-DD")}
               valuesVisible={financialValuesVisible}
               onToggleValues={() =>
                 setFinancialValuesVisible((visible) => !visible)
@@ -5051,6 +5075,8 @@ function FinanceSection({
   originFilter,
   onOriginFilterChange,
   periodLabel,
+  periodStart,
+  periodEnd,
   valuesVisible,
   onToggleValues,
 }: {
@@ -5059,6 +5085,8 @@ function FinanceSection({
   originFilter: FinanceOriginFilter;
   onOriginFilterChange: (filter: FinanceOriginFilter) => void;
   periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
   valuesVisible: boolean;
   onToggleValues: () => void;
 }) {
@@ -5066,6 +5094,7 @@ function FinanceSection({
   const pending = selectedReservations.filter((item) => isPending(item.status));
   const cancelled = selectedReservations.filter((item) => isCancelled(item.status));
   const paidValue = paid.reduce((sum, item) => sum + item.value, 0);
+  const comissaoCheckout = apurarComissaoCheckout(selectedReservations, periodStart, periodEnd);
   const pendingValue = pending.reduce((sum, item) => sum + item.value, 0);
   const cancelledValue = cancelled.reduce((sum, item) => sum + item.value, 0);
   const byExperience = ["Brunch", "Trilha", "Combo"].map((label) => ({
@@ -5108,7 +5137,7 @@ function FinanceSection({
       <div className="crm-finance-origin" role="group" aria-label="Filtrar financeiro por origem da reserva">
         <div>
           <strong>Origem das reservas</strong>
-          <small>Todos os valores abaixo acompanham este filtro e o período selecionado.</small>
+          <small>Os filtros acompanham o período selecionado. Checkout com pagamento registrado usa essa data; sem ela, aparece pela data de cadastro ou visita apenas para conferência. Manuais usam pagamento, cadastro ou visita nos registros antigos.</small>
         </div>
         <div className="crm-finance-origin__options">
           {([
@@ -5142,11 +5171,11 @@ function FinanceSection({
           <FaChartLine />
         </div>
         <div className="crm-finance-percent">
-          <span>1% do total filtrado</span>
+          <span>Seu 1% do checkout</span>
           <strong className={!valuesVisible ? "is-private" : ""}>
-            {valuesVisible ? currencyWithCents.format(paidValue * 0.01) : "R$ •••••"}
+            {valuesVisible ? currencyWithCents.format(comissaoCheckout.comissao) : "R$ •••••"}
           </strong>
-          <small>Calculado sobre a receita confirmada, sem valores pendentes ou cancelados.</small>
+          <small>{comissaoCheckout.quantidade} reservas pagas pelo checkout · base de {displayMoney(comissaoCheckout.base)}. Manuais, pendentes e canceladas não entram. Checkout sem data de pagamento também fica fora do cálculo.</small>
         </div>
       </div>
       <div className="crm-summary-strip">
@@ -5240,7 +5269,7 @@ function FinanceSection({
             )}
             {selectedReservations
               .slice()
-              .sort((a, b) => b.date.localeCompare(a.date))
+              .sort((a, b) => String(referenciaFinanceira(b)).localeCompare(String(referenciaFinanceira(a))))
               .slice(0, 5)
               .map((item) => (
                 <div key={item.id}>
@@ -5258,7 +5287,7 @@ function FinanceSection({
                   <p>
                     <strong>{item.name}</strong>
                     <small>
-                      {item.activity} · {dayjs(item.date).format("DD/MM")}
+                      {item.activity} · {dayjs(normalizarDiaFinanceiro(referenciaFinanceira(item))).format("DD/MM")}
                     </small>
                   </p>
                   <em className={!valuesVisible ? "is-private" : ""}>

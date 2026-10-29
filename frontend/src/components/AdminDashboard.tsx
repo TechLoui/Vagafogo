@@ -5340,6 +5340,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
       const payload = {
         ...restante,
+        ...(!isEditingReserva ? { criadoEm: new Date() } : {}),
         atividade,
         pacoteIds: pacoteIdsSelecionados,
         adultos,
