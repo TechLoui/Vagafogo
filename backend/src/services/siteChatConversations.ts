@@ -34,7 +34,8 @@ export const combinarMensagensSite = (
   const unique = new Map<string, SiteConversationMessage>();
   for (const message of [...cached, ...archived]) {
     if (message.ts <= now - TTL_MS || message.ts <= after) continue;
-    if (onlyAgent && message.from !== "agent") continue;
+    if (onlyAgent && message.from !== "agent"
+      && !(message.from === "bot" && message.sourceId?.startsWith("rescheduling-result:"))) continue;
     unique.set(message.id, message);
   }
   return Array.from(unique.values()).sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
@@ -93,6 +94,7 @@ type SiteConversation = {
     offerName: string;
     optedIn: boolean;
     optedOut: boolean;
+    existingReservationService?: boolean;
     lastClientAt: number;
     sentAt: number | null;
     lastAttemptAt: number | null;
@@ -195,6 +197,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       offerId: String(rawFollowup.offerId ?? "").slice(0, 100),
       offerName: String(rawFollowup.offerName ?? "").slice(0, 160),
       optedIn: rawFollowup.optedIn === true,
+      existingReservationService: rawFollowup.existingReservationService === true,
       optedOut: rawFollowup.optedOut === true,
       lastClientAt: normalizeTimestamp(rawFollowup.lastClientAt),
       sentAt: rawFollowup.sentAt ? normalizeTimestamp(rawFollowup.sentAt) : null,
@@ -454,7 +457,8 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
       hour: conversation.bookingFollowup?.hour ?? "",
       offerId: conversation.bookingFollowup?.offerId ?? "",
       offerName: conversation.bookingFollowup?.offerName ?? "",
-      optedIn: !policy.optedOut && !policy.finished,
+      optedIn: !policy.optedOut && !policy.finished && !conversation.bookingFollowup?.existingReservationService,
+      existingReservationService: conversation.bookingFollowup?.existingReservationService === true,
       optedOut: policy.optedOut,
       lastClientAt: now,
       sentAt: conversation.bookingFollowup?.sentAt ?? null,
@@ -463,10 +467,16 @@ export const registrarMensagemConversaSite = async (sessionId: string, input: {
     };
   }
   if (input.from === "client" && conversation.bookingFollowup) {
+    const purchase = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    if (!/\bnao (?:quero|preciso|vamos|vou)\b/.test(purchase)
+      && /\b(?:quero|queremos|gostaria de|preciso|precisamos|vamos|pode)\s+(?:(?:fazer|realizar|fechar)\s+)?(?:uma\s+)?(?:nova|outra|mais uma)\s+reserva\b/.test(purchase)) {
+      conversation.bookingFollowup.existingReservationService = false;
+    }
     const policy = politicaContatoRetomadaSite([...conversation.messages, message], conversation.bookingFollowup.optedOut);
     conversation.bookingFollowup.lastClientAt = Math.max(conversation.bookingFollowup.lastClientAt, now);
     conversation.bookingFollowup.optedOut = policy.optedOut;
-    conversation.bookingFollowup.optedIn = /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished;
+    conversation.bookingFollowup.optedIn = /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished
+      && !conversation.bookingFollowup.existingReservationService;
   }
   conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
   conversation.lastMessage = message.text;
@@ -497,6 +507,43 @@ export const obterConversaSite = async (sessionId: string) => {
   }
   return cached;
 };
+
+/** An asynchronous result must append to the latest shared document, preserving
+ * an operator's mode and identity even when this process has an older cache. */
+export const registrarResultadoRemarcacaoSite = async (sessionId: string,
+  input: Parameters<typeof registrarMensagemConversaSite>[1], dependencies: { db?: FirebaseFirestore.Firestore | null } = {}) => mutate(sessionId, async () => {
+  const db = dependencies.db === undefined ? obterFirestoreAdmin() : dependencies.db;
+  if (!db) throw new Error("SITE_CHAT_FIRESTORE_UNAVAILABLE");
+  const sourceId = String(input.sourceId || "").slice(0, 200);
+  if (!sourceId.startsWith("rescheduling-result:")) throw new Error("SITE_RESCHEDULING_SOURCE_INVALID");
+  const ref = db.collection(COLLECTION).doc(sessionId);
+  const archiveRef = db.collection(MESSAGE_COLLECTION).doc(archiveMessageId(sessionId, sourceId));
+  const result = await db.runTransaction(async (transaction) => {
+    const [snapshot, archived] = await Promise.all([transaction.get(ref), transaction.get(archiveRef)]);
+    if (!snapshot.exists) return null;
+    const conversation = normalizeConversation(sessionId, snapshot.data() as Record<string, unknown>);
+    if (!conversation) return null;
+    if (conversation.mode === "blocked") return conversation;
+    if (archived.exists || conversation.messages.some((message) => message.sourceId === sourceId)) return conversation;
+    const now = Date.now();
+    const message: SiteConversationMessage = { id: sourceId, sourceId, from: "bot", text: String(input.text).trim().slice(0, 12_000), ts: now };
+    conversation.messages = limitarHistoricoSite([...conversation.messages, message], now);
+    conversation.lastMessage = message.text;
+    conversation.lastMessageAt = now;
+    conversation.lastFrom = "bot";
+    conversation.updatedAt = now;
+    conversation.expiresAt = now + TTL_MS;
+    if (conversation.bookingFollowup) {
+      conversation.bookingFollowup.optedIn = false;
+      conversation.bookingFollowup.existingReservationService = true;
+    }
+    transaction.set(ref, { ...snapshot.data(), ...serializeConversation(conversation) });
+    transaction.set(archiveRef, { ...serializarMensagemConversaSite(message), sessionId, expiresAt: new Date(now + TTL_MS) });
+    return conversation;
+  });
+  if (result) conversations.set(sessionId, result);
+  return result;
+});
 
 // The reminder worker must read shared storage, not the process-local chat cache:
 // the visitor request and the worker may run in different instances.
@@ -542,7 +589,8 @@ export const atualizarProgressoReservaSite = async (sessionId: string, ui: unkno
     hour: /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(draft.horario ?? "")) ? String(draft.horario) : previous?.hour ?? "",
     offerId: String(draft.ofertaId ?? previous?.offerId ?? "").slice(0, 100),
     offerName: String(draft.ofertaNome ?? previous?.offerName ?? "").slice(0, 160),
-    optedIn: /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished,
+    optedIn: /^55\d{10,11}$/.test(conversation.phone) && !policy.optedOut && !policy.finished && !previous?.existingReservationService,
+    existingReservationService: previous?.existingReservationService === true,
     optedOut: policy.optedOut,
     lastClientAt: Math.max(0, lastClientAt, previous?.lastClientAt || 0),
     sentAt: previous?.sentAt ?? null,
@@ -551,6 +599,15 @@ export const atualizarProgressoReservaSite = async (sessionId: string, ui: unkno
   };
   await persist(conversation);
   return conversation.bookingFollowup;
+});
+
+export const suspenderRetomadaComercialSite = async (sessionId: string) => mutate(sessionId, async () => {
+  await hydrate();
+  const conversation = conversations.get(sessionId);
+  if (!conversation?.bookingFollowup) return;
+  conversation.bookingFollowup.optedIn = false;
+  conversation.bookingFollowup.existingReservationService = true;
+  await persist(conversation);
 });
 
 export const registrarTentativaLembreteReservaSite = async (sessionId: string, sent: boolean, reason = "") => mutate(sessionId, async () => {

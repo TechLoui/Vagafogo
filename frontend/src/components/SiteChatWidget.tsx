@@ -48,7 +48,8 @@ type StoredChat = {
 
 type SiteManualMessage = {
   id: string;
-  from: "agent";
+  from: "agent" | "bot";
+  sourceId?: string;
   text: string;
   ts: number;
 };
@@ -733,11 +734,13 @@ export function SiteChatWidget() {
         const incoming = Array.isArray(result.messages) ? result.messages : [];
         if (!incoming.length) return;
         manualCursorRef.current = Math.max(manualCursorRef.current, ...incoming.map((message) => Number(message.ts) || 0));
-        if (incoming.some((message) => message.from === "agent")) setExpiresAt(Date.now() + STORAGE_TTL_MS);
+        const isAsyncReply = (message: SiteManualMessage) => message.from === "agent"
+          || message.from === "bot" && message.sourceId?.startsWith("rescheduling-result:");
+        if (incoming.some(isAsyncReply)) setExpiresAt(Date.now() + STORAGE_TTL_MS);
         setMessages((current) => {
           const ids = new Set(current.map((message) => message.id));
           const additions = incoming
-            .filter((message) => message.from === "agent" && message.text && !ids.has(message.id))
+            .filter((message) => isAsyncReply(message) && message.text && !ids.has(message.id))
             .map((message): ChatMessage => ({
               id: message.id,
               role: "assistant",

@@ -20,7 +20,40 @@ const {
   removerConversaSite,
   serializarMensagemConversaSite,
   preservarEntregaRetomadaSite,
+  suspenderRetomadaComercialSite,
 } = require("../dist/services/siteChatConversations");
+
+test("confirmação assíncrona de remarcação chega ao polling sem repetir resposta normal do bot", () => {
+  const now = Date.now();
+  const messages = [
+    { id: "normal", from: "bot", text: "Aguardo a data", ts: now - 2 },
+    { id: "result", sourceId: "rescheduling-result:request1", from: "bot", text: "Sua reserva foi remarcada", ts: now - 1 },
+    { id: "manual", from: "agent", text: "Estamos à disposição", ts: now },
+  ];
+  assert.deepEqual(combinarMensagensSite(messages, [], 0, true, now).map((message) => message.id), ["result", "manual"]);
+});
+
+test("atendimento de reserva existente não reativa recuperação comercial após uma FAQ", async () => {
+  const sessionId = `site_reschedule_followup_${Date.now()}`;
+  const first = await registrarMensagemConversaSite(sessionId, { from: "client", text: "Quero alterar o horário da minha reserva", phone: "5562999000000" });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "O pedido aguarda autorização do Uirá." });
+  await atualizarProgressoReservaSite(sessionId, null, first.message.ts);
+  await suspenderRetomadaComercialSite(sessionId);
+  const faq = await registrarMensagemConversaSite(sessionId, { from: "client", text: "Qual o horário de funcionamento?" });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Consulte os horários oficiais." });
+  await atualizarProgressoReservaSite(sessionId, null, faq.message.ts);
+  let conversation = await obterConversaSite(sessionId);
+  assert.equal(conversation.bookingFollowup.existingReservationService, true);
+  assert.equal(conversation.bookingFollowup.optedIn, false);
+  assert.equal(estadoRetomadaSite(conversation, faq.message.ts + 16 * 60_000), "atendimento_pausado");
+  const purchase = await registrarMensagemConversaSite(sessionId, { from: "client", text: "Quero fazer uma nova reserva" });
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Qual experiência deseja?" });
+  await atualizarProgressoReservaSite(sessionId, { step: "experiences" }, purchase.message.ts);
+  conversation = await obterConversaSite(sessionId);
+  assert.equal(conversation.bookingFollowup.existingReservationService, false);
+  assert.equal(conversation.bookingFollowup.optedIn, true);
+  await removerConversaSite(sessionId);
+});
 
 test("nao grava campos opcionais indefinidos nas mensagens do Firestore", () => {
   const plain = serializarMensagemConversaSite({

@@ -36,6 +36,7 @@ type FollowupCandidate = {
     offerName: string;
     optedIn: boolean;
     optedOut?: boolean;
+    existingReservationService?: boolean;
     lastClientAt: number;
     sentAt: number | null;
     lastAttemptAt: number | null;
@@ -54,6 +55,7 @@ export const estadoRetomadaSite = (conversation: FollowupCandidate, now = Date.n
   const progress = conversation.bookingFollowup;
   if (!progress) return "sem_progresso";
   if (progress.sentAt) return "enviada";
+  if (progress.existingReservationService) return "atendimento_pausado";
   if (!/^55\d{10,11}$/.test(conversation.phone)) return "sem_whatsapp";
   if (!progress.optedIn) return "sem_autorizacao";
   if (progress.optedOut) return "sem_autorizacao";

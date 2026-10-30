@@ -23,6 +23,7 @@ import {
 import { prepararBoasVindasWhatsapp } from "../services/whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
 import { enfileirarAlertaAtendimentoHumano, iniciarProcessadorAlertasAtendimentoHumano } from "../services/whatsappHumanHandoffAlerts";
+import { solicitarRemarcacaoReserva, decidirRemarcacaoReserva, obterContextoRemarcacao, iniciarProcessadorRemarcacoes } from "../services/reservationRescheduling";
 import {
   atualizarCampanhaWhatsapp,
   cancelarCampanhaWhatsapp,
@@ -66,6 +67,7 @@ import { agentServiceConfigured, requestAgentService, type AgentResponse } from 
 import {
   alterarModoConversaSite,
   atualizarProgressoReservaSite,
+  suspenderRetomadaComercialSite,
   isSiteConversationJid,
   listarConversasSite,
   limparConversasSiteExpiradas,
@@ -345,6 +347,10 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const lastSiteMessage = existingConversation?.messages[existingConversation.messages.length - 1];
+  const reschedulingContext = await obterContextoRemarcacao({ sessionId, telefone: telefone || existingConversation?.phone || "" })
+    .catch(() => ({ pendente: false, contexto: undefined }));
+  const collectingReservationIdentity = reschedulingContext.pendente
+    && ["cpf", "reserva"].includes(String(reschedulingContext.contexto?.proximoCampo || ""));
   const awaitingName = lastSiteMessage?.from === "bot" && isSiteNamePrompt(lastSiteMessage.text);
   // registrarMensagemConversaSite mutates the cached conversation in place. Capture
   // the identity that existed before this client message for the next decision.
@@ -363,7 +369,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const retryingWhatsapp = existingConversation?.whatsappContinuation?.status === "failed"
     && solicitouNovaTentativaWhatsapp(mensagem);
   const telefoneInformado = telefone || (
-    !existingConversation?.phone && (nome || wantsWhatsapp || collectingWhatsapp)
+    !collectingReservationIdentity && !existingConversation?.phone && (nome || wantsWhatsapp || collectingWhatsapp)
       && (!ownerEscalation || /\bmeu (?:whatsapp|telefone|numero|número)\b/i.test(mensagem))
       && (!collectingOwnerPhone || suppliedOwnerPhone)
       ? telefoneContinuacaoWhatsapp(mensagem) : ""
@@ -522,6 +528,8 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       pergunta: identity.pendingRequest || mensagem,
       session_id: sessionId,
       mode: "site",
+      remarcacao_pendente: reschedulingContext.pendente === true,
+      remarcacao_contexto: reschedulingContext.contexto,
       telefone: contactPhone,
       nome_contato: contactName,
       historico,
@@ -628,6 +636,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     });
   }
   await atualizarProgressoReservaSite(sessionId, body.booking_ui, storedClientMessage.message.ts);
+  if (body.remarcacao && typeof body.remarcacao === "object") await suspenderRetomadaComercialSite(sessionId);
 
   res.json({
     resposta,
@@ -1181,6 +1190,24 @@ app.post('/internal/agente/ferramentas/consultar-reserva', exigirServicoAgente, 
   } catch (error) {
     res.status(503).json({ error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+app.post('/internal/agente/ferramentas/remarcacao', exigirServicoAgente, async (req, res) => {
+  try { res.json(await solicitarRemarcacaoReserva(req.body ?? {})); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'RESCHEDULING_UNAVAILABLE';
+    res.status(message.includes('IDENTITY') || message.includes('SESSION') ? 400 : 503).json({ error: message });
+  }
+});
+
+app.post('/internal/agente/remarcacoes/contexto', exigirServicoAgente, async (req, res) => {
+  try { res.json(await obterContextoRemarcacao(req.body ?? {})); }
+  catch { res.status(503).json({ error: 'RESCHEDULING_CONTEXT_UNAVAILABLE' }); }
+});
+
+app.post('/internal/agente/remarcacoes/decidir', exigirServicoAgente, async (req, res) => {
+  try { res.json(await decidirRemarcacaoReserva(req.body ?? {})); }
+  catch { res.status(503).json({ error: 'RESCHEDULING_DECISION_UNAVAILABLE' }); }
 });
 
 app.post('/internal/agente/operadores/contexto', exigirServicoAgente, async (req, res) => {
@@ -1905,6 +1932,7 @@ app.listen(port, async () => {
   siteChatCleanupTimer.unref();
   iniciarProcessadorLembretesReservaSite();
   iniciarProcessadorAlertasAtendimentoHumano();
+  iniciarProcessadorRemarcacoes();
   iniciarLimpezaAutomaticaReservas();
   try {
     const migrada = await garantirConfiguracaoAutomacoesWhatsapp();
