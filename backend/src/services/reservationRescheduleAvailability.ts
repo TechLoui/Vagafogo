@@ -31,10 +31,17 @@ export type RescheduleAvailability = {
   participantes: number;
   pacotes: ReschedulePackageAvailability[];
 };
+export type RescheduleCollections = { reservas: string; pacotes: string; combos: string; disponibilidade: string };
 export type RescheduleAvailabilityDependencies = {
   db?: FirebaseFirestore.Firestore | null;
   transaction?: FirebaseFirestore.Transaction;
   now?: () => number;
+  /** Trusted caller configuration; never populate these names from chat/tool input. */
+  collections?: RescheduleCollections;
+};
+
+const DEFAULT_COLLECTIONS: RescheduleCollections = {
+  reservas: "reservas", pacotes: "pacotes", combos: "combos", disponibilidade: "disponibilidade",
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -120,12 +127,15 @@ const normalizedTarget = (target: RescheduleTarget): RescheduleTarget => {
 const loadAvailability = async (reservaId: string, rawTarget: RescheduleTarget, dependencies: RescheduleAvailabilityDependencies) => {
   if (!validId(reservaId)) throw new Error("RESCHEDULE_RESERVATION_ID_INVALID");
   const target = normalizedTarget(rawTarget);
+  const collections = dependencies.collections ?? DEFAULT_COLLECTIONS;
+  if (Object.keys(DEFAULT_COLLECTIONS).some((key) => typeof collections[key as keyof RescheduleCollections] !== "string"
+    || !validId(collections[key as keyof RescheduleCollections]))) throw new Error("RESCHEDULE_COLLECTIONS_INVALID");
   const db = dependencies.db === undefined ? obterFirestoreAdmin() : dependencies.db;
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
   const tx = dependencies.transaction;
   const readDoc = (reference: FirebaseFirestore.DocumentReference) => tx ? tx.get(reference) : reference.get();
   const readQuery = (query: FirebaseFirestore.Query) => tx ? tx.get(query) : query.get();
-  const reservationRef = db.collection("reservas").doc(reservaId);
+  const reservationRef = db.collection(collections.reservas).doc(reservaId);
   const original = await readDoc(reservationRef);
   if (!original.exists) throw new Error("RESCHEDULE_RESERVATION_NOT_FOUND");
   const reservation = original.data()!;
@@ -146,13 +156,13 @@ const loadAvailability = async (reservaId: string, rawTarget: RescheduleTarget, 
   if (reservation.naoConsomeDisponibilidade === true) result.motivos.push("RESERVA_EXCECAO_CAPACIDADE");
   if (!validDate(before.data) || (own(reservation, "data") && own(reservation, "Data") && reservation.data !== reservation.Data)) result.motivos.push("RESERVA_DATA_INCONSISTENTE");
   if (result.participantes <= 0) result.motivos.push("RESERVA_PARTICIPANTES_INVALIDOS");
-  if (result.motivos.length) return { result, reservation, reservationRef, db, dayRef: db.collection("disponibilidade").doc(target.data) };
+  if (result.motivos.length) return { result, reservation, reservationRef, db, dayRef: db.collection(collections.disponibilidade).doc(target.data) };
 
-  const dayRef = db.collection("disponibilidade").doc(target.data);
+  const dayRef = db.collection(collections.disponibilidade).doc(target.data);
   const [catalogSnapshot, comboSnapshot, daySnapshot, currentSnapshot, legacySnapshot] = await Promise.all([
-    readQuery(db.collection("pacotes")), readQuery(db.collection("combos")), readDoc(dayRef),
-    readQuery(db.collection("reservas").where("data", "==", target.data)),
-    readQuery(db.collection("reservas").where("Data", "==", target.data)),
+    readQuery(db.collection(collections.pacotes)), readQuery(db.collection(collections.combos)), readDoc(dayRef),
+    readQuery(db.collection(collections.reservas).where("data", "==", target.data)),
+    readQuery(db.collection(collections.reservas).where("Data", "==", target.data)),
   ]);
   const packages = new Map(catalogSnapshot.docs.map((document) => [document.id, document.data()]));
   const combos = new Map(comboSnapshot.docs.map((document) => [document.id, document.data()]));

@@ -4,9 +4,13 @@ import { canonicalLeadPhone, cpfValidoParaReservaAgente, reservaClientePodeConsu
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { registrarResultadoRemarcacaoSite } from "./siteChatConversations";
 import { telefoneDoUira } from "./siteOwnerEscalation";
-import { consultarRemarcacaoDisponivel, aplicarRemarcacaoAutorizada, type RescheduleTarget } from "./reservationRescheduleAvailability";
+import { consultarRemarcacaoDisponivel, aplicarRemarcacaoAutorizada, type RescheduleTarget, type RescheduleCollections } from "./reservationRescheduleAvailability";
 
 export const RESCHEDULE_REQUESTS = "crm_agent_reschedule_requests";
+export const RESCHEDULE_TEST_COLLECTIONS: RescheduleCollections = Object.freeze({
+  reservas: "crm_agent_reschedule_test_reservas", pacotes: "crm_agent_reschedule_test_pacotes",
+  combos: "crm_agent_reschedule_test_combos", disponibilidade: "crm_agent_reschedule_test_disponibilidade",
+});
 const INTAKES = "crm_agent_reschedule_intakes";
 const LOCKS = "crm_agent_reschedule_locks";
 const RECEIPTS = "crm_agent_reschedule_decisions";
@@ -24,6 +28,8 @@ type Dependencies = {
   send?: typeof enviarMensagemTransacionalPeloAgente;
   siteMessage?: typeof registrarResultadoRemarcacaoSite;
   processImmediately?: boolean;
+  /** Server-only test harness option. Never accepted from the customer/tool payload. */
+  testSourceId?: string;
 };
 type IntakeInput = {
   sessionId?: unknown; telefone?: unknown; canal?: unknown; nomeContato?: unknown;
@@ -33,6 +39,20 @@ type IntakeInput = {
 };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const clean = (value: unknown, max = 160) => String(value ?? "").trim().slice(0, max);
+const testScope = (sourceId: string) => {
+  if (!/^[A-Za-z0-9_-]{12,100}$/.test(sourceId)) throw new Error("RESCHEDULING_TEST_SCOPE_INVALID");
+  return { testMode: true, testNamespace: "v1", sandboxSourceId: sourceId };
+};
+const requestCollections = (request: Data): RescheduleCollections | undefined => {
+  if (!request.testMode && !request.testNamespace && !request.sandboxSourceId) return undefined;
+  const sourceId = String(request.sandboxSourceId || "");
+  testScope(sourceId);
+  if (request.testMode !== true || request.testNamespace !== "v1"
+    || request.reservaId !== `qa-reschedule-${hash(sourceId).slice(0, 20)}`
+    || request.customerPhone !== OWNER_PHONE || request.siteSessions?.length) throw new Error("RESCHEDULING_TEST_SCOPE_INVALID");
+  return RESCHEDULE_TEST_COLLECTIONS;
+};
+const intakeCollection = (deps: Dependencies) => deps.testSourceId === undefined ? INTAKES : `${INTAKES}_test`;
 const millis = (value: any): number => value?.toMillis ? value.toMillis() : value instanceof Date ? value.getTime() : Number(value) || 0;
 const database = (deps: Dependencies) => {
   const db = deps.db === undefined ? obterFirestoreAdmin() : deps.db;
@@ -60,11 +80,11 @@ const missingPrompt = (field: string) => field === "cpf" ? "Informe o CPF do tit
     : field === "reserva" ? "Informe a data atual ou o código da reserva que deseja alterar."
       : field === "novoHorario" ? "Qual o novo horário desejado?"
         : "Para qual data deseja mudar? Se quiser alterar apenas o horário, informe o novo horário.";
-const resultText = (request: Data) => request.status === "approved"
+const resultText = (request: Data) => `${request.testMode ? "🧪 TESTE ISOLADO — nenhuma reserva real foi alterada.\n" : ""}${request.status === "approved"
   ? `Sua reserva foi remarcada no sistema para ${scheduleLabel(request.depois, request.timeLabels)}. A experiência e os participantes foram mantidos. 🌿`
   : request.status === "rejected"
     ? `A alteração não foi autorizada e este pedido não remarcou sua reserva. ${CALL}`
-    : `Não foi possível concluir a remarcação solicitada. Sua reserva não foi alterada por este pedido. ${CALL}`;
+    : `Não foi possível concluir a remarcação solicitada. Sua reserva não foi alterada por este pedido. ${CALL}`}`;
 const publicStatus = (request: Data) => request.status === "awaiting_owner" ? "aguardando_autorizacao"
   : request.status === "approved" ? "aprovada" : request.status === "rejected" ? "negada" : "exige_atendimento";
 const requestResponse = (request: Data) => response(publicStatus(request), request.status === "awaiting_owner"
@@ -83,7 +103,8 @@ export const obterContextoRemarcacao = async (input: { sessionId?: unknown; tele
   const phone = canonicalLeadPhone(input.telefone);
   if (!/^site_[A-Za-z0-9_-]{12,110}$|^whatsapp_\d{10,15}$/.test(sessionId)) return { pendente: false };
   const db = database(deps);
-  const snapshot = await db.collection(INTAKES).doc(hash(sessionId)).get();
+  if (deps.testSourceId !== undefined) testScope(deps.testSourceId);
+  const snapshot = await db.collection(intakeCollection(deps)).doc(hash(sessionId)).get();
   if (!snapshot.exists) return { pendente: false };
   const intake = snapshot.data()!;
   if ((intake.requesterPhone && intake.requesterPhone !== phone) || millis(intake.expiresAt) <= (deps.now || Date.now)()) return { pendente: false };
@@ -105,11 +126,16 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
   const channel = clean(input.canal);
   const requesterPhone = canonicalLeadPhone(input.telefone);
   if (!sessionValid(sessionId, requesterPhone, channel)) throw new Error("RESCHEDULING_SESSION_INVALID");
+  const sandbox = deps.testSourceId === undefined ? null : testScope(deps.testSourceId);
+  const collections = sandbox ? RESCHEDULE_TEST_COLLECTIONS : undefined;
+  if (sandbox && (requesterPhone !== OWNER_PHONE || channel !== "whatsapp"
+    || input.codigo !== `qa-reschedule-${hash(deps.testSourceId!).slice(0, 20)}`)) throw new Error("RESCHEDULING_TEST_SCOPE_INVALID");
+  const reservationsCollection = collections?.reservas || "reservas";
   if (input.consultarPendente) {
     const context = await obterContextoRemarcacao(input, deps);
     return context.contexto || response("inexistente", "Não há pedido de remarcação neste atendimento.");
   }
-  const intakeRef = db.collection(INTAKES).doc(hash(sessionId));
+  const intakeRef = db.collection(intakeCollection(deps)).doc(hash(sessionId));
   const stored = await intakeRef.get();
   let intake: Data = stored.exists && millis(stored.data()?.expiresAt) > now ? { ...stored.data() } : {};
   if (intake.requesterPhone && intake.requesterPhone !== requesterPhone) throw new Error("RESCHEDULING_IDENTITY_MISMATCH");
@@ -167,14 +193,14 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
     if (cpf) {
       if (!cpfValidoParaReservaAgente(cpf)) return missing("cpf", "Informe um CPF válido do titular para eu localizar a reserva.");
       const formatted = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
-      const found = await Promise.all([cpf, formatted].map((value) => db.collection("reservas").where("cpf", "==", value).limit(31).get()));
+      const found = await Promise.all([cpf, formatted].map((value) => db.collection(reservationsCollection).where("cpf", "==", value).limit(31).get()));
       const matches = new Map(found.flatMap((snapshot) => snapshot.docs).filter((doc) => reservaClientePodeConsultar(doc.data(), { canal: "site", cpf })).map((doc) => [doc.id, doc.data()]));
       if (matches.size > 30) return missing("reserva", "Informe o código da reserva que deseja alterar para eu localizar o pedido correto.");
       intake.candidateIds = [...matches.keys()];
       intake.cpfDigest = hash(cpf);
     }
     if (!intake.cpfDigest || !Array.isArray(intake.candidateIds)) return missing("cpf", "Para localizar a reserva que deseja remarcar, informe somente o CPF do titular.");
-    const candidateDocs = await Promise.all(intake.candidateIds.map((id: string) => db.collection("reservas").doc(id).get()));
+    const candidateDocs = await Promise.all(intake.candidateIds.map((id: string) => db.collection(reservationsCollection).doc(id).get()));
     const candidates = candidateDocs.filter((doc) => doc.exists && hash(clean(doc.data()?.cpf).replace(/\D/g, "")) === intake.cpfDigest)
       .filter((doc) => !reservationId || doc.id === reservationId)
       .filter((doc) => !intake.dataAtual || clean(doc.data()?.data, 10) === intake.dataAtual);
@@ -187,7 +213,7 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
   } else if (!/^[A-Za-z0-9_-]{8,100}$/.test(reservationId)) {
     return missing("codigo", "Para localizar a reserva que deseja remarcar, informe o código da reserva.");
   }
-  const reservationDoc = await db.collection("reservas").doc(reservationId).get();
+  const reservationDoc = await db.collection(reservationsCollection).doc(reservationId).get();
   const reservation = reservationDoc.data() || {};
   const owns = channel === "site" ? intake.candidateIds.includes(reservationId)
     && hash(clean(reservation.cpf).replace(/\D/g, "")) === intake.cpfDigest
@@ -204,18 +230,19 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
   const target: RescheduleTarget = { data: intake.novaData || clean(reservation.data, 10),
     ...(intake.novoHorario ? { horario: intake.novoHorario } : {}),
     ...(intake.horariosPorPacote ? { horariosPorPacote: intake.horariosPorPacote } : {}) };
-  const preview = await (deps.preview || consultarRemarcacaoDisponivel)(reservationId, target, { db, now: () => now });
+  const preview = await (deps.preview || consultarRemarcacaoDisponivel)(reservationId, target, { db, now: () => now, ...(collections ? { collections } : {}) });
   await save();
   if (!preview.disponivel) {
     if (preview.status === "exige_atendimento") return response("exige_atendimento", `Essa reserva precisa de conferência por um atendente antes da alteração. ${CALL}`);
     return missing("novaData", "Não encontrei disponibilidade para essa alteração. Sua reserva atual foi mantida. Qual outra data ou horário gostaria que eu consultasse?");
   }
   const phone = canonicalLeadPhone(preview.telefone);
+  if (sandbox && phone !== OWNER_PHONE) throw new Error("RESCHEDULING_TEST_SCOPE_INVALID");
   if (!/^55[1-9]\d{9,10}$/.test(phone)) return response("exige_atendimento", `Não consegui confirmar um WhatsApp válido na reserva para enviar o resultado. ${CALL}`);
   const dedupKey = hash(`${reservationId}\0${preview.fingerprint}\0${JSON.stringify(preview.depois)}`);
   const id = randomUUID();
   const ref = db.collection(RESCHEDULE_REQUESTS).doc(id);
-  const lockRef = db.collection(LOCKS).doc(hash(reservationId));
+  const lockRef = db.collection(sandbox ? `${LOCKS}_test` : LOCKS).doc(hash(reservationId));
   const request = await db.runTransaction(async (transaction) => {
     const lock = await transaction.get(lockRef);
     const activeId = lock.data()?.requestId;
@@ -236,7 +263,7 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
       customerName: clean(preview.nome, 120), customerPhone: phone, activity: clean(preview.atividade, 160), participants: preview.participantes,
       timeLabels: Object.fromEntries(preview.pacotes.map((pack) => [pack.id, clean(pack.nome, 80)])),
       siteSessions: channel === "site" ? [sessionId] : [], createdAt: new Date(now), updatedAt: new Date(now), expiresAt: new Date(now + DAY),
-      ownerNotice: noticePending(), clientNotice: null, notificationsPending: true,
+      ownerNotice: noticePending(), clientNotice: null, notificationsPending: true, ...(sandbox || {}),
     };
     transaction.set(ref, value);
     transaction.set(lockRef, { requestId: id, updatedAt: new Date(now) });
@@ -281,6 +308,7 @@ export const decidirRemarcacaoReserva = async (input: { telefoneOperador?: unkno
     const [receipt, snapshot] = await Promise.all([transaction.get(receiptRef), transaction.get(ref)]);
     if (receipt.exists) return receipt.data()!.result;
     const request = snapshot.data()!;
+    const collections = requestCollections(request);
     let status = request.status;
     if (status === "awaiting_owner") {
       if (millis(request.expiresAt) <= now) status = "expired";
@@ -288,21 +316,21 @@ export const decidirRemarcacaoReserva = async (input: { telefoneOperador?: unkno
       else {
         try {
           const applied = await (deps.apply || aplicarRemarcacaoAutorizada)(request.reservaId, request.target,
-            { db, transaction, expectedFingerprint: request.fingerprint, now: () => now });
+            { db, transaction, expectedFingerprint: request.fingerprint, now: () => now, ...(collections ? { collections } : {}) });
           status = applied.aplicada ? "approved" : "unavailable";
         } catch (error) {
           if (!(error instanceof Error) || error.message !== "RESCHEDULE_RESERVATION_NOT_FOUND") throw error;
           status = "unavailable";
         }
       }
-      transaction.set(ref, { status, decidedAt: new Date(now), decidedBy: OWNER_PHONE, updatedAt: new Date(now),
+      transaction.set(ref, { status, decidedAt: new Date(now), decidedBy: OWNER_PHONE, decisionSourceMessageId: sourceId, updatedAt: new Date(now),
         clientNotice: noticePending(), notificationsPending: true }, { merge: true });
     }
-    const result = { handled: true, solicitacaoId: ref.id, resposta: status === "approved"
+    const result = { handled: true, solicitacaoId: ref.id, resposta: `${collections ? "🧪 TESTE ISOLADO — " : ""}${status === "approved"
       ? `${request.code}: remarcação salva no sistema para ${scheduleLabel(request.depois, request.timeLabels)}. O aviso ao cliente está na fila.`
       : status === "rejected" ? `${request.code}: pedido negado. O cliente será orientado a ligar pelo WhatsApp da equipe.`
-        : `${request.code}: este pedido não pode ser aplicado. A reserva não foi remarcada por esta decisão; o cliente deve falar com a equipe.` };
-    transaction.set(receiptRef, { result, requestId: ref.id, createdAt: new Date(now) });
+        : `${request.code}: este pedido não pode ser aplicado. A reserva não foi remarcada por esta decisão; o cliente deve falar com a equipe.`}` };
+    transaction.set(receiptRef, { result, requestId: ref.id, sourceMessageId: sourceId, createdAt: new Date(now) });
     return result;
   });
   startNotifications(ref.id, deps);
@@ -310,7 +338,9 @@ export const decidirRemarcacaoReserva = async (input: { telefoneOperador?: unkno
 };
 
 export const mensagemAutorizacaoRemarcacao = (request: Data) => [
-  `🔁 Autorizar remarcação — ${request.code}`, `Cliente: ${request.customerName || "Titular da reserva"}`,
+  `🔁 Autorizar remarcação — ${request.code}`,
+  ...(request.testMode ? ["🧪 TESTE ISOLADO — não ocupa vagas nem altera reservas reais. O resultado do teste também será enviado a você."] : []),
+  `Cliente: ${request.customerName || "Titular da reserva"}`,
   `${request.activity || "Visita"} • ${Number(request.participants) || 0} pessoa(s)`,
   `Atual: ${scheduleLabel(request.antes, request.timeLabels)}`, `Solicitado: ${scheduleLabel(request.depois, request.timeLabels)}`,
   "", "1 — autorizar | 2 — negar", "Se houver mais de um pedido, cite esta mensagem ou responda 1/2 seguido do código.",
@@ -344,6 +374,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
   try {
     const current = (await ref.get()).data()!;
     if (current.status !== acquired.request.status) return false;
+    requestCollections(current);
     if (acquired.phase === "ownerNotice") {
       const sent = await (deps.send || enviarMensagemTransacionalPeloAgente)(OWNER_PHONE, mensagemAutorizacaoRemarcacao(current), `rescheduling-owner:${id}`, "Uirá", { tipoDisparo: "remarcacao_autorizacao" });
       delivered = sent.enviado;
@@ -365,6 +396,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
       const sent = whatsappSentAt ? { enviado: true, motivo: "", retryAfterMs: 0 }
         : await (deps.send || enviarMensagemTransacionalPeloAgente)(current.customerPhone, text, `rescheduling-customer:${id}`, current.customerName, { tipoDisparo: "remarcacao_resultado" });
       if (sent.enviado && !whatsappSentAt) whatsappSentAt = new Date(clock());
+      if ("messageId" in sent) messageId = String(sent.messageId || "");
       delivered = sent.enviado && !siteFailed;
       error = siteFailed ? "SITE_NOTIFICATION_UNAVAILABLE" : sent.motivo || "";
       retryAfter = Number(sent.retryAfterMs) || 0;
@@ -382,7 +414,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
         sentAt: delivered ? new Date(clock()) : notice.sentAt, lastError: delivered ? null : clean(error, 200),
         nextAttemptAt: delivered ? 0 : clock() + (retryAfter || Math.min(10 * 60_000, 30_000 * 2 ** Math.min(attempts, 4))) };
       const patch: Data = { [acquired.phase]: updated, notificationLeaseUntil: 0, updatedAt: new Date(clock()) };
-      if (acquired.phase === "clientNotice") Object.assign(updated, { whatsappSentAt, siteSentSessions });
+      if (acquired.phase === "clientNotice") Object.assign(updated, { whatsappSentAt, siteSentSessions, ...(messageId ? { messageId } : {}) });
       if (delivered && acquired.phase === "ownerNotice" && messageId) patch.ownerMessageId = messageId;
       if (acquired.phase === "ownerNotice" && !delivered && attempts >= MAX_ATTEMPTS && latest.status === "awaiting_owner") {
         patch.status = "failed";

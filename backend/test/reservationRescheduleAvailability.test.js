@@ -298,3 +298,60 @@ test("transação externa atualiza pedido e reserva juntos, sem leitura após pr
   assert.equal(memory.data("requests/approval").status, "applied");
   assert.equal(memory.data("reservas/original").data, target.data);
 });
+
+test("namespace de teste usa o mesmo core atômico sem consultar ou alterar reservas e vagas reais", async () => {
+  const collections = { reservas: "_TEST_reservas", pacotes: "_TEST_pacotes", combos: "_TEST_combos", disponibilidade: "_TEST_disponibilidade" };
+  const realReservation = original({ nome: "Cliente Real", data: target.data, horario: "11:00", horariosPorPacote: { brunch: "11:00" }, participantes: 8 });
+  const realDay = { fechado: true, remarcacoesRevision: 12 };
+  const sandboxReservation = original({ pacoteIds: [], comboId: "combo-teste" });
+  const memory = memoryDb({
+    "reservas/original": realReservation,
+    "pacotes/brunch": pack({ ativo: false, limite: 1 }),
+    "combos/combo-teste": { pacoteIds: ["outro-pacote"] },
+    "disponibilidade/2026-11-02": realDay,
+    "_TEST_reservas/original": sandboxReservation,
+    "_TEST_pacotes/brunch": pack({ limite: 3 }),
+    "_TEST_combos/combo-teste": { pacoteIds: ["brunch"] },
+    "_TEST_disponibilidade/2026-11-02": { remarcacoesRevision: 2 },
+    "requests/test-approval": { status: "pending" },
+  });
+  const deps = { ...memory.deps, collections };
+  const preview = await consultarRemarcacaoDisponivel("original", target, deps);
+  assert.equal(preview.disponivel, true);
+  assert.equal(preview.pacotes[0].capacidade, 3);
+  assert.equal(preview.pacotes[0].ocupadas, 0);
+  assert.equal(memory.writes.length, 0);
+  const result = await memory.db.runTransaction(async (transaction) => {
+    const requestRef = memory.db.collection("requests").doc("test-approval");
+    assert.equal((await transaction.get(requestRef)).data().status, "pending");
+    const applied = await aplicarRemarcacaoAutorizada("original", target, { ...deps, transaction, expectedFingerprint: preview.fingerprint });
+    transaction.set(requestRef, { status: applied.aplicada ? "applied" : "unavailable" }, { merge: true });
+    return applied;
+  });
+  assert.equal(result.aplicada, true);
+  assert.deepEqual(result.antes, preview.antes);
+  assert.deepEqual(result.depois, preview.depois);
+  assert.equal(memory.data("_TEST_reservas/original").data, target.data);
+  assert.equal(memory.data("_TEST_reservas/original").valor, sandboxReservation.valor);
+  assert.equal(memory.data("_TEST_disponibilidade/2026-11-02").remarcacoesRevision, 3);
+  assert.equal(memory.data("requests/test-approval").status, "applied");
+  assert.deepEqual(memory.data("reservas/original"), realReservation);
+  assert.deepEqual(memory.data("disponibilidade/2026-11-02"), realDay);
+  assert.equal(memory.writes.some((write) => /^(reservas|pacotes|combos|disponibilidade)\//.test(write.path)), false);
+
+  const changed = await consultarRemarcacaoDisponivel("original", { ...target, horario: "13:00" }, deps);
+  memory.seed("_TEST_reservas/original", { ...memory.data("_TEST_reservas/original"), nome: "Outro Titular Teste" });
+  const refused = await aplicarRemarcacaoAutorizada("original", { ...target, horario: "13:00" }, { ...deps, expectedFingerprint: changed.fingerprint });
+  assert.equal(refused.aplicada, false);
+  assert.deepEqual(refused.motivos, ["RESERVA_ALTERADA_DESDE_A_SOLICITACAO"]);
+  assert.deepEqual(memory.data("reservas/original"), realReservation);
+  assert.deepEqual(memory.data("disponibilidade/2026-11-02"), realDay);
+});
+
+test("namespace incompleto ou inválido falha fechado em vez de misturar coleções", async () => {
+  const memory = setup();
+  for (const collections of [{ reservas: "_TEST_reservas" }, { reservas: "_TEST_reservas", pacotes: "pacotes", combos: "combos", disponibilidade: "sub/collection" }]) {
+    await assert.rejects(() => consultarRemarcacaoDisponivel("original", target, { ...memory.deps, collections }), /RESCHEDULE_COLLECTIONS_INVALID/);
+  }
+  assert.equal(memory.writes.length, 0);
+});

@@ -24,6 +24,7 @@ import { prepararBoasVindasWhatsapp } from "../services/whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransactionalWhatsapp";
 import { enfileirarAlertaAtendimentoHumano, iniciarProcessadorAlertasAtendimentoHumano } from "../services/whatsappHumanHandoffAlerts";
 import { solicitarRemarcacaoReserva, decidirRemarcacaoReserva, obterContextoRemarcacao, iniciarProcessadorRemarcacoes } from "../services/reservationRescheduling";
+import { criarTesteRemarcacaoUira, consultarTesteRemarcacaoUira } from "../services/reservationRescheduleTest";
 import {
   atualizarCampanhaWhatsapp,
   cancelarCampanhaWhatsapp,
@@ -1208,6 +1209,25 @@ app.post('/internal/agente/remarcacoes/contexto', exigirServicoAgente, async (re
 app.post('/internal/agente/remarcacoes/decidir', exigirServicoAgente, async (req, res) => {
   try { res.json(await decidirRemarcacaoReserva(req.body ?? {})); }
   catch { res.status(503).json({ error: 'RESCHEDULING_DECISION_UNAVAILABLE' }); }
+});
+
+// Operational QA only; these routes are never exposed as agent/customer tools.
+app.post('/internal/agente/remarcacoes/teste', exigirServicoAgente, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { res.json(await criarTesteRemarcacaoUira(req.body ?? {})); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'RESCHEDULE_TEST_UNAVAILABLE';
+    res.status(/CONFIRMATION_REQUIRED|SOURCE_INVALID/.test(message) ? 400 : 503).json({ error: message });
+  }
+});
+
+app.get('/internal/agente/remarcacoes/teste/:id', exigirServicoAgente, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { res.json(await consultarTesteRemarcacaoUira(req.params.id)); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'RESCHEDULE_TEST_UNAVAILABLE';
+    res.status(message === 'RESCHEDULE_TEST_NOT_FOUND' ? 404 : message.includes('INVALID') ? 400 : 503).json({ error: message });
+  }
 });
 
 app.post('/internal/agente/operadores/contexto', exigirServicoAgente, async (req, res) => {
