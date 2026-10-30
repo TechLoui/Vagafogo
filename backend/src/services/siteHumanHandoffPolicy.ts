@@ -86,3 +86,76 @@ export const ofertaHumanaAutomaticaSemConfirmacao = (conversation: {
     previousMessages.slice(0, previousMessages.indexOf(message))))) return false;
   return true;
 };
+
+/** Recover only the old automatic handoff for a date/time change. An operator
+ * claim, explicit request for a person, cancellation or block stays in place. */
+export const intencaoRemarcacaoLegadaSite = (conversation: {
+  mode: string; updatedBy: string | null; handoffPending: boolean; controlUpdatedAt: number | null;
+  messages: ConversationMessage[];
+  whatsappContinuation?: { reason?: string; context?: string } | null;
+}, currentMessage: string): string | null => {
+  if (conversation.mode !== "human" || conversation.updatedBy !== "jatoba" || !conversation.handoffPending) return null;
+  const excludes = (text: string) => pediuAtendenteHumanoSite(text)
+    || /\b(?:cancelar|cancelamento|reembolso|estorno|objeto perdido|nao atende|nao atendem|nao consigo ligar)\b/.test(plain(text))
+    || /\b(?:alterar|mudar|trocar|corrigir)\s+(?:(?:o|a|os|as|meu|minha|meus|minhas|de|do|da)\s+)*(?:nome|titular|cpf|participantes|quantidade|experiencia|pacote|combo)\b/.test(plain(text))
+    || /\b(?:alterar|mudar|trocar)\b.{0,35}\breserva\b.{0,30}\b(?:para|por) (?:outro |outra |o |a |um |uma )?(?:pacote|combo|experiencia)\b/.test(plain(text));
+  if (excludes(currentMessage)) return null;
+  if (conversation.messages.some((message) => message.from === "agent"
+    && Number(message.ts || 0) >= Number(conversation.controlUpdatedAt || 0))) return null;
+  const history = conversation.messages.slice(-30);
+  const clients = history.filter((message) => message.from === "client");
+  const concrete = (text: string) => {
+    const value = plain(text);
+    if (excludes(text) || /\b(?:politica|prazo|multa|regra|se eu|caso eu|se precisar|saber se|entender se)\b/.test(value)
+      || /\bnao (?:quero|preciso|desejo|gostaria|queria)\b/.test(value)) return false;
+    return /\b(?:quero|preciso|gostaria|queria|desejo|pode|podem|poderia|poderiam)\b.{0,35}\b(?:remarcar|reagendar)\b.{0,60}\b(?:reserva|data|dia|horario)\b/.test(value)
+      || /^(?:remarcar|remarca|remarque|reagendar|reagende)\b.{0,65}\b(?:reserva|data|dia|horario)\b/.test(value)
+      || /\b(?:quero|preciso|gostaria|queria|desejo|pode|podem|poderia|poderiam)\b.{0,35}\b(?:alterar|mudar|trocar)\b.{0,60}\b(?:data|dia|horario|hora)\b/.test(value)
+      || /^(?:alterar|altere|mudar|mude|trocar|troque)\b.{0,65}\b(?:data|dia|horario|hora)\b/.test(value)
+      || /\b(?:alterar|mudar|trocar)\b.{0,60}\breserva\b.{0,30}\bpara (?:o dia )?\d{1,2} \d{1,2}\b/.test(value)
+      || /\b(?:andamento|status|retorno|novidade|autorizacao|liberada|aprovada)\b.{0,70}\b(?:remarcacao|reagendamento|alteracao|troca|mudanca)\b/.test(value)
+      || /\b(?:remarcacao|reagendamento|alteracao de data|alteracao de horario)\b.{0,70}\b(?:andamento|status|retorno|novidade|autorizacao|liberada|aprovada)\b/.test(value);
+  };
+  const candidates = [...clients].reverse().filter((message) => concrete(message.text));
+  const candidate = candidates.find((message) => /\b(?:alterar|altere|mudar|mude|trocar|troque|remarcar|remarca|remarque|reagendar|reagende)\b/.test(plain(message.text))) || candidates[0];
+  if (!candidate) return null;
+  const candidateIndex = history.indexOf(candidate);
+  if (history.slice(candidateIndex + 1).some((message, index) => message.from === "client"
+    && (excludes(message.text) || confirmouOfertaHumanaSite(message.text, history.slice(0, candidateIndex + 1 + index))))) return null;
+  const target = alvoRemarcacaoLegadaSite(candidate.text);
+  let suppliedAfterRequest = false;
+  for (let index = candidateIndex + 1; index < history.length; index++) {
+    const item = history[index];
+    if (item.from !== "client") continue;
+    const raw = item.text.trim();
+    if (!/^(?:(?:para|pra|pro|dia|as|às)\s+)?(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}(?:\/\d{4})?|\d{1,2}(?::[0-5]\d|h(?:[0-5]\d)?))(?:\s*(?:as|às)?\s*\d{1,2}(?::[0-5]\d|h(?:[0-5]\d)?))?[.!]?$/i.test(raw)) continue;
+    const previousBot = [...history.slice(0, index)].reverse().find((message) => message.from === "bot");
+    if (!previousBot || !/\b(?:qual|que)\b.{0,30}\b(?:data|dia|horario|hora)\b/.test(plain(previousBot.text))) continue;
+    const collected = alvoRemarcacaoLegadaSite(`Quero remarcar para ${raw}`);
+    if (collected.novaData || collected.novoHorario) { Object.assign(target, collected); suppliedAfterRequest = true; }
+  }
+  return suppliedAfterRequest ? `${candidate.text}\nAlvo informado pelo cliente: para ${target.novaData || ""}${target.novoHorario ? ` às ${target.novoHorario}` : ""}` : candidate.text;
+};
+
+/** Preserve explicit requested dates/hours from the customer's legacy request.
+ * A status question never supplies a new target; ambiguous values are recollected. */
+export const alvoRemarcacaoLegadaSite = (message: string, now = Date.now()): { novaData?: string; novoHorario?: string } => {
+  const value = String(message).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!/\b(?:alterar|altere|mudar|mude|trocar|troque|remarcar|remarque|reagendar|reagende)\b/.test(value)
+    || /\b(?:andamento|status|retorno|novidade|saber se|entender se)\b/.test(value)) return {};
+  const parts = value.split(/\b(?:para|pra|pro)\b/);
+  const targetText = parts.length > 1 ? parts[parts.length - 1] : value;
+  const dates = [...targetText.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b|\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g)];
+  const result: { novaData?: string; novoHorario?: string } = {};
+  if (dates.length === 1) {
+    const match = dates[0];
+    const year = match[1] || match[6] || new Intl.DateTimeFormat("en", { timeZone: "America/Sao_Paulo", year: "numeric" }).format(now);
+    const date = `${year}-${(match[2] || match[5]).padStart(2, "0")}-${(match[3] || match[4]).padStart(2, "0")}`;
+    if (Number.isFinite(Date.parse(`${date}T12:00:00Z`)) && new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) === date) result.novaData = date;
+  }
+  const times = [...targetText.matchAll(/\b(\d{1,2})(?::([0-5]\d)|h([0-5]\d)?)(?!\d)/g)];
+  if (times.length === 1 && Number(times[0][1]) < 24) {
+    result.novoHorario = `${times[0][1].padStart(2, "0")}:${times[0][2] || times[0][3] || "00"}`;
+  }
+  return result;
+};

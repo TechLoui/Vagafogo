@@ -165,14 +165,17 @@ export const processarContinuacaoWhatsappSite = async (input: {
       await salvarContinuacaoWhatsappSite(input.sessionId, continuation);
       if (!continuation.sentAt) {
         try {
+          const outboundText = mensagemContinuacaoWhatsapp(conversation.name, continuation.context, continuation.requestedHuman, continuation.reason);
           const result = await (dependencies.send || enviarMensagemTransacionalPeloAgente)(
             conversation.phone,
-            mensagemContinuacaoWhatsapp(conversation.name, continuation.context, continuation.requestedHuman, continuation.reason),
-            continuation.requestId, conversation.name, { tipoDisparo: "continuacao_site" },
+            outboundText,
+            continuation.requestId, conversation.name, { tipoDisparo: "continuacao_site", siteSessionIds: [input.sessionId] },
           );
           if (result.enviado) {
             continuation.sentAt = Date.now();
             continuation.gatewayJid = result.jid || "";
+            continuation.sentText = outboundText;
+            continuation.sentRequestedHuman = continuation.requestedHuman;
           } else {
             continuation.lastError = result.motivo || "envio_nao_confirmado";
           }

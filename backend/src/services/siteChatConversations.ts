@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { isSitePhonePrompt, normalizeSiteVisitorName } from "./siteChatIdentity";
-import { ofertaHumanaAutomaticaSemConfirmacao } from "./siteHumanHandoffPolicy";
+import { ofertaHumanaAutomaticaSemConfirmacao, intencaoRemarcacaoLegadaSite } from "./siteHumanHandoffPolicy";
 import { politicaContatoRetomadaSite } from "./siteFollowupContactPolicy";
 
 const COLLECTION = process.env.SITE_CHAT_CONVERSATIONS_COLLECTION?.trim() || "crm_agent_site_conversations";
@@ -65,6 +65,8 @@ export type SiteWhatsAppContinuation = {
   lastAttemptAt: number | null;
   lastError: string | null;
   gatewayJid: string;
+  sentText?: string;
+  sentRequestedHuman?: boolean;
 };
 
 type SiteConversation = {
@@ -221,6 +223,8 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       lastAttemptAt: rawContinuation.lastAttemptAt ? normalizeTimestamp(rawContinuation.lastAttemptAt) : null,
       lastError: rawContinuation.lastError ? String(rawContinuation.lastError).slice(0, 160) : null,
       gatewayJid: String(rawContinuation.gatewayJid ?? "").slice(0, 160),
+      ...(typeof rawContinuation.sentText === "string" ? { sentText: rawContinuation.sentText.slice(0, 4096) } : {}),
+      ...(typeof rawContinuation.sentRequestedHuman === "boolean" ? { sentRequestedHuman: rawContinuation.sentRequestedHuman } : {}),
     } : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, last?.ts ?? now),
@@ -754,6 +758,45 @@ export const recuperarBotAposOfertaHumanaSite = async (sessionId: string) => mut
       if (!conversation) return null;
       const result = repair(conversation);
       if (result.recovered) transaction.set(reference, serializeConversation(result.conversation));
+      return result;
+    });
+    if (result) conversations.set(sessionId, result.conversation);
+    return result;
+  }
+  const conversation = conversations.get(sessionId);
+  if (!conversation) return null;
+  const result = repair(conversation);
+  if (result.recovered) conversations.set(sessionId, result.conversation);
+  return result;
+});
+
+/** Called after the server has restored the verified rescheduling intake. */
+export const recuperarBotParaRemarcacaoSite = async (sessionId: string, message: string,
+  dependencies: { db?: FirebaseFirestore.Firestore | null } = {}) => mutate(sessionId, async () => {
+  await hydrate();
+  const repair = (conversation: SiteConversation) => {
+    if (!intencaoRemarcacaoLegadaSite(conversation, message)) return { conversation, recovered: false };
+    const now = Date.now();
+    return { recovered: true, conversation: {
+      ...conversation, mode: "bot" as const, status: "bot" as const, updatedBy: "jatoba_reschedule_recovery",
+      handoffPending: false, handoffRequestedAt: null, controlUpdatedAt: now, updatedAt: now,
+      whatsappContinuation: conversation.whatsappContinuation ? {
+        ...conversation.whatsappContinuation, status: "cancelled" as const, requestedHuman: false,
+        ...(conversation.whatsappContinuation.sentAt ? { sentRequestedHuman: conversation.whatsappContinuation.sentRequestedHuman
+          ?? conversation.whatsappContinuation.requestedHuman } : {}),
+      } : null,
+    } };
+  };
+  const db = dependencies.db === undefined ? obterFirestoreAdmin() : dependencies.db;
+  if (db) {
+    const ref = db.collection(COLLECTION).doc(sessionId);
+    const result = await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return null;
+      const conversation = normalizeConversation(snapshot.id, snapshot.data() as Record<string, unknown>);
+      if (!conversation) return null;
+      const result = repair(conversation);
+      if (result.recovered) transaction.set(ref, serializeConversation(result.conversation));
       return result;
     });
     if (result) conversations.set(sessionId, result.conversation);

@@ -128,6 +128,7 @@ test("worker envia contexto e link uma única vez, com chave persistente e indep
   assert.match(context.calls[0].text, /Brunch Gastronômico/);
   assert.match(context.calls[0].text, /sessao=site_test_followup_abc123/);
   assert.equal(context.calls[0].options.tipoDisparo, "retomada_site");
+  assert.deepEqual(context.calls[0].options.siteSessionIds, [candidate().sessionId]);
   const persistedId = `site-booking-followup:${claimId(candidate().phone)}`;
   assert.equal(context.calls[0].requestId, persistedId);
   assert.equal(await context.run(), 0);

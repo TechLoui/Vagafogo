@@ -193,7 +193,7 @@ export const processarLembretesReservaSite = async (now = Date.now(), dependenci
           mensagemRetomadaSite(latest),
           claim.requestId,
           latest.name,
-          { ...(latest.bookingFollowup!.date ? { dataLimite: latest.bookingFollowup!.date } : {}), tipoDisparo: "retomada_site" },
+          { ...(latest.bookingFollowup!.date ? { dataLimite: latest.bookingFollowup!.date } : {}), tipoDisparo: "retomada_site", siteSessionIds: [latest.sessionId] },
         );
         deliveryConfirmed = result.enviado;
         await finishReminderClaim(db, claim, result.enviado ? "sent" : "pending", clock());

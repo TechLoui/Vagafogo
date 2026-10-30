@@ -118,7 +118,7 @@ export const processarAlertaAtendimentoHumano = async (id: string, dependencies:
       destino: DESTINO_ALERTA_ATENDIMENTO_HUMANO,
       ultimaTentativaEm: Timestamp.fromMillis(now()), atualizadoEm: FieldValue.serverTimestamp(),
     }, { merge: true });
-    return { data: { ...data, telefone: phone }, attempts: attempts + 1 };
+    return { data: { ...data, telefone: phone } as Record<string, unknown>, attempts: attempts + 1 };
   });
   if (!acquired) return { enviado: false, motivo: "nao_elegivel_ou_aguardando" };
 
@@ -128,7 +128,8 @@ export const processarAlertaAtendimentoHumano = async (id: string, dependencies:
     message,
     `atendimento-humano:${id}`,
     "Uirá",
-    { tipoDisparo: "alerta_atendimento_humano" },
+    { tipoDisparo: "alerta_atendimento_humano", siteSessionIds: acquired.data.canal === "site"
+      && /^site_[A-Za-z0-9_-]{12,110}$/.test(String(acquired.data.sessionId || "")) ? [String(acquired.data.sessionId)] : [] },
   ).catch((error): ResultadoEnvio => ({ enviado: false, motivo: error instanceof Error ? error.message : String(error) }));
 
   await db.runTransaction(async (transaction) => {
@@ -180,7 +181,9 @@ export const enfileirarAlertaAtendimentoHumano = async (payload: Record<string, 
       telefone, sourceMessageId, destino: DESTINO_ALERTA_ATENDIMENTO_HUMANO,
       nome: clean(payload.nome, 120), motivo,
       resumo: String(payload.resumo ?? "").trim().slice(-2000), ultimaMensagem: clean(payload.ultimaMensagem, 500),
-      canal: clean(payload.canal, 20), status: "aguardando", tentativas: 0,
+      canal: clean(payload.canal, 20),
+      ...(/^site_[A-Za-z0-9_-]{12,110}$/.test(String(payload.sessionId || "")) ? { sessionId: String(payload.sessionId) } : {}),
+      status: "aguardando", tentativas: 0,
       criadoEm: Timestamp.fromMillis((dependencies.now || Date.now)()), atualizadoEm: FieldValue.serverTimestamp(),
     });
     return { created: true, id };

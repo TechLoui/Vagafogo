@@ -7,6 +7,7 @@ const {
   processarNotificacaoRemarcacao, processarNotificacoesRemarcacao, mensagemAutorizacaoRemarcacao,
 } = require("../dist/services/reservationRescheduling");
 const { registrarResultadoRemarcacaoSite } = require("../dist/services/siteChatConversations");
+const { alvoRemarcacaoLegadaSite } = require("../dist/services/siteHumanHandoffPolicy");
 
 const clone = (value) => value === undefined ? undefined : structuredClone(value);
 const memoryDb = () => {
@@ -85,7 +86,7 @@ const scenario = () => {
       transaction.update(ref, { data: result.depois.data, horario: result.depois.horario, horariosPorPacote: result.depois.horariosPorPacote });
       return { ...result, aplicada: true };
     },
-    send: async (phone, text, requestId) => { sent.push({ phone, text, requestId }); return { enviado: true, messageId: `message-${sent.length}` }; },
+    send: async (phone, text, requestId, name, options) => { sent.push({ phone, text, requestId, name, options }); return { enviado: true, messageId: `message-${sent.length}` }; },
     siteMessage: async (sessionId, message) => { site.push({ sessionId, ...message }); },
   };
   const input = (overrides = {}) => ({ sessionId: `whatsapp_${PHONE}`, telefone: PHONE, canal: "whatsapp", codigo: RESERVATION, novaData: "2026-11-02", novoHorario: "11:00", ...overrides });
@@ -251,11 +252,17 @@ test("site localiza por CPF e recebe resultado assíncrono sem expor CPF ao Uir�
   const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId: "site_rescheduling_test_12345", codigo: undefined, cpf: base.cpf }), fixture.deps);
   assert.equal(request.status, "aguardando_autorizacao");
   assert.doesNotMatch(mensagemAutorizacaoRemarcacao(fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId)), /52998224725/);
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  assert.equal(fixture.sent[0].phone, OWNER);
+  assert.deepEqual(fixture.sent[0].options.siteSessionIds, ["site_rescheduling_test_12345"]);
+  fixture.sent.length = 0;
   await fixture.decide("1");
   let siteAttempts = 0;
   fixture.deps.siteMessage = async (sessionId, message) => { siteAttempts++; if (siteAttempts === 1) throw new Error("SITE_DOWN"); fixture.site.push({ sessionId, ...message }); };
   await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
   assert.equal(fixture.sent.length, 1, "falha do chat não impede WhatsApp");
+  assert.equal(fixture.sent[0].phone, PHONE, "resultado sempre usa o WhatsApp do titular da reserva");
+  assert.deepEqual(fixture.sent[0].options.siteSessionIds, ["site_rescheduling_test_12345"]);
   fixture.advance(3 * 60_000);
   await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
   assert.equal(fixture.sent.length, 1, "retry do site não repete mensagem WhatsApp já confirmada");
@@ -272,6 +279,43 @@ test("pedido expirado não altera reserva nem é aprovado por resposta tardia", 
   assert.equal(fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId).status, "expired");
   assert.match((await fixture.decide(`1 ${request.codigoSolicitacao}`)).resposta, /não pode ser aplicado/);
   assert.equal(fixture.applications(), 0);
+});
+
+test("negação de remarcação iniciada no site comunica WhatsApp do titular e mantém reserva", async () => {
+  const fixture = scenario();
+  const sessionId = "site_rescheduling_rejected_12345";
+  const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId, codigo: undefined, cpf: base.cpf }), fixture.deps);
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  assert.equal(fixture.sent[0].phone, OWNER);
+  assert.deepEqual(fixture.sent[0].options.siteSessionIds, [sessionId]);
+  await fixture.decide(`2 ${request.codigoSolicitacao}`, "site-owner-denied");
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  assert.deepEqual(fixture.value("reservas", RESERVATION), base);
+  const result = fixture.sent[1];
+  assert.equal(result.phone, PHONE);
+  assert.match(result.text, /não foi autorizada/);
+  assert.match(result.text, /ligue pelo WhatsApp/);
+  assert.deepEqual(result.options.siteSessionIds, [sessionId]);
+  assert.equal(fixture.site[0].sessionId, sessionId);
+  assert.match(fixture.site[0].text, /não foi autorizada/);
+});
+
+test("retomada legada pelo site preserva data e horário já pedidos antes de coletar CPF", async () => {
+  const fixture = scenario();
+  const input = { canal: "site", sessionId: "site_legacy_reschedule_intake_123", telefone: PHONE,
+    ...alvoRemarcacaoLegadaSite("Quero alterar a data da minha reserva para 03/11/2026 às 11h") };
+  const collecting = await solicitarRemarcacaoReserva(input, fixture.deps);
+  assert.equal(collecting.proximoCampo, "cpf");
+  const context = await obterContextoRemarcacao(input, fixture.deps);
+  assert.equal(context.pendente, true);
+  assert.equal(context.contexto.proximoCampo, "cpf");
+  const request = await solicitarRemarcacaoReserva({ canal: "site", sessionId: input.sessionId, telefone: PHONE, cpf: base.cpf }, fixture.deps);
+  assert.equal(request.status, "aguardando_autorizacao");
+  const saved = fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId);
+  assert.equal(saved.depois.data, "2026-11-03");
+  assert.equal(saved.depois.horario, "11:00");
+  assert.deepEqual(saved.siteSessions, [input.sessionId]);
+  assert.deepEqual(fixture.value("reservas", RESERVATION), base);
 });
 
 test("resultado assíncrono usa controle compartilhado atual e não sobrepõe operador ou bloqueio", async () => {

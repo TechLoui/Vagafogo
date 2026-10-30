@@ -25,6 +25,8 @@ import { enviarMensagemTransacionalPeloAgente } from "../services/agentTransacti
 import { enfileirarAlertaAtendimentoHumano, iniciarProcessadorAlertasAtendimentoHumano } from "../services/whatsappHumanHandoffAlerts";
 import { solicitarRemarcacaoReserva, decidirRemarcacaoReserva, obterContextoRemarcacao, iniciarProcessadorRemarcacoes } from "../services/reservationRescheduling";
 import { criarTesteRemarcacaoUira, consultarTesteRemarcacaoUira } from "../services/reservationRescheduleTest";
+import { consultarDisparosSite, listarResumosDisparosSite, registrarDisparoConfirmadoSite,
+  iniciarProcessadorDisparosSite } from "../services/siteWhatsappDispatchHistory";
 import {
   atualizarCampanhaWhatsapp,
   cancelarCampanhaWhatsapp,
@@ -77,6 +79,7 @@ import {
   obterConversaSite,
   registrarMensagemConversaSite,
   recuperarBotAposOfertaHumanaSite,
+  recuperarBotParaRemarcacaoSite,
   removerConversaSite,
   siteSessionIdFromJid,
   type SiteConversationMode,
@@ -87,7 +90,7 @@ import { isSiteNamePrompt, isSitePhonePrompt, nameFromSiteMessage, normalizeSite
 import { shouldOfferEnvironmentalEducationContact } from "../services/siteEnvironmentalEducation";
 import { consultarAgendaReservaSite } from "../services/siteBookingAvailability";
 import { requireTimeBeforeParticipants } from "../services/siteBookingStepOrder";
-import { deveEfetivarHandoffSite } from "../services/siteHumanHandoffPolicy";
+import { deveEfetivarHandoffSite, intencaoRemarcacaoLegadaSite, alvoRemarcacaoLegadaSite } from "../services/siteHumanHandoffPolicy";
 import { podeEscalonarLigacaoSite, podeResponderContinuacaoAutomaticaSite } from "../services/siteOwnerEscalation";
 import {
   escolhaModoReservaSite,
@@ -97,6 +100,7 @@ import {
 } from "../services/siteBookingMode";
 import {
   dadosContinuacaoWhatsapp,
+  mensagemContinuacaoWhatsapp,
   processarContinuacaoWhatsappSite,
   recusouContinuacaoWhatsapp,
   solicitouContinuacaoWhatsapp,
@@ -339,6 +343,15 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     return;
   }
   if (existingConversation?.mode === "human" && existingConversation.updatedBy === "jatoba") {
+    const legacyReschedule = intencaoRemarcacaoLegadaSite(existingConversation, mensagem);
+    if (legacyReschedule) {
+      // Restore the real intake before reactivating the bot, so a CPF/date in
+      // this turn cannot be mistaken for a new sale or a WhatsApp number.
+      await solicitarRemarcacaoReserva({ sessionId, canal: "site", telefone: telefone || existingConversation.phone,
+        nomeContato: existingConversation.name, mensagemCliente: legacyReschedule, ...alvoRemarcacaoLegadaSite(legacyReschedule) });
+      const restored = await recuperarBotParaRemarcacaoSite(sessionId, mensagem);
+      if (restored) existingConversation = restored.conversation;
+    }
     const recovered = await recuperarBotAposOfertaHumanaSite(sessionId);
     if (recovered) existingConversation = recovered.conversation;
     if (existingConversation?.mode === "blocked") {
@@ -366,7 +379,7 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   const collectingOwnerPhone = awaitingWhatsappPhone && existingConversation?.whatsappContinuation?.reason === "ligacao_nao_atendida";
   const suppliedOwnerPhone = Boolean(telefone || (telefoneContinuacaoWhatsapp(mensagem)
     && (/^[\d\s()+.\-]+$/.test(mensagem) || /\bmeu (?:whatsapp|telefone|numero|número)\b/i.test(mensagem))));
-  const collectingWhatsapp = awaitingWhatsappPhone;
+  const collectingWhatsapp = awaitingWhatsappPhone && !reschedulingContext.pendente;
   const retryingWhatsapp = existingConversation?.whatsappContinuation?.status === "failed"
     && solicitouNovaTentativaWhatsapp(mensagem);
   const telefoneInformado = telefone || (
@@ -873,9 +886,10 @@ app.post('/crm/agente/teste-whatsapp', exigirAdminCrm, async (req, res) => {
 });
 
 app.get('/crm/agente/contatos', exigirAdminCrm, async (_req, res) => {
-  const [gatewayResponse, siteContacts] = await Promise.all([
+  const [gatewayResponse, siteContacts, dispatchSummaries] = await Promise.all([
     requestAgentService("gateway", "/api/contacts").catch(() => null),
     listarConversasSite(),
+    listarResumosDisparosSite(),
   ]);
   const gatewayBody = gatewayResponse?.body && typeof gatewayResponse.body === "object" && !Array.isArray(gatewayResponse.body)
     ? gatewayResponse.body as Record<string, unknown>
@@ -883,9 +897,12 @@ app.get('/crm/agente/contatos', exigirAdminCrm, async (_req, res) => {
   const whatsappContacts = Array.isArray(gatewayBody.contacts)
     ? gatewayBody.contacts.map((contact) => ({ ...(contact as Record<string, unknown>), channel: "whatsapp" }))
     : [];
+  const dispatchBySession = new Map(dispatchSummaries.map((item) => [item.sessionId, item]));
   const siteContactsWithFollowup = siteContacts.map((contact) => ({
     ...contact,
     followupStatus: estadoRetomadaSite(contact),
+    ...((dispatchBySession.get(contact.sessionId)?.lastMessageAt || 0) > contact.lastMessageAt
+      ? dispatchBySession.get(contact.sessionId) : {}),
   }));
   const contacts = ([...whatsappContacts, ...siteContactsWithFollowup] as Array<Record<string, unknown> & { lastMessageAt?: number }>)
     .sort((a, b) => Number(b.lastMessageAt ?? 0) - Number(a.lastMessageAt ?? 0));
@@ -907,7 +924,20 @@ app.get('/crm/agente/contatos/:jid/mensagens', exigirAdminCrm, async (req, res) 
       res.status(404).json({ error: "SITE_CHAT_SESSION_NOT_FOUND" });
       return;
     }
-    const messages = await listarMensagensConversaSite(sessionId, after);
+    const legacy = conversation.whatsappContinuation;
+    let dispatchMessages = await consultarDisparosSite(sessionId);
+    if (legacy?.sentAt && legacy.phone && legacy.requestId && !dispatchMessages.some((item) => item.requestId === legacy.requestId)) {
+      // Existing delivery proof lets the panel show the old site-to-WhatsApp
+      // message too. This only restores the audit; it never sends a message.
+      await registrarDisparoConfirmadoSite({ siteSessionIds: [sessionId], requestId: legacy.requestId,
+        phone: legacy.phone, text: legacy.sentText || mensagemContinuacaoWhatsapp(conversation.name, legacy.context,
+          legacy.sentRequestedHuman ?? legacy.requestedHuman, legacy.reason),
+        dispatchKind: "continuacao_site", sentAt: legacy.sentAt, jid: legacy.gatewayJid });
+      dispatchMessages = await consultarDisparosSite(sessionId);
+    }
+    const chatMessages = await listarMensagensConversaSite(sessionId, after);
+    const messages = [...chatMessages, ...dispatchMessages.filter((item) => item.ts > after)]
+      .sort((left, right) => left.ts - right.ts || left.id.localeCompare(right.id));
     await marcarConversaSiteLida(sessionId);
     res.json({ messages });
     return;
@@ -1953,6 +1983,7 @@ app.listen(port, async () => {
   iniciarProcessadorLembretesReservaSite();
   iniciarProcessadorAlertasAtendimentoHumano();
   iniciarProcessadorRemarcacoes();
+  iniciarProcessadorDisparosSite();
   iniciarLimpezaAutomaticaReservas();
   try {
     const migrada = await garantirConfiguracaoAutomacoesWhatsapp();

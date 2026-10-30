@@ -376,7 +376,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
     if (current.status !== acquired.request.status) return false;
     requestCollections(current);
     if (acquired.phase === "ownerNotice") {
-      const sent = await (deps.send || enviarMensagemTransacionalPeloAgente)(OWNER_PHONE, mensagemAutorizacaoRemarcacao(current), `rescheduling-owner:${id}`, "Uirá", { tipoDisparo: "remarcacao_autorizacao" });
+      const sent = await (deps.send || enviarMensagemTransacionalPeloAgente)(OWNER_PHONE, mensagemAutorizacaoRemarcacao(current), `rescheduling-owner:${id}`, "Uirá", { tipoDisparo: "remarcacao_autorizacao", siteSessionIds: current.siteSessions || [] });
       delivered = sent.enviado;
       messageId = sent.messageId || "";
       error = sent.motivo || "";
@@ -394,7 +394,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
       }
       whatsappSentAt = current.clientNotice.whatsappSentAt || null;
       const sent = whatsappSentAt ? { enviado: true, motivo: "", retryAfterMs: 0 }
-        : await (deps.send || enviarMensagemTransacionalPeloAgente)(current.customerPhone, text, `rescheduling-customer:${id}`, current.customerName, { tipoDisparo: "remarcacao_resultado" });
+        : await (deps.send || enviarMensagemTransacionalPeloAgente)(current.customerPhone, text, `rescheduling-customer:${id}`, current.customerName, { tipoDisparo: "remarcacao_resultado", siteSessionIds: current.siteSessions || [] });
       if (sent.enviado && !whatsappSentAt) whatsappSentAt = new Date(clock());
       if ("messageId" in sent) messageId = String(sent.messageId || "");
       delivered = sent.enviado && !siteFailed;
