@@ -369,7 +369,10 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
       : ["approved", "rejected", "unavailable", "expired", "failed"].includes(request.status) ? "clientNotice" : null;
     const notice = phase && request[phase];
     if (!phase || !notice || notice.status !== "pending" || Number(notice.attempts) >= MAX_ATTEMPTS || millis(notice.nextAttemptAt) > clock()) return null;
-    const previouslyAttempted = Number(notice.attempts) > 0 || notice.lastError || notice.whatsappSentAt || notice.siteSentSessions?.length;
+    // A stale legacy lease may have sent the message before recording attempts.
+    // Its original payload must survive the restart too.
+    const previouslyAttempted = Number(notice.attempts) > 0 || notice.lastError || notice.whatsappSentAt
+      || notice.siteSentSessions?.length || millis(request.notificationLeaseUntil) > 0;
     const fixedNotice = { ...notice, text: notice.text || (phase === "ownerNotice" ? mensagemAutorizacaoRemarcacao(request)
       : previouslyAttempted ? legacyResultText(request) : resultText(request)) };
     transaction.set(ref, { notificationLeaseId: leaseId, notificationLeaseUntil: clock() + LEASE, [phase]: fixedNotice }, { merge: true });

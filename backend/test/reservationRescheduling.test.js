@@ -234,6 +234,20 @@ test("retentativa de resultado antigo conserva o payload já tentado sem criar o
   assert.equal(fixture.sent.length, 1);
 });
 
+test("lease legado abandonado conserva mensagem antiga mesmo antes de registrar a tentativa", async () => {
+  const fixture = scenario();
+  const request = await solicitarRemarcacaoReserva(fixture.input(), fixture.deps);
+  await fixture.decide(`1 ${request.codigoSolicitacao}`, "legacy-before-finally");
+  const saved = fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId);
+  fixture.seed(RESCHEDULE_REQUESTS, request.solicitacaoId, { ...saved,
+    notificationLeaseId: "old-process", notificationLeaseUntil: Date.parse("2026-10-30T13:59:00Z"),
+  });
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  assert.equal(fixture.sent.length, 1);
+  assert.equal(fixture.sent[0].text, "Sua reserva foi remarcada no sistema para 02/11/2026 às 11:00. A experiência e os participantes foram mantidos. 🌿");
+  assert.equal(fixture.sent[0].requestId, `rescheduling-customer:${request.solicitacaoId}`);
+});
+
 test("falha de commit não confirma aprovação nem grava parte da remarcação", async () => {
   const fixture = scenario();
   const request = await solicitarRemarcacaoReserva(fixture.input(), fixture.deps);
