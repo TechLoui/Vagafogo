@@ -80,8 +80,13 @@ const missingPrompt = (field: string) => field === "cpf" ? "Informe o CPF do tit
     : field === "reserva" ? "Informe a data atual ou o código da reserva que deseja alterar."
       : field === "novoHorario" ? "Qual o novo horário desejado?"
         : "Para qual data deseja mudar? Se quiser alterar apenas o horário, informe o novo horário.";
-const resultText = (request: Data) => `${request.testMode ? "🧪 TESTE ISOLADO — nenhuma reserva real foi alterada.\n" : ""}${request.status === "approved"
+const legacyResultText = (request: Data) => `${request.testMode ? "🧪 TESTE ISOLADO — nenhuma reserva real foi alterada.\n" : ""}${request.status === "approved"
   ? `Sua reserva foi remarcada no sistema para ${scheduleLabel(request.depois, request.timeLabels)}. A experiência e os participantes foram mantidos. 🌿`
+  : request.status === "rejected"
+    ? `A alteração não foi autorizada e este pedido não remarcou sua reserva. ${CALL}`
+    : `Não foi possível concluir a remarcação solicitada. Sua reserva não foi alterada por este pedido. ${CALL}`}`;
+const resultText = (request: Data) => request.clientNotice?.text || `${request.testMode ? "🧪 TESTE — " : ""}${request.status === "approved"
+  ? "✅ Troca realizada com sucesso."
   : request.status === "rejected"
     ? `A alteração não foi autorizada e este pedido não remarcou sua reserva. ${CALL}`
     : `Não foi possível concluir a remarcação solicitada. Sua reserva não foi alterada por este pedido. ${CALL}`}`;
@@ -326,8 +331,11 @@ export const decidirRemarcacaoReserva = async (input: { telefoneOperador?: unkno
       transaction.set(ref, { status, decidedAt: new Date(now), decidedBy: OWNER_PHONE, decisionSourceMessageId: sourceId, updatedAt: new Date(now),
         clientNotice: noticePending(), notificationsPending: true }, { merge: true });
     }
-    const result = { handled: true, solicitacaoId: ref.id, resposta: `${collections ? "🧪 TESTE ISOLADO — " : ""}${status === "approved"
-      ? `${request.code}: remarcação salva no sistema para ${scheduleLabel(request.depois, request.timeLabels)}. O aviso ao cliente está na fila.`
+    // When owner and customer are the same contact, the durable customer notice
+    // is also the owner's confirmation. Do not send a second success message.
+    const result = { handled: true, solicitacaoId: ref.id, resposta: status === "approved" && telefoneDoUira(request.customerPhone) ? ""
+      : `${collections ? "🧪 TESTE — " : ""}${status === "approved"
+      ? "✅ Troca realizada com sucesso."
       : status === "rejected" ? `${request.code}: pedido negado. O cliente será orientado a ligar pelo WhatsApp da equipe.`
         : `${request.code}: este pedido não pode ser aplicado. A reserva não foi remarcada por esta decisão; o cliente deve falar com a equipe.`}` };
     transaction.set(receiptRef, { result, requestId: ref.id, sourceMessageId: sourceId, createdAt: new Date(now) });
@@ -361,8 +369,11 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
       : ["approved", "rejected", "unavailable", "expired", "failed"].includes(request.status) ? "clientNotice" : null;
     const notice = phase && request[phase];
     if (!phase || !notice || notice.status !== "pending" || Number(notice.attempts) >= MAX_ATTEMPTS || millis(notice.nextAttemptAt) > clock()) return null;
-    transaction.set(ref, { notificationLeaseId: leaseId, notificationLeaseUntil: clock() + LEASE }, { merge: true });
-    return { request, phase };
+    const previouslyAttempted = Number(notice.attempts) > 0 || notice.lastError || notice.whatsappSentAt || notice.siteSentSessions?.length;
+    const fixedNotice = { ...notice, text: notice.text || (phase === "ownerNotice" ? mensagemAutorizacaoRemarcacao(request)
+      : previouslyAttempted ? legacyResultText(request) : resultText(request)) };
+    transaction.set(ref, { notificationLeaseId: leaseId, notificationLeaseUntil: clock() + LEASE, [phase]: fixedNotice }, { merge: true });
+    return { request: { ...request, [phase]: fixedNotice }, phase };
   });
   if (!acquired) return false;
   let delivered = false;
@@ -376,7 +387,7 @@ export const processarNotificacaoRemarcacao = async (id: string, deps: Dependenc
     if (current.status !== acquired.request.status) return false;
     requestCollections(current);
     if (acquired.phase === "ownerNotice") {
-      const sent = await (deps.send || enviarMensagemTransacionalPeloAgente)(OWNER_PHONE, mensagemAutorizacaoRemarcacao(current), `rescheduling-owner:${id}`, "Uirá", { tipoDisparo: "remarcacao_autorizacao", siteSessionIds: current.siteSessions || [] });
+      const sent = await (deps.send || enviarMensagemTransacionalPeloAgente)(OWNER_PHONE, current.ownerNotice.text, `rescheduling-owner:${id}`, "Uirá", { tipoDisparo: "remarcacao_autorizacao", siteSessionIds: current.siteSessions || [] });
       delivered = sent.enviado;
       messageId = sent.messageId || "";
       error = sent.motivo || "";

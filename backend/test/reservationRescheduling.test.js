@@ -115,14 +115,14 @@ test("aprovação grava a remarcação e só então notifica; replay não aplica
   const fixture = scenario();
   const request = await solicitarRemarcacaoReserva(fixture.input(), fixture.deps);
   const approved = await fixture.decide("1", "same-inbound");
-  assert.match(approved.resposta, /salva no sistema/);
+  assert.equal(approved.resposta, "✅ Troca realizada com sucesso.");
   const reservation = fixture.value("reservas", RESERVATION);
   assert.equal(reservation.data, "2026-11-02");
   assert.equal(reservation.horario, "11:00");
   for (const key of ["valor", "status", "confirmada", "paymentId", "participantes", "atividade", "cpf"]) assert.deepEqual(reservation[key], base[key]);
   assert.equal(fixture.sent.length, 0);
   await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
-  assert.match(fixture.sent[0].text, /foi remarcada no sistema para 02\/11\/2026 às 11:00/);
+  assert.equal(fixture.sent[0].text, "✅ Troca realizada com sucesso.");
   const next = await solicitarRemarcacaoReserva(fixture.input({ novaData: "2026-11-03" }), fixture.deps);
   assert.notEqual(next.solicitacaoId, request.solicitacaoId);
   assert.deepEqual(await fixture.decide("1", "same-inbound"), approved);
@@ -140,7 +140,7 @@ test("negação orienta ligação e não modifica dados; outro número não pode
   assert.match(fixture.sent[0].text, /não foi autorizada/);
   assert.match(fixture.sent[0].text, /ligue pelo WhatsApp/);
   assert.match(fixture.sent[0].text, /08h às 17h/);
-  assert.doesNotMatch(fixture.sent[0].text, /foi remarcada no sistema/);
+  assert.doesNotMatch(fixture.sent[0].text, /Troca realizada com sucesso/);
 });
 
 test("pedido repetido deduplica e novo alvo invalida o código anterior", async () => {
@@ -191,9 +191,47 @@ test("vagas indisponíveis antes da solicitação não geram aviso; rechecagem p
   const request = await solicitarRemarcacaoReserva(fixture.input(), fixture.deps);
   fixture.deps.apply = async () => ({ aplicada: false });
   const result = await fixture.decide("1");
-  assert.doesNotMatch(result.resposta, /salva no sistema/);
+  assert.doesNotMatch(result.resposta, /Troca realizada com sucesso/);
   assert.deepEqual(fixture.value("reservas", RESERVATION), base);
   assert.equal(fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId).status, "unavailable");
+});
+
+test("Uirá como titular recebe somente o resultado de sucesso, sem confirmação extra de fila", async () => {
+  for (const phone of [OWNER, "556291150376"]) {
+    const fixture = scenario();
+    fixture.seed("reservas", RESERVATION, { ...base, telefone: phone });
+    const request = await solicitarRemarcacaoReserva(fixture.input({ telefone: phone, sessionId: `whatsapp_${phone}` }), fixture.deps);
+    await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+    const decision = await fixture.decide(`1 ${request.codigoSolicitacao}`, `owner-customer:${phone}`);
+    assert.equal(decision.handled, true);
+    assert.equal(decision.resposta, "");
+    assert.equal(fixture.value("reservas", RESERVATION).data, "2026-11-02");
+    await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+    await fixture.decide(`1 ${request.codigoSolicitacao}`, `owner-customer:${phone}`);
+    await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+    const success = fixture.sent.filter((message) => message.text.includes("Troca realizada com sucesso"));
+    assert.equal(success.length, 1);
+    assert.equal(success[0].text, "✅ Troca realizada com sucesso.");
+    assert.doesNotMatch(success[0].text, /fila|participantes|experiência|salva no sistema/);
+  }
+});
+
+test("retentativa de resultado antigo conserva o payload já tentado sem criar outro disparo", async () => {
+  const fixture = scenario();
+  const request = await solicitarRemarcacaoReserva(fixture.input(), fixture.deps);
+  await fixture.decide(`1 ${request.codigoSolicitacao}`, "legacy-result-decision");
+  const saved = fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId);
+  fixture.seed(RESCHEDULE_REQUESTS, request.solicitacaoId, { ...saved,
+    clientNotice: { ...saved.clientNotice, attempts: 1, lastError: "AGENT_GATEWAY_UNAVAILABLE", nextAttemptAt: 0 },
+  });
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  const expected = "Sua reserva foi remarcada no sistema para 02/11/2026 às 11:00. A experiência e os participantes foram mantidos. 🌿";
+  assert.equal(fixture.sent.length, 1);
+  assert.equal(fixture.sent[0].text, expected);
+  assert.equal(fixture.sent[0].requestId, `rescheduling-customer:${request.solicitacaoId}`);
+  assert.equal(fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId).clientNotice.text, expected);
+  await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
+  assert.equal(fixture.sent.length, 1);
 });
 
 test("falha de commit não confirma aprovação nem grava parte da remarcação", async () => {

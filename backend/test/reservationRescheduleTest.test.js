@@ -130,7 +130,8 @@ test("aviso e aprovação seguem pipeline real com send mockado e retornam recib
   assert.equal(beforeDecision.decidedAt, null);
   assert.equal(beforeDecision.receipt, null);
 
-  await fixture.decide(request);
+  const decision = await fixture.decide(request);
+  assert.equal(decision.resposta, "", "o resultado do teste já confirma ao mesmo número do Uirá");
   const approved = await consultarTesteRemarcacaoUira(request.solicitacaoId, fixture.deps);
   assert.equal(approved.status, "approved");
   assert.deepEqual(approved.fixture.atual, approved.fixture.solicitado);
@@ -147,7 +148,7 @@ test("aviso e aprovação seguem pipeline real com send mockado e retornam recib
   assert.equal(fixture.sent.length, 2);
   assert.equal(fixture.sent[1].phone, OWNER);
   assert.match(fixture.sent[1].text, /TESTE/);
-  assert.match(fixture.sent[1].text, /remarcada/);
+  assert.equal(fixture.sent[1].text, "🧪 TESTE — ✅ Troca realizada com sucesso.");
   const final = await consultarTesteRemarcacaoUira(request.solicitacaoId, fixture.deps);
   assert.equal(final.clientNotice.status, "sent");
   assert.equal(final.clientNotice.whatsappSentAt, new Date(NOW).toISOString());
