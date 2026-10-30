@@ -100,7 +100,7 @@ import {
 } from "../services/siteBookingMode";
 import {
   dadosContinuacaoWhatsapp,
-  mensagemContinuacaoWhatsapp,
+  mensagemContinuacaoWhatsappLegada,
   processarContinuacaoWhatsappSite,
   recusouContinuacaoWhatsapp,
   solicitouContinuacaoWhatsapp,
@@ -930,7 +930,7 @@ app.get('/crm/agente/contatos/:jid/mensagens', exigirAdminCrm, async (req, res) 
       // Existing delivery proof lets the panel show the old site-to-WhatsApp
       // message too. This only restores the audit; it never sends a message.
       await registrarDisparoConfirmadoSite({ siteSessionIds: [sessionId], requestId: legacy.requestId,
-        phone: legacy.phone, text: legacy.sentText || mensagemContinuacaoWhatsapp(conversation.name, legacy.context,
+        phone: legacy.phone, text: legacy.sentText || mensagemContinuacaoWhatsappLegada(conversation.name, legacy.context,
           legacy.sentRequestedHuman ?? legacy.requestedHuman, legacy.reason),
         dispatchKind: "continuacao_site", sentAt: legacy.sentAt, jid: legacy.gatewayJid });
       dispatchMessages = await consultarDisparosSite(sessionId);

@@ -8,6 +8,7 @@ const {
   registrarMensagemConversaSite,
   removerConversaSite,
   alterarModoConversaSite,
+  salvarContinuacaoWhatsappSite,
 } = require("../dist/services/siteChatConversations");
 const {
   solicitouContinuacaoWhatsapp,
@@ -17,6 +18,7 @@ const {
   processarContinuacaoWhatsappSite: processarContinuacaoWhatsappSiteReal,
   dadosContinuacaoWhatsapp,
   mensagemContinuacaoWhatsapp,
+  mensagemContinuacaoWhatsappLegada,
 } = require("../dist/services/siteWhatsAppContinuation");
 
 const processarContinuacaoWhatsappSite = (input, dependencies = {}) => processarContinuacaoWhatsappSiteReal(input, {
@@ -43,6 +45,87 @@ test("mensagem de handoff humano pede chamada no WhatsApp das 08h às 17h sem ap
   assert.doesNotMatch(owner, /5562992225471|botão de chamada|08h às 17h/);
   const bot = mensagemContinuacaoWhatsapp("Mara", "Dúvida sobre trilha", false);
   assert.doesNotMatch(bot, /ligue|botão de chamada|08h às 17h/);
+});
+
+test("continuação da Mara usa apresentação e último assunto sem copiar histórico nem dados pessoais", () => {
+  const messages = [
+    { from: "client", text: "Olá tenho uma reserva para amanhã e pedi para remarcarem pra dia 31.10, até o momento não recebi uma informação se foi possível ou não remarcar" },
+    { from: "client", text: "Mara" },
+    { from: "client", text: "Meu WhatsApp para este atendimento é (61) 98115-8789." },
+    { from: "bot", text: "Não consigo visualizar o andamento da remarcação. Quer que eu encaminhe para a equipe agora?" },
+    { from: "client", text: "Não vai adiantar, preciso da resposta hoje. Moro em Brasília e pra chegar aí precisaria sair muito cedo daqui" },
+  ];
+  const context = messages.map(message => `${message.from === "client" ? "Cliente" : "Fazenda"}: ${message.text}`).join("\n")
+    + "\nPedido encaminhado: Já encaminhei com prioridade. Ligue pelo WhatsApp. Ligue pelo WhatsApp.";
+  const text = mensagemContinuacaoWhatsapp("Mara", context, true, "alteracao_reserva", messages);
+  assert.match(text, /^Olá, Mara! 🌿 Sou a Jatobá, da Fazenda Vagafogo/);
+  assert.match(text, /Vamos continuar sobre a remarcação da sua reserva/);
+  assert.doesNotMatch(text, /Resumo|Cliente:|Fazenda:|Pedido encaminhado|98115|Brasília|prioridade|não consigo visualizar|Quer que eu encaminhe/);
+  assert.equal((text.match(/ligue/gi) || []).length, 1);
+  assert.ok(text.length < 450, `Mensagem longa: ${text.length}`);
+});
+
+test("último assunto real prevalece sobre tema antigo e coleta de nome e telefone", () => {
+  const messages = [
+    { from: "client", text: "Quanto custa o brunch?" },
+    { from: "client", text: "Posso levar meu cachorro?" },
+    { from: "client", text: "Meu nome é Paulo" },
+    { from: "client", text: "Meu WhatsApp é (61) 99999-0000" },
+    { from: "client", text: "Pode me chamar no WhatsApp?" },
+  ];
+  const text = mensagemContinuacaoWhatsapp("Paulo", "", false, "", messages);
+  assert.match(text, /levar seu pet/);
+  assert.doesNotMatch(text, /valores|preços|99999|Cliente:|ligue/);
+  assert.ok(text.length < 400);
+});
+
+test("recibo antigo mantém factory original sem reescrever o que foi enviado", () => {
+  const context = "Cliente: Quero alterar minha reserva.\nFazenda: Qual data?";
+  const original = mensagemContinuacaoWhatsappLegada("Mara", context, true, "alteracao_reserva");
+  assert.match(original, /Resumo da conversa no site:\nCliente: Quero alterar minha reserva/);
+  assert.doesNotMatch(mensagemContinuacaoWhatsapp("Mara", context, true, "alteracao_reserva"), /Resumo da conversa|Cliente:|Fazenda:/);
+});
+
+test("retry preserva o texto curto da primeira tentativa apesar de novo assunto no chat", async () => {
+  const sessionId = session();
+  await register(sessionId, "Posso levar meu cachorro?", "5562999990000");
+  const attempts = [];
+  const deps = { send: async (phone, text, requestId) => {
+    attempts.push({ text, requestId });
+    return attempts.length === 1 ? { enviado: false, motivo: "DISPATCH_PACED" } : { enviado: true };
+  }, setHuman: forbidden };
+  await processarContinuacaoWhatsappSite({ sessionId, sourceId: "client:request" }, deps);
+  const first = await obterConversaSite(sessionId);
+  assert.equal(first.whatsappContinuation.outboundText, attempts[0].text);
+  await register(sessionId, "Qual o valor do brunch?", "5562999990000", "client:new-topic");
+  await processarContinuacaoWhatsappSite({ sessionId, sourceId: "client:retry" }, deps);
+  assert.equal(attempts.length, 2);
+  assert.deepEqual(attempts[1], attempts[0]);
+  assert.match(attempts[1].text, /levar seu pet/);
+  await removerConversaSite(sessionId);
+});
+
+test("tentativa legada pendente mantém payload original e mesma chave após atualização do template", async () => {
+  const sessionId = session();
+  await register(sessionId, "Pode enviar minha solicitação no WhatsApp", "5562999990000");
+  const context = "Cliente: Quero alterar minha reserva para 01/11/2026.";
+  const expected = mensagemContinuacaoWhatsappLegada("Mara", context, true, "alteracao_reserva");
+  await registrarMensagemConversaSite(sessionId, { from: "bot", text: "Vou encaminhar", name: "Mara", sourceId: "bot:legacy" });
+  await salvarContinuacaoWhatsappSite(sessionId, {
+    requestId: "site-whatsapp:legacy-existing-attempt", status: "failed", requestedAt: Date.now() - 1000,
+    requestedHuman: true, reason: "alteracao_reserva", context, phone: "5562999990000", sentAt: null,
+    lastAttemptAt: Date.now() - 500, lastError: "DISPATCH_PACED", gatewayJid: "",
+  });
+  const result = await processarContinuacaoWhatsappSite({ sessionId, sourceId: "client:retry" }, {
+    send: async (phone, text, requestId) => {
+      assert.equal(text, expected);
+      assert.equal(requestId, "site-whatsapp:legacy-existing-attempt");
+      return { enviado: true };
+    }, setHuman: async () => "",
+  });
+  assert.equal(result.continuation.status, "sent");
+  assert.equal(result.continuation.sentText, expected);
+  await removerConversaSite(sessionId);
 });
 
 test("avisa a equipe após coletar telefone mesmo se a mensagem ao cliente falhar", async () => {
@@ -124,7 +207,8 @@ test("pede DDD sem exigir nome e envia automaticamente após receber telefone", 
     send: async (phone, text, requestId) => {
       sent++;
       assert.equal(phone, "5562999990000");
-      assert.match(text, /Cliente: Me chama no wpp/);
+      assert.match(text, /Sou a Jatobá, da Fazenda Vagafogo/);
+      assert.doesNotMatch(text, /Cliente:|Resumo da conversa|99999-0000/);
       assert.match(requestId, /^site-whatsapp-continuation:/);
       return { enviado: true, jid: `${phone}@s.whatsapp.net` };
     },
@@ -163,8 +247,8 @@ test("handoff preserva pedido e contexto do site e pausa bot do WhatsApp após e
   }, {
     send: async (phone, text) => {
       calls.push("send");
-      assert.match(text, /brunch e trilha para 2 pessoas/);
-      assert.match(text, /01\/11\/2026 às 11h/);
+      assert.match(text, /Vamos continuar sobre a remarcação da sua reserva/);
+      assert.doesNotMatch(text, /Cliente:|Fazenda:|Resumo da conversa|para 2 pessoas/);
       assert.match(text, /ligue pelo botão de chamada deste WhatsApp, das 08h às 17h/);
       return { enviado: true, jid: "resolved@lid" };
     },
@@ -242,7 +326,7 @@ test("novo encaminhamento humano após continuação genérica envia o novo cont
   await processarContinuacaoWhatsappSite({ sessionId, sourceId: "client:new-handoff", human: true, reason: "alteracao_reserva" }, deps);
   await processarContinuacaoWhatsappSite({ sessionId, sourceId: "client:new-handoff", human: true, reason: "alteracao_reserva" }, deps);
   assert.equal(messages.length, 2);
-  assert.match(messages[1], /02\/11\/2026/);
+  assert.match(messages[1], /remarcação da sua reserva/);
   assert.equal(new Set(ids).size, 2);
   await removerConversaSite(sessionId);
 });

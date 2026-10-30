@@ -48,11 +48,73 @@ export const dadosContinuacaoWhatsapp = (continuation?: SiteWhatsAppContinuation
   } : null,
 });
 
-export const mensagemContinuacaoWhatsapp = (name: string, context: string, human: boolean, reason = "") => {
+// Kept only for old delivery receipts and attempts whose payload is already fixed.
+export const mensagemContinuacaoWhatsappLegada = (name: string, context: string, human: boolean, reason = "") => {
   const greeting = name ? `Olá, ${name.split(" ")[0]}!` : "Olá!";
   return `${greeting} 🌿 Sou a Jatobá, da Fazenda Vagafogo. Estou entrando em contato para dar continuidade ao seu atendimento iniciado no site.\n\n${context ? `Resumo da conversa no site:\n${context}\n\n` : ""}${reason === "ligacao_nao_atendida" ? contatoUiraParaLigacaoNaoAtendida() : human
     ? "Seu pedido precisa da nossa equipe. Trouxe o resumo da conversa do site para facilitar a continuidade por aqui.\n\nPara tratar seu pedido com a equipe, ligue pelo botão de chamada deste WhatsApp, das 08h às 17h."
     : "Podemos continuar por aqui. É só responder esta mensagem para seguir com o atendimento."}`;
+};
+
+type ContinuationMessage = { from: string; text: string };
+const assuntoContinuacao = (context: string, messages?: ReadonlyArray<ContinuationMessage>): string => {
+  const clients = messages ? messages.filter((message) => message.from === "client").map((message) => message.text)
+    : context.includes("Cliente:") ? [...context.matchAll(/(?:^|\n)Cliente:\s*([^]*?)(?=\n(?:Cliente|Fazenda|Pedido encaminhado):|$)/g)].map((match) => match[1]) : [context];
+  for (const message of [...clients].reverse()) {
+    const value = plain(message);
+    if (/^(?:meu (?:nome|cpf|whatsapp|telefone|numero|email|e-mail)|me chamo|nome\s*:|cpf\s*:|telefone\s*:|whatsapp\s*:|e-?mail\s*:)/.test(value.trim())) continue;
+    if (/\b(?:remarc\w*|reagend\w*|(?:alterar|mudar|trocar)\b.{0,40}\b(?:data|dia|horario))\b/.test(value)
+      || /\b(?:alterar|mudar|trocar)\b.{0,40}\b(?:\d{1,2}[/.]\d{1,2}|\d{4}-\d{2}-\d{2})\b/.test(value)) return "remarcacao";
+    if (/\b(?:cancel\w*|reembolso|estorno)\b/.test(value)) return "cancelamento";
+    if (/\b(?:pix|cartao|pagamento|pagar|cobranca|checkout)\b/.test(value)) return "pagamento";
+    if (/\b(?:perdi|esqueci|objeto perdido)\b/.test(value)) return "objeto_perdido";
+    if (/\b(?:aniversariante|aniversario)\b/.test(value)) return "aniversario";
+    if (/\b(?:pet|pets|cachorro|cachorros|cao|caes)\b/.test(value)) return "pets";
+    if (/\b(?:crianca|criancas|bebe|bebes)\b/.test(value)) return "criancas";
+    if (/\b(?:cardapio|alimentacao|vegano|vegetariano|gluten|lactose)\b/.test(value)) return "alimentacao";
+    if (/\b(?:localizacao|endereco|como chegar|onde fica|estrada)\b/.test(value)) return "localizacao";
+    if (/\b(?:funcionamento|abre|fecha|horarios)\b/.test(value)) return "horarios";
+    if (/\b(?:valor|valores|preco|precos|desconto|descontos)\b/.test(value)) return "valores";
+    if (/\b(?:formulario|preencher|por conta propria)\b/.test(value)) return "formulario";
+    if (/\b(?:reserva|reservar|agendamento)\b/.test(value)) return "reserva";
+    if (/\bbrunch\b/.test(value) && /\btrilha\b/.test(value)) return "brunch_trilha";
+    if (/\bbrunch\b/.test(value)) return "brunch";
+    if (/\btrilha\b/.test(value)) return "trilha";
+  }
+  return "";
+};
+
+export const mensagemContinuacaoWhatsapp = (name: string, context: string, human: boolean, reason = "",
+  messages?: ReadonlyArray<ContinuationMessage>) => {
+  const first = String(name || "").trim().split(/\s+/)[0];
+  const safeName = /^[\p{L}][\p{L}'’-]{0,39}$/u.test(first) ? first : "";
+  const greeting = `Olá${safeName ? `, ${safeName}` : ""}! 🌿 Sou a Jatobá, da Fazenda Vagafogo. Estou entrando em contato para dar continuidade ao seu atendimento iniciado no site.`;
+  const topic = assuntoContinuacao(context, messages) || ({ alteracao_reserva: "alteracao", cancelamento_reserva: "cancelamento",
+    problema_pagamento: "pagamento", objeto_perdido: "objeto_perdido" } as Record<string, string>)[reason] || "";
+  const cues: Record<string, string> = {
+    remarcacao: "Vamos continuar sobre a remarcação da sua reserva.",
+    alteracao: "Vamos continuar sobre a alteração da sua reserva.",
+    cancelamento: "Vamos continuar sobre o cancelamento da sua reserva.",
+    pagamento: "Vamos continuar sobre o pagamento da sua reserva.",
+    objeto_perdido: "Vamos continuar sobre o objeto que você perdeu na Fazenda.",
+    aniversario: "Vamos continuar sua dúvida sobre as condições para aniversariantes.",
+    pets: "Vamos continuar sua dúvida sobre levar seu pet à Fazenda.",
+    criancas: "Vamos continuar sobre a visita com crianças.",
+    alimentacao: "Vamos continuar sua dúvida sobre a alimentação na visita.",
+    localizacao: "Vamos continuar sua dúvida sobre como chegar à Fazenda.",
+    horarios: "Vamos continuar sobre os horários da visita.",
+    valores: "Vamos continuar sua dúvida sobre os valores da visita.",
+    formulario: "Vamos continuar com o preenchimento da sua reserva.",
+    reserva: "Vamos continuar com os detalhes da sua reserva.",
+    brunch_trilha: "Vamos continuar sobre sua visita de brunch e trilha.",
+    brunch: "Vamos continuar sobre sua visita para o brunch.",
+    trilha: "Vamos continuar sobre sua visita à trilha.",
+  };
+  const cue = cues[topic] || "Podemos continuar seu atendimento por aqui.";
+  const next = reason === "ligacao_nao_atendida" ? contatoUiraParaLigacaoNaoAtendida() : human
+    ? "Para falar com a equipe, ligue pelo botão de chamada deste WhatsApp, das 08h às 17h."
+    : "O que você precisa esclarecer para seguirmos?";
+  return `${greeting}\n\n${cue} ${next}`;
 };
 
 const phoneKey = (phone: string) => {
@@ -160,12 +222,19 @@ export const processarContinuacaoWhatsappSite = async (input: {
     await salvarContinuacaoWhatsappSite(input.sessionId, continuation);
 
     if (continuation.status !== "awaiting_phone" && continuation.status !== "cancelled") {
+      // Fix the customer payload before the first attempt; retries must retain
+      // the same text even when the conversation or the templates have changed.
+      if (!continuation.outboundText && !continuation.sentAt) {
+        continuation.outboundText = continuation.lastAttemptAt
+          ? mensagemContinuacaoWhatsappLegada(conversation.name, continuation.context, continuation.requestedHuman, continuation.reason)
+          : mensagemContinuacaoWhatsapp(conversation.name, continuation.context, continuation.requestedHuman, continuation.reason, conversation.messages);
+      }
       continuation.lastAttemptAt = Date.now();
       continuation.lastError = null;
       await salvarContinuacaoWhatsappSite(input.sessionId, continuation);
       if (!continuation.sentAt) {
         try {
-          const outboundText = mensagemContinuacaoWhatsapp(conversation.name, continuation.context, continuation.requestedHuman, continuation.reason);
+          const outboundText = continuation.outboundText!;
           const result = await (dependencies.send || enviarMensagemTransacionalPeloAgente)(
             conversation.phone,
             outboundText,
@@ -238,8 +307,8 @@ export const processarContinuacaoWhatsappSite = async (input: {
         ? "Tudo bem, seguimos por aqui. Se preferir, você também pode abrir o WhatsApp pelo botão abaixo."
         : continuation.status === "sent"
           ? continuation.requestedHuman
-            ? "Enviei uma mensagem para o seu WhatsApp com o resumo do pedido. 🌿"
-            : "Enviei uma mensagem para o seu WhatsApp com o resumo da nossa conversa. Responda por lá para continuar ou abra a conversa pelo botão abaixo. 🌿"
+            ? "Enviei uma mensagem para o seu WhatsApp para continuarmos o atendimento. 🌿"
+            : "Enviei uma mensagem para o seu WhatsApp. Responda por lá para continuarmos ou abra a conversa pelo botão abaixo. 🌿"
           : continuation.sentAt
             ? "Enviei a mensagem para o seu WhatsApp, mas não consegui confirmar o encaminhamento para a equipe. Seu pedido continua disponível neste chat. Você pode abrir o WhatsApp pelo botão abaixo ou me pedir para tentar novamente."
             : "Não consegui confirmar o envio da mensagem para o seu WhatsApp agora. Você pode abrir a conversa pelo botão abaixo ou me pedir para enviar no WhatsApp novamente.";

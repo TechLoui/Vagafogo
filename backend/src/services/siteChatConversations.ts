@@ -66,6 +66,7 @@ export type SiteWhatsAppContinuation = {
   lastError: string | null;
   gatewayJid: string;
   sentText?: string;
+  outboundText?: string;
   sentRequestedHuman?: boolean;
 };
 
@@ -224,6 +225,7 @@ const normalizeConversation = (id: string, value: Record<string, unknown>): Site
       lastError: rawContinuation.lastError ? String(rawContinuation.lastError).slice(0, 160) : null,
       gatewayJid: String(rawContinuation.gatewayJid ?? "").slice(0, 160),
       ...(typeof rawContinuation.sentText === "string" ? { sentText: rawContinuation.sentText.slice(0, 4096) } : {}),
+      ...(typeof rawContinuation.outboundText === "string" ? { outboundText: rawContinuation.outboundText.slice(0, 4096) } : {}),
       ...(typeof rawContinuation.sentRequestedHuman === "boolean" ? { sentRequestedHuman: rawContinuation.sentRequestedHuman } : {}),
     } : null,
     createdAt: normalizeTimestamp(value.createdAt, now),
