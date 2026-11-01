@@ -6049,8 +6049,8 @@
 .admin-reservation-list__row {
   grid-template-areas:
     "client client"
-    "participants value"
-    "pet pet"
+    "participants participants"
+    "pet value"
     "package package"
     "answers answers"
     "actions actions";
@@ -6200,14 +6200,16 @@
 }
 
 .admin-reservation-list__participant-tags {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 0.3rem;
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
 }
 
 .admin-reservation-list__inline-tags > .admin-reservation-list__participant-tag {
-  gap: 0.38rem;
-  padding: 0.25rem 0.3rem 0.25rem 0.5rem;
+  flex: 0 0 auto;
+  gap: 0.25rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.35rem;
 }
 
 .admin-reservation-list__participant-tag > span {
@@ -6216,7 +6218,7 @@
 
 .admin-reservation-list__participant-tag > strong {
   display: inline-flex;
-  min-width: 1.35rem;
+  min-width: 1.1rem;
   height: 1.35rem;
   align-items: center;
   justify-content: center;
@@ -6336,13 +6338,13 @@
   .admin-reservation-list__row {
     grid-template-columns:
       minmax(11.25rem, 1.15fr)
-      minmax(10rem, 1.05fr)
-      8rem
+      minmax(16rem, 1.05fr)
+      10.5rem
       minmax(17rem, 1.75fr)
       5rem
       6.25rem
       minmax(9.5rem, 0.95fr);
-    min-width: 70rem;
+    min-width: 76rem;
   }
 
   .admin-reservation-list__head > span {
@@ -6367,7 +6369,7 @@
 
   .admin-reservation-list__body {
     display: block;
-    min-width: 70rem;
+    min-width: 76rem;
     padding: 0;
   }
 
@@ -6514,18 +6516,6 @@
   border-color: rgba(251, 191, 36, 0.26) !important;
   background: rgba(251, 191, 36, 0.1) !important;
   color: #fde68a !important;
-}
-
-.admin-dashboard-theme--light .admin-reservation-list__age-tag.is-missing {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: rgba(255, 251, 235, 0.96);
-  color: #92400e;
-}
-
-.admin-dashboard-theme--dark .admin-reservation-list__age-tag.is-missing {
-  border-color: rgba(251, 191, 36, 0.24);
-  background: rgba(120, 53, 15, 0.3);
-  color: #fde68a;
 }
 
 .admin-dashboard-theme--light .admin-reservation-list__participant-tag > strong {
@@ -6682,13 +6672,13 @@
 @media (min-width: 1024px) {
   .admin-reservation-list__body {
     display: grid;
-    min-width: 70rem;
+    min-width: 76rem;
     gap: 0.85rem;
     padding: 0.85rem 0;
   }
 
   .admin-reservation-list__group {
-    min-width: 70rem;
+    min-width: 76rem;
     gap: 0;
     overflow: hidden;
     border: 1px solid transparent;
@@ -6696,7 +6686,7 @@
   }
 
   .admin-reservation-list__group-header {
-    min-width: 70rem;
+    min-width: 76rem;
     flex-direction: row;
     align-items: center;
     justify-content: space-between;

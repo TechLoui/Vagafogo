@@ -26,7 +26,6 @@ import {
   obterVagasExtrasDisponibilidade,
 } from '../utils/disponibilidade';
 import {
-  nomeTipoParticipante,
   nomesAtividadesReserva,
   resumirParticipantesReserva,
   rotuloAtividadeReserva,
@@ -4660,48 +4659,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const montarResumoParticipantes = useCallback(
     (reserva: Reserva) => resumirParticipantesReserva(reserva, tiposClientesAtivos),
-    [tiposClientesAtivos]
-  );
-
-  const extrairIdadesPorLabel = useCallback(
-    (reserva: Reserva) => {
-      const grupos = Array.isArray(reserva.gruposParticipacao) ? reserva.gruposParticipacao : [];
-      const acumulado = new Map<string, { label: string; idades: number[] }>();
-      grupos.forEach((grupo) => {
-        const mapaIdades = grupo?.idadesPorTipo;
-        if (!mapaIdades || typeof mapaIdades !== 'object') return;
-        Object.entries(mapaIdades).forEach(([chaveTipo, arr]) => {
-          if (!Array.isArray(arr) || arr.length === 0) return;
-          const label = nomeTipoParticipante(chaveTipo, tiposClientesAtivos);
-          const idadesValidas = arr
-            .map((n) => Number(n))
-            .filter((n) => Number.isFinite(n) && n >= 0);
-          if (idadesValidas.length === 0) return;
-          const atual = acumulado.get(label) ?? { label, idades: [] };
-          atual.idades = [...atual.idades, ...idadesValidas];
-          acumulado.set(label, atual);
-        });
-      });
-
-      tiposClientesAtivos
-        .filter((tipo) => {
-          const nome = normalizarTexto(tipo.nome);
-          return tipo.perguntarIdade === true || nome.includes('crian');
-        })
-        .forEach((tipo) => {
-          const quantidadeAtual = obterValorMapa(reserva.participantesPorTipo, tipo);
-          const quantidadeLegada = obterQuantidadeLegada(tipo, reserva);
-          const quantidade = Number.isFinite(quantidadeAtual)
-            ? Number(quantidadeAtual)
-            : quantidadeLegada;
-          if (quantidade <= 0 || acumulado.has(tipo.nome)) return;
-          acumulado.set(tipo.nome, { label: tipo.nome, idades: [] });
-        });
-
-      return Array.from(acumulado.values()).sort((a, b) =>
-        compararTextoNumericamente(a.label, b.label)
-      );
-    },
     [tiposClientesAtivos]
   );
 
@@ -11033,17 +10990,22 @@ const totalParticipantesDoDia = useMemo(() => {
                         const nomeComboReserva = normalizarTexto(
                           pacoteDescricao.replace(/^combo:\s*/i, '')
                         );
-                        const comboRelacionado = reservaEhCombo
+                        const grupoComboId = reserva.gruposParticipacao?.find(
+                          (grupo) => grupo.tipo === 'combo' && grupo.refId
+                        )?.refId;
+                        const comboRelacionado = combos.find((combo) => combo.id === grupoComboId) ?? (reservaEhCombo
                           ? combos.find(
                               (combo) => normalizarTexto(combo.nome) === nomeComboReserva
-                            ) ?? combos.find((combo) => {
+                            )
+                          : undefined) ?? (idsPacotesOrdenados.length > 1
+                            ? combos.find((combo) => {
                               const idsCombo = Array.from(new Set(combo.pacoteIds ?? [])).sort();
                               return (
                                 idsCombo.length === idsPacotesOrdenados.length &&
                                 idsCombo.every((id, index) => id === idsPacotesOrdenados[index])
                               );
                             })
-                          : undefined;
+                            : undefined);
                         const pacotesVisuais = pacotesEtiquetas.map((etiqueta, index) => {
                           const etiquetaNormalizada = normalizarTexto(
                             etiqueta.replace(/^combo:\s*/i, '')
@@ -11063,7 +11025,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                           return {
                             etiqueta,
-                            iconeUrl: comboRelacionado?.iconeUrl ?? (pacotesRelacionados.length === 1 ? pacoteRelacionado?.iconeUrl ?? '' : ''),
+                            iconeUrl: comboRelacionado?.iconeUrl || (pacotesRelacionados.length <= 1 ? pacoteRelacionado?.iconeUrl || '' : ''),
                           };
                         });
                         const valorFormatado = formatarValor(reserva.valor);
@@ -11124,29 +11086,6 @@ const totalParticipantesDoDia = useMemo(() => {
                                   </span>
                                 ))}
                               </div>
-                              {(() => {
-                                const idadesResumo = extrairIdadesPorLabel(reserva);
-                                if (idadesResumo.length === 0) return null;
-                                return (
-                                  <div className="admin-reservation-list__inline-tags mt-1">
-                                    {idadesResumo.map((item) => (
-                                      <span
-                                        key={`${reservaKey}-idades-${item.label}`}
-                                        className={`admin-reservation-list__age-tag ${item.idades.length === 0 ? 'is-missing' : ''}`}
-                                        title={
-                                          item.idades.length > 0
-                                            ? `Idades informadas para ${item.label}`
-                                            : `A reserva não possui idade salva para ${item.label}`
-                                        }
-                                      >
-                                        {item.idades.length > 0
-                                          ? `${item.label}: ${item.idades.join(', ')} anos`
-                                          : `${item.label}: idade não informada`}
-                                      </span>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
                             </div>
 
                             <div
@@ -11168,7 +11107,9 @@ const totalParticipantesDoDia = useMemo(() => {
                                       ].filter(Boolean).join(' • ')}
                                       aria-label={item.etiqueta}
                                     >
-                                      {item.iconeUrl && !item.etiqueta.includes(' + ') && <img src={item.iconeUrl} alt="" aria-hidden="true" />}
+                                      {item.iconeUrl
+                                        ? <img src={item.iconeUrl} alt="" aria-hidden="true" />
+                                        : <FaLayerGroup aria-hidden="true" />}
                                       <span>{item.etiqueta}</span>
                                     </span>
                                   ))
