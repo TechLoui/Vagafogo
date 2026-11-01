@@ -6200,6 +6200,8 @@
 }
 
 .admin-reservation-list__participant-tags {
+  align-items: flex-start;
+  flex-direction: column;
   gap: 0.3rem;
 }
 
@@ -6231,6 +6233,20 @@
 .admin-reservation-list__package-tag {
   gap: 0.38rem;
   padding: 0.22rem 0.5rem !important;
+}
+
+.admin-reservation-list__package-tag.is-activity {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.admin-reservation-list__package-tag.is-activity > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-reservation-list__package-tag img {

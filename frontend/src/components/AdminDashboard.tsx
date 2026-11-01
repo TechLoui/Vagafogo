@@ -3,6 +3,7 @@
 import React from 'react';
 
 import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, getDocFromServer, setDoc, onSnapshot, writeBatch, deleteField, Timestamp } from 'firebase/firestore';
+import type { DocumentData, QuerySnapshot } from 'firebase/firestore';
 import { auth, db, storage } from '../../firebase';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import {
@@ -24,6 +25,12 @@ import {
   normalizarVagasExtrasDisponibilidade,
   obterVagasExtrasDisponibilidade,
 } from '../utils/disponibilidade';
+import {
+  nomeTipoParticipante,
+  nomesAtividadesReserva,
+  resumirParticipantesReserva,
+  rotuloAtividadeReserva,
+} from '../utils/reservaResumo';
 
 import dayjs from 'dayjs';
 
@@ -748,7 +755,7 @@ function ReservaParticipantesResumo({
   itens,
   compact = false,
 }: {
-  itens: Array<{ key: string; label: string; quantidade: number }>;
+  itens: Array<{ key: string; label: string; inicial: string; quantidade: number }>;
   compact?: boolean;
 }) {
   if (itens.length === 0) {
@@ -762,8 +769,8 @@ function ReservaParticipantesResumo({
   return (
     <div className={`admin-reservas-breakdown ${compact ? 'is-compact' : ''}`}>
       {itens.map((item) => (
-        <div key={item.key} className="admin-reservas-breakdown__item">
-          <span className="admin-reservas-breakdown__label">{item.label}</span>
+        <div key={item.key} className="admin-reservas-breakdown__item" title={`${item.label}: ${item.quantidade}`} aria-label={`${item.label}: ${item.quantidade}`}>
+          <span className="admin-reservas-breakdown__label">{item.inicial}</span>
           <strong className="admin-reservas-breakdown__value">{item.quantidade}</strong>
         </div>
       ))}
@@ -4652,79 +4659,8 @@ const totalParticipantesDoDia = useMemo(() => {
   }
 
   const montarResumoParticipantes = useCallback(
-
-    (reserva: Reserva) => {
-
-      const mapa = reserva.participantesPorTipo ?? {};
-
-      const listaBase = tiposClientesAtivos.map((tipo) => {
-
-        const quantidade =
-
-          obterValorMapa(mapa, tipo) ?? obterQuantidadeLegada(tipo, reserva);
-
-        return {
-
-          key: obterChaveTipo(tipo),
-
-          label: tipo.nome,
-
-          quantidade: Number(quantidade) || 0,
-
-        };
-
-      });
-
-      const extras = Object.entries(mapa)
-
-        .filter(([chave]) =>
-
-          !tiposClientesAtivos.some(
-
-            (tipo) =>
-
-              tipo.id === chave ||
-
-              normalizarTexto(tipo.nome) === normalizarTexto(chave)
-
-          )
-
-        )
-
-        .map(([chave, quantidade]) => ({
-
-          key: chave,
-
-          label: chave,
-
-          quantidade: Number(quantidade) || 0,
-
-        }));
-
-      const naoPagante = Number(reserva.naoPagante ?? 0);
-
-      if (naoPagante > 0) {
-
-        extras.push({
-
-          key: 'nao-pagante',
-
-          label: 'Não pagante',
-
-          quantidade: naoPagante,
-
-        });
-
-      }
-
-      return [...listaBase, ...extras]
-        .filter((item) => item.quantidade > 0)
-        .sort((a, b) => compararTextoNumericamente(a.label, b.label));
-
-    },
-
+    (reserva: Reserva) => resumirParticipantesReserva(reserva, tiposClientesAtivos),
     [tiposClientesAtivos]
-
   );
 
   const extrairIdadesPorLabel = useCallback(
@@ -4736,10 +4672,7 @@ const totalParticipantesDoDia = useMemo(() => {
         if (!mapaIdades || typeof mapaIdades !== 'object') return;
         Object.entries(mapaIdades).forEach(([chaveTipo, arr]) => {
           if (!Array.isArray(arr) || arr.length === 0) return;
-          const tipo = tiposClientesAtivos.find(
-            (t) => t.id === chaveTipo || normalizarTexto(t.nome) === normalizarTexto(chaveTipo)
-          );
-          const label = tipo?.nome ?? chaveTipo;
+          const label = nomeTipoParticipante(chaveTipo, tiposClientesAtivos);
           const idadesValidas = arr
             .map((n) => Number(n))
             .filter((n) => Number.isFinite(n) && n >= 0);
@@ -4789,67 +4722,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
   const obterPacoteNomes = (reserva: Reserva) => {
-
-    const info = reserva as Record<string, any>;
-
-    const nomes: string[] = [];
-
-
-
-    if (Array.isArray(info.pacoteNomes)) {
-
-      nomes.push(...info.pacoteNomes.filter(Boolean));
-
-    } else if (Array.isArray(info.pacotes)) {
-
-      info.pacotes.forEach((item: any) => {
-
-        if (typeof item === 'string') {
-
-          nomes.push(item);
-
-        } else if (item?.nome) {
-
-          nomes.push(item.nome);
-
-        }
-
-      });
-
-    } else if (Array.isArray(info.pacoteIds)) {
-
-      info.pacoteIds.forEach((id: string) => {
-
-        const pacoteRelacionado = pacotes.find(p => p.id === id);
-
-        if (pacoteRelacionado?.nome) {
-
-          nomes.push(pacoteRelacionado.nome);
-
-        }
-
-      });
-
-    } else if (typeof info.pacote === 'string') {
-
-      nomes.push(info.pacote);
-
-    } else if (typeof info.pacoteNome === 'string') {
-
-      nomes.push(info.pacoteNome);
-
-    } else if (reserva.atividade) {
-
-      nomes.push(reserva.atividade);
-
-    }
-
-
-
-    return Array.from(new Set(nomes.filter(Boolean))).sort((a, b) =>
-      compararTextoNumericamente(a, b)
-    );
-
+    return nomesAtividadesReserva(reserva, pacotes, combos);
   };
 
 
@@ -4880,24 +4753,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
   };
 
-  const quebrarPacoteEmEtiquetas = (descricao: string) => {
-    if (!descricao || descricao === '---') return [];
-    return descricao
-      .split('+')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  };
-
-  const obterNomeCurtoPacote = (etiqueta: string) => {
-    if (/^combo\s*:/i.test(etiqueta.trim())) {
-      return 'Combo';
-    }
-
-    const nomeSemPrefixo = etiqueta
-      .replace(/^(?:(?:combo|pacote)\s*:?\s*)+/i, '')
-      .trim();
-
-    return nomeSemPrefixo.split(/\s+/)[0] || 'Pacote';
+  const etiquetasAtividadeReserva = (reserva: Reserva) => {
+    const rotulo = rotuloAtividadeReserva(reserva, pacotes, combos);
+    return rotulo ? [rotulo] : [];
   };
 
   const reservasAgendaResumo = useMemo(() => {
@@ -5418,9 +5276,9 @@ const totalParticipantesDoDia = useMemo(() => {
   };
   // Pacotes Logic
 
-  const fetchPacotes = useCallback(async () => {
+  const fetchPacotes = useCallback(async (snapshot?: QuerySnapshot<DocumentData>) => {
 
-    const snap = await getDocs(collection(db, 'pacotes'));
+    const snap = snapshot ?? await getDocs(collection(db, 'pacotes'));
 
     const lista = snap.docs.map(docSnap => {
 
@@ -5489,13 +5347,13 @@ const totalParticipantesDoDia = useMemo(() => {
 
   }, []);
 
-  const fetchTiposClientes = useCallback(async () => {
+  const fetchTiposClientes = useCallback(async (snapshot?: QuerySnapshot<DocumentData>) => {
 
     setCarregandoTiposClientes(true);
 
     try {
 
-      const snap = await getDocs(collection(db, 'tipos_clientes'));
+      const snap = snapshot ?? await getDocs(collection(db, 'tipos_clientes'));
 
       const lista = snap.docs
 
@@ -5531,8 +5389,6 @@ const totalParticipantesDoDia = useMemo(() => {
     } catch (error) {
 
       console.error('Erro ao carregar tipos de clientes:', error);
-
-      setTiposClientes([]);
 
     } finally {
 
@@ -6365,11 +6221,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-  const fetchCombos = useCallback(async () => {
+  const fetchCombos = useCallback(async (snapshot?: QuerySnapshot<DocumentData>) => {
 
     try {
 
-      const snap = await getDocs(collection(db, 'combos'));
+      const snap = snapshot ?? await getDocs(collection(db, 'combos'));
 
       const lista = snap.docs.map(docSnap => {
 
@@ -6442,13 +6298,18 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
   useEffect(() => {
-
-    fetchPacotes();
-
-    fetchCombos();
-
-    fetchTiposClientes();
-
+    const unsubscribes = [
+      onSnapshot(collection(db, 'pacotes'), (snapshot) => {
+        void fetchPacotes(snapshot);
+      }, (error) => console.error('Erro ao acompanhar pacotes:', error)),
+      onSnapshot(collection(db, 'combos'), (snapshot) => {
+        void fetchCombos(snapshot);
+      }, (error) => console.error('Erro ao acompanhar combos:', error)),
+      onSnapshot(collection(db, 'tipos_clientes'), (snapshot) => {
+        void fetchTiposClientes(snapshot);
+      }, (error) => console.error('Erro ao acompanhar tipos de participantes:', error)),
+    ];
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }, [fetchPacotes, fetchCombos, fetchTiposClientes]);
 
 
@@ -10167,7 +10028,7 @@ const totalParticipantesDoDia = useMemo(() => {
                                         ? 'admin-reservas-tone--pre'
                                         : 'admin-reservas-tone--default';
                                   const pacoteDescricao = formatarPacote(reserva);
-                                  const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
+                                  const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
                                   const valorFormatado = formatarValor(reserva.valor);
                                   const telefoneExibicao = reserva.telefone?.trim() || 'Sem telefone';
                                   const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
@@ -10524,7 +10385,7 @@ const totalParticipantesDoDia = useMemo(() => {
                                       : 'bg-white border-slate-200';
 
                             const pacoteDescricao = formatarPacote(reserva);
-                            const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
+                            const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
 
                                 const valorFormatado = formatarValor(reserva.valor);
 
@@ -10641,9 +10502,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                             resumoParticipantes.map((item) => (
 
-                                              <div key={item.key}>
+                                              <div key={item.key} title={`${item.label}: ${item.quantidade}`} aria-label={`${item.label}: ${item.quantidade}`}>
 
-                                                {item.label}: <span className="font-medium">{item.quantidade}</span>
+                                                {item.inicial}: <span className="font-medium">{item.quantidade}</span>
 
                                               </div>
 
@@ -10945,7 +10806,7 @@ const totalParticipantesDoDia = useMemo(() => {
                                   ? 'admin-reservas-tone--pre'
                                   : 'admin-reservas-tone--default';
                             const pacoteDescricao = formatarPacote(reserva);
-                            const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
+                            const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
                             const valorFormatado = formatarValor(reserva.valor);
                             const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
                             const reservaManual = reservaEhManual(reserva);
@@ -11162,7 +11023,7 @@ const totalParticipantesDoDia = useMemo(() => {
                           ? 'admin-reservas-tone--arrived'
                           : 'admin-reservas-tone--pending';
                         const pacoteDescricao = formatarPacote(reserva);
-                        const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
+                        const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
                         const pacoteIdsReserva = inferirPacoteIdsReserva(reserva);
                         const pacotesRelacionados = pacoteIdsReserva
                           .map((pacoteId) => pacotesPorId.get(pacoteId))
@@ -11183,12 +11044,7 @@ const totalParticipantesDoDia = useMemo(() => {
                               );
                             })
                           : undefined;
-                        const pacotesVisuais = comboRelacionado
-                          ? [{
-                              etiqueta: `Combo: ${comboRelacionado.nome}`,
-                              iconeUrl: comboRelacionado.iconeUrl ?? '',
-                            }]
-                          : pacotesEtiquetas.map((etiqueta, index) => {
+                        const pacotesVisuais = pacotesEtiquetas.map((etiqueta, index) => {
                           const etiquetaNormalizada = normalizarTexto(
                             etiqueta.replace(/^combo:\s*/i, '')
                           );
@@ -11207,7 +11063,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                           return {
                             etiqueta,
-                            iconeUrl: pacoteRelacionado?.iconeUrl ?? '',
+                            iconeUrl: comboRelacionado?.iconeUrl ?? (pacotesRelacionados.length === 1 ? pacoteRelacionado?.iconeUrl ?? '' : ''),
                           };
                         });
                         const valorFormatado = formatarValor(reserva.valor);
@@ -11260,8 +11116,10 @@ const totalParticipantesDoDia = useMemo(() => {
                                   <span
                                     key={`${reservaKey}-participante-${item.key}`}
                                     className="admin-reservation-list__participant-tag"
+                                    title={`${item.label}: ${item.quantidade}`}
+                                    aria-label={`${item.label}: ${item.quantidade}`}
                                   >
-                                    <span>{item.label}</span>
+                                    <span>{item.inicial}</span>
                                     <strong>{item.quantidade}</strong>
                                   </span>
                                 ))}
@@ -11297,11 +11155,11 @@ const totalParticipantesDoDia = useMemo(() => {
                               role="cell"
                             >
                               <div className="admin-reservation-list__inline-tags">
-                                {pacotesVisuais.some((item) => Boolean(item.iconeUrl)) ? (
-                                  pacotesVisuais.filter((item) => Boolean(item.iconeUrl)).map((item) => (
+                                {pacotesVisuais.length > 0 ? (
+                                  pacotesVisuais.map((item) => (
                                     <span
                                       key={`${reservaKey}-pacote-${item.etiqueta}`}
-                                      className="admin-reservation-list__package-tag is-compact"
+                                      className="admin-reservation-list__package-tag is-activity"
                                       title={[
                                         item.etiqueta,
                                         mesasDaReserva.length > 0
@@ -11310,12 +11168,12 @@ const totalParticipantesDoDia = useMemo(() => {
                                       ].filter(Boolean).join(' • ')}
                                       aria-label={item.etiqueta}
                                     >
-                                      <img src={item.iconeUrl} alt="" aria-hidden="true" />
-                                      <span>{obterNomeCurtoPacote(item.etiqueta)}</span>
+                                      {item.iconeUrl && !item.etiqueta.includes(' + ') && <img src={item.iconeUrl} alt="" aria-hidden="true" />}
+                                      <span>{item.etiqueta}</span>
                                     </span>
                                   ))
                                 ) : (
-                                  <span className="admin-reservation-list__package-empty" title="Ícone não definido">—</span>
+                                  <span className="admin-reservation-list__package-empty" title="Atividade não informada">—</span>
                                 )}
                               </div>
                             </div>
@@ -11527,7 +11385,7 @@ const totalParticipantesDoDia = useMemo(() => {
                                   : 'admin-reservas-tone--default';
 
                             const pacoteDescricao = formatarPacote(reserva);
-                            const pacotesEtiquetas = quebrarPacoteEmEtiquetas(pacoteDescricao);
+                            const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
 
                             const valorFormatado = formatarValor(reserva.valor);
 
@@ -11859,24 +11717,8 @@ const totalParticipantesDoDia = useMemo(() => {
                               <ul className="flex-1 divide-y divide-slate-50 overflow-y-auto">
                                 {lista.map((r, idx) => {
                                   const key = r.id ?? `resumo-${horario}-${idx}`;
-                                  const mapa = r.participantesPorTipo ?? {};
-                                  const tipos = Object.entries(mapa)
-                                    .filter(([, v]) => Number(v) > 0)
-                                    .map(([chave, v]) => {
-                                      const tipoEncontrado = tiposClientesAtivos.find(
-                                        (t) => obterChaveTipo(t) === chave
-                                      );
-                                      const inicial = tipoEncontrado
-                                        ? tipoEncontrado.nome.charAt(0).toUpperCase()
-                                        : chave.charAt(0).toUpperCase();
-                                      return `${inicial}:${v}`;
-                                    });
-                                  if (tipos.length === 0) {
-                                    if (Number(r.adultos) > 0) tipos.push(`A:${r.adultos}`);
-                                    if (Number(r.criancas) > 0) tipos.push(`C:${r.criancas}`);
-                                    if (Number(r.naoPagante) > 0) tipos.push(`N:${r.naoPagante}`);
-                                    if (Number(r.bariatrica) > 0) tipos.push(`B:${r.bariatrica}`);
-                                  }
+                                  const tipos = montarResumoParticipantes(r)
+                                    .map((item) => `${item.inicial}:${item.quantidade}`);
                                   const chegou = r.chegou === true;
                                   const perguntasResumo = obterPerguntasComResposta(r);
                                   return (
