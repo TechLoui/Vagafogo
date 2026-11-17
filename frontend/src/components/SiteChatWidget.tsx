@@ -457,7 +457,7 @@ export function SiteChatWidget() {
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || redirectedPhone || "");
   const [messages, setMessages] = useState<ChatMessage[]>(initial?.messages?.length ? initial.messages : [{ id: createId(), role: "assistant", content: WELCOME, createdAt: Date.now(), animate: true }]);
-  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.name || initial?.bookingUi?.step === "identity_phone" ? initial.bookingUi || null : null);
+  const [bookingUi, setBookingUi] = useState<BookingUi | null>(initial?.bookingUi ?? null);
   const [bookingProgress, setBookingProgress] = useState<BookingProgress>(initial?.bookingProgress || emptyBookingProgress());
   const updateBookingProgress = useCallback((patch: Partial<BookingProgress>) => {
     setBookingProgress((current) => ({ ...current, ...patch }));

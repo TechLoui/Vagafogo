@@ -44,7 +44,7 @@ const SEED = {
   "combos/combo": { nome: "Brunch + Trilha", ativo: true, pacoteIds: ["brunch", "trilha"], precosPorTipo: { adulto: 120, crianca: 50, isento: 0 } },
 };
 
-function setup(t, { paymentStatus = "PENDING", failAfterCreate = false } = {}) {
+function setup(t, { paymentStatus = "PENDING", failAfterCreate = false, qrFailures = 0 } = {}) {
   fixture = Object.assign(reservationFlowFixture(SEED), {
     emails: [], siteConfirmations: [], gatewayMessages: [], providerPosts: [], providerPayments: [],
   });
@@ -72,7 +72,10 @@ function setup(t, { paymentStatus = "PENDING", failAfterCreate = false } = {}) {
       return json({ data: fixture.providerPayments.filter((payment) => payment.externalReference === url.searchParams.get("externalReference")) });
     }
     if (url.pathname === "/v3/customers") return json({ data: [{ id: "cus_mock" }] });
-    if (/\/pixQrCode$/.test(url.pathname)) return json({ payload: "mock-pix-copy-paste", encodedImage: "bW9jay1pbWFnZQ==", expirationDate: "2099-08-09" });
+    if (/\/pixQrCode$/.test(url.pathname)) {
+      if (qrFailures-- > 0) return json({ error: "mock_qr_unavailable" }, 503);
+      return json({ payload: "mock-pix-copy-paste", encodedImage: "bW9jay1pbWFnZQ==", expirationDate: "2099-08-09" });
+    }
     assert.fail("Unexpected provider route " + url.pathname);
   });
   const previousKey = process.env.ASAAS_API_KEY;
@@ -312,4 +315,167 @@ test("replay pago continua disponível quando sua própria reserva esgota a lota
   assert.equal(replay.statusCode, 200);
   assert.deepEqual(replay.body, initial.body);
   assert.equal(memory.providerPosts.length, 1);
+});
+
+const staleOfferChanges = [
+  ["pacote desativado", (memory) => memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], ativo: false })],
+  ["pacote removido", (memory) => memory.rows.delete("pacotes/brunch")],
+  ["data bloqueada no pacote", (memory) => memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], datasBloqueadas: [DATE] })],
+  ["dia da semana desabilitado", (memory) => memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], dias: [(new Date(DATE + "T12:00:00Z").getUTCDay() + 1) % 7] })],
+  ["horário bloqueado com limite ilimitado", (memory) => {
+    memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], limite: 0 });
+    memory.rows.set("disponibilidade/" + DATE, { horarios: { [DATE + "-brunch-10:00"]: false } });
+  }],
+];
+for (const [name, change] of staleOfferChanges) {
+  test("checkout revalida " + name + " depois da cotação", async (t) => {
+    const memory = setup(t);
+    assert.equal((await agent.simularReservaAgente(draft())).prontoParaPagamento, true);
+    change(memory);
+    const response = await charge(checkout());
+    assert.equal(response.statusCode, 400);
+    assert.equal(memory.providerPosts.length, 0);
+  });
+}
+
+test("novo cartão reutiliza token legível mas expiração e adulteração não liberam dados", async (t) => {
+  const memory = setup(t);
+  const link = await agent.criarLinkCartaoAgente(draft());
+  const token = new URL(link.url).searchParams.get("agent_checkout");
+  const first = await agent.obterCheckoutAgente(token);
+  assert.deepEqual(await agent.obterCheckoutAgente(token), first);
+  assert.equal(memory.providerPosts.length, 0);
+  const tampered = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+  await assert.rejects(agent.obterCheckoutAgente(tampered), /CHECKOUT_NOT_FOUND/);
+});
+
+for (const status of ["cancelado", "cancelada", "refunded", "estornado", "chargeback"]) {
+  test("webhook atrasado não reativa reserva " + status, async (t) => {
+    const memory = setup(t);
+    const response = await charge(checkout());
+    const path = "reservas/" + response.body.reservaId;
+    memory.rows.set(path, { ...memory.value(path), status, confirmada: false });
+    await processarWebhookPagamento({ event: "PAYMENT_RECEIVED", payment: {
+      id: response.body.cobranca.id, externalReference: response.body.reservaId, billingType: "PIX", status: "RECEIVED",
+    } });
+    assert.equal(memory.value(path).status, status);
+    assert.equal(memory.gatewayMessages.length, 0);
+  });
+}
+
+test("a mesma tentativa PIX simultânea não duplica reserva nem cobrança", async (t) => {
+  const memory = setup(t);
+  const responses = await Promise.all(Array.from({ length: 4 }, () => charge(checkout())));
+  assert.ok(responses.every((response) => response.statusCode === 200));
+  assert.ok(responses.every((response) => response.body.reservaId === responses[0].body.reservaId));
+  assert.equal(memory.providerPosts.length, 1);
+});
+
+test("mudança de participantes e oferta invalida o resumo e o PIX do rascunho anterior", async (t) => {
+  setup(t);
+  const input = draft({ reservaId: "old-reservation", pagamentoId: "old-payment", pixLinkVagafogo: "https://vagafogo.com.br/reservar?old", pixCopiaCola: "old-pix" });
+  await agent.salvarRascunhoReservaAgente(input);
+  const changed = await agent.salvarRascunhoReservaAgente({
+    sessionId: input.sessionId, telefone: PHONE,
+    ofertaId: "trilha", participantesPorTipo: { ...PEOPLE, crianca: 1 }, idadesPorTipo: { crianca: [6], isento: [0] },
+  });
+  assert.equal(changed.dados.confirmouResumo, false);
+  assert.equal(changed.dados.pagamentoId, undefined);
+  assert.equal(changed.dados.pixCopiaCola, undefined);
+  assert.equal(changed.dados.reservaId, undefined);
+});
+
+test("checkout novo não cobra uma data de visita passada ou impossível", async (t) => {
+  const memory = setup(t);
+  for (const data of ["2020-01-01", "2099-02-31", "2099-99-01", "10/08/2099"]) {
+    const response = await charge(checkout({ data }), "date-check-" + data.replace(/\//g, "-"));
+    assert.equal(response.statusCode, 400);
+  }
+  assert.equal(memory.providerPosts.length, 0);
+});
+
+test("idade malformada nova não reaproveita silenciosamente idade antiga do rascunho", async (t) => {
+  setup(t);
+  await agent.salvarRascunhoReservaAgente(draft());
+  await assert.rejects(agent.salvarRascunhoReservaAgente({
+    sessionId: "whatsapp_" + PHONE, telefone: PHONE, idadesPorTipo: { crianca: [6.5, 10] },
+  }), /PARTICIPANT_AGES_INVALID/);
+});
+
+test("link PIX recupera QR temporariamente indisponível sem criar outra cobrança", async (t) => {
+  const memory = setup(t, { qrFailures: 1 });
+  const response = await charge(checkout());
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.cobranca.pixKey, undefined);
+  const link = await agent.criarLinkPixExistenteAgente({
+    reservaId: response.body.reservaId, paymentId: response.body.cobranca.id, telefone: PHONE,
+  });
+  assert.equal(link.pixKey, "mock-pix-copy-paste");
+  assert.match(link.qrCodeImage, /^data:image\/png;base64,/);
+  assert.equal(memory.providerPosts.length, 1);
+});
+
+const cardCheckout = (agentCheckoutToken) => checkout({
+  billingType: "CREDIT_CARD",
+  agentCheckoutToken,
+  creditCard: { holderName: "CLIENTE TESTE", number: "4111111111111111", expiryMonth: "12", expiryYear: "2099", ccv: "123" },
+  creditCardHolderInfo: { postalCode: "70000000", address: "Rua de Teste", addressNumber: "1", province: "Centro", city: "Brasília", state: "DF" },
+});
+
+test("mesmo link de cartão recarregado deduplica no servidor mesmo com header novo", async (t) => {
+  const memory = setup(t);
+  const link = await agent.criarLinkCartaoAgente(draft());
+  const token = new URL(link.url).searchParams.get("agent_checkout");
+  const bootstrap = await agent.obterCheckoutAgente(token);
+  assert.equal(bootstrap.checkoutToken, token);
+  const first = await charge(cardCheckout(token), "browser-before-reload");
+  const refreshed = await agent.obterCheckoutAgente(token);
+  assert.equal(refreshed.paymentIdempotencyKey, bootstrap.paymentIdempotencyKey);
+  const repeated = await charge(cardCheckout(token), "browser-after-reload");
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(repeated.body, first.body);
+  assert.equal(repeated.headers["Idempotent-Replayed"], "true");
+  assert.equal(memory.providerPosts.length, 1);
+});
+
+test("link expirado ou adulterado não cria pagamento e trocar o método não recobra tentativa anterior", async (t) => {
+  const memory = setup(t);
+  const link = await agent.criarLinkCartaoAgente(draft());
+  const token = new URL(link.url).searchParams.get("agent_checkout");
+  const pix = await charge(checkout({ agentCheckoutToken: token }));
+  assert.equal(pix.statusCode, 200);
+  const card = await charge(cardCheckout(token), "new-browser-payment");
+  assert.equal(card.statusCode, 409);
+  assert.equal(card.body.code, "IDEMPOTENCY_KEY_REUSED");
+  assert.match(card.body.error, /novo link/);
+  const changed = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+  assert.equal((await charge(cardCheckout(changed))).statusCode, 400);
+  const path = [...memory.rows.keys()].find((key) => key.startsWith("crm_agente_checkout_handoffs/"));
+  memory.rows.set(path, { ...memory.rows.get(path), expiraEm: Timestamp.fromMillis(1) });
+  assert.equal((await charge(cardCheckout(token))).statusCode, 410);
+  assert.equal(memory.providerPosts.length, 1);
+});
+
+test("recusa definitiva no link de cartão orienta nova tentativa sem cobrança duplicada", async (t) => {
+  const memory = setup(t, { paymentStatus: "DECLINED" });
+  const link = await agent.criarLinkCartaoAgente(draft());
+  const token = new URL(link.url).searchParams.get("agent_checkout");
+  const first = await charge(cardCheckout(token));
+  assert.equal(first.statusCode, 400);
+  assert.match(first.body.error, /novo link ao atendimento/);
+  const repeat = await charge(cardCheckout(token), "browser-after-decline");
+  assert.deepEqual(repeat.body, first.body);
+  assert.equal(memory.providerPosts.length, 1);
+});
+
+test("correção do rascunho não perde a associação de uma reserva já paga", async (t) => {
+  const memory = setup(t);
+  const input = draft({ reservaId: "paid-reservation", pagamentoId: "paid-payment" });
+  memory.rows.set("reservas/paid-reservation", { status: "pago", confirmada: true });
+  await agent.salvarRascunhoReservaAgente(input);
+  const changed = await agent.salvarRascunhoReservaAgente({
+    sessionId: input.sessionId, telefone: PHONE, participantesPorTipo: { ...PEOPLE, crianca: 1 },
+  });
+  assert.equal(changed.dados.reservaId, "paid-reservation");
+  assert.equal(changed.dados.pagamentoId, "paid-payment");
 });

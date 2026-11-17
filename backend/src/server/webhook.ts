@@ -11,6 +11,7 @@ import { registrarResultadoCampanhaReserva } from "../services/whatsappCampaigns
 import { requestAgentService } from "../services/agentGateway";
 import { concluirLeadAgenteComReserva } from "../services/agentReservationTools";
 import { classificarDataDisparo, normalizarDataDisparo } from "../services/whatsappDispatchDate";
+import { normalizarStatusReserva } from "../services/reservaStatus";
 
 type WebhookPayment = {
   id?: string;
@@ -405,6 +406,11 @@ export async function processarWebhookPagamento(payload: WebhookPayload) {
   const pagamentoEsperado = String(reservaExistente.asaasPaymentId ?? reservaExistente.pagamentoId ?? "").trim();
   if (pagamentoEsperado && payment?.id !== pagamentoEsperado) {
     console.warn(`[webhook] Pagamento não corresponde à cobrança da reserva ${externalReference}.`);
+    return;
+  }
+  const statusReserva = normalizarStatusReserva(reservaExistente.status);
+  if (/^(?:cancelad[oa]|canceled|cancelled|estornad[oa]|reembolsad[oa]|refunded|chargeback)$/.test(statusReserva)) {
+    console.warn(`[webhook] Confirmação atrasada ignorada para reserva encerrada ${externalReference}.`);
     return;
   }
 

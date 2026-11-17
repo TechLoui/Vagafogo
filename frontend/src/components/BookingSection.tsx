@@ -583,6 +583,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const [cartaoResultado, setCartaoResultado] = useState<{
     status: "success" | "pending" | "processing" | "retry" | "error";
     message: string;
+    solicitarNovoLink?: boolean;
   } | null>(null);
   const [enderecoCep, setEnderecoCep] = useState<string>("");
   const [enderecoRua, setEnderecoRua] = useState<string>("");
@@ -2970,6 +2971,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         pacoteIds: selectedPackages,
         comboId: grupoComboPrincipal?.refId || null,
         atribuicao: obterAtribuicaoReserva(),
+        ...(initialAgentCheckout?.checkoutToken ? { agentCheckoutToken: initialAgentCheckout.checkoutToken } : {}),
         ...(!initialAgentCheckout ? { whatsappMarketingOptIn } : {}),
       };
 
@@ -3008,7 +3010,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         billingType: formaPagamento,
       });
       const idempotencyKey =
-        paymentIdempotencyKeyRef.current ?? criarChaveIdempotenciaPagamento();
+        initialAgentCheckout?.paymentIdempotencyKey
+        ?? paymentIdempotencyKeyRef.current
+        ?? criarChaveIdempotenciaPagamento();
       paymentIdempotencyKeyRef.current = idempotencyKey;
 
       registrarEventoJornadaReserva({
@@ -3064,6 +3068,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         if (formaPagamento === "CREDIT_CARD") {
           setCartaoResultado({
             status: tentativaAindaEmAndamento ? "retry" : "error",
+            solicitarNovoLink: Boolean(initialAgentCheckout?.checkoutToken)
+              && ["PAYMENT_DECLINED", "AGENT_CHECKOUT_INVALID", "IDEMPOTENCY_KEY_REUSED"].includes(String(resposta?.code)),
             message: tentativaAindaEmAndamento || conflitoDeTentativa
               ? mensagemErro
               : `Compra negada: ${mensagemErro}`,
@@ -5324,14 +5330,22 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                   </div>
                   <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.24em] text-[#8B4F23]">Pagamento com cartão</p>
                   <h3 className="mt-1 font-display text-2xl font-bold text-[#2D1E0F]">
-                    {cartaoResultado.status === "processing" ? "Estamos processando" : cartaoResultado.status === "error" ? "Revise os dados do cartão" : "Confirmação em andamento"}
+                    {cartaoResultado.status === "processing" ? "Estamos processando" : cartaoResultado.solicitarNovoLink ? "Solicite um novo link" : cartaoResultado.status === "error" ? "Revise os dados do cartão" : "Confirmação em andamento"}
                   </h3>
                   <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">{cartaoResultado.message}</p>
                   <div className="mx-auto mt-4 grid max-w-sm gap-2 sm:grid-cols-2">
                     {["pending", "retry"].includes(cartaoResultado.status) && (
                       <a href="/minha-reserva" className="rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B]">Consultar reserva</a>
                     )}
-                    {["error", "retry"].includes(cartaoResultado.status) && (
+                    {cartaoResultado.solicitarNovoLink ? (
+                      <a
+                        href="/?atendimento=1"
+                        target="_top"
+                        className="rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B]"
+                      >
+                        Falar com o atendimento
+                      </a>
+                    ) : ["error", "retry"].includes(cartaoResultado.status) && (
                       <button
                         type="button"
                         onClick={() => {

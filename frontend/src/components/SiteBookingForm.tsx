@@ -182,11 +182,11 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const [selectedIds, setSelectedIds] = useState<string[]>(progress.selectedIds);
   const [preferredComboId, setPreferredComboId] = useState(progress.preferredComboId);
   const [times, setTimes] = useState<Record<string, string>>({ ...progress.times, ...ui.draft?.horariosPorPacote });
-  const [counts, setCounts] = useState<Record<string, number>>({ ...progress.counts, ...ui.draft?.participantesPorTipo });
+  const [counts, setCounts] = useState<Record<string, number>>({ ...ui.draft?.participantesPorTipo, ...progress.counts });
   const [ages, setAges] = useState<Record<string, string[]>>(() => ({
-    ...progress.ages,
     ...Object.fromEntries(Object.entries(ui.draft?.idadesPorTipo ?? {}).flatMap(([id, values]) =>
       Array.isArray(values) ? [[id, values.slice(0, 99).map(String)]] : [])),
+    ...progress.ages,
   }));
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");

@@ -8,6 +8,8 @@ export type AgentCheckoutAnswer = {
 export type AgentCheckoutHandoff = {
   version: 1;
   tipo?: "checkout_cartao" | "pix_existente";
+  checkoutToken?: string;
+  paymentIdempotencyKey?: string;
   tipoOferta: "combo" | "pacote";
   ofertaId: string;
   ofertaNome: string;
@@ -52,5 +54,10 @@ export const carregarCheckoutAgente = async (token: string, signal?: AbortSignal
   });
   const body = await response.json().catch(() => ({})) as AgentCheckoutHandoff & { error?: string };
   if (!response.ok) throw new Error(body.error || "Nao foi possivel carregar os dados do atendimento.");
-  return body;
+  return {
+    ...body,
+    ...(body.tipo !== "pix_existente" && body.formaPagamento === "CREDIT_CARD"
+      ? { checkoutToken: token }
+      : {}),
+  };
 };

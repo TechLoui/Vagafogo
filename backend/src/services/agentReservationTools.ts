@@ -1198,10 +1198,40 @@ export const criarLinkPixExistenteAgente = async (input: {
   const charge = responseBody && typeof responseBody === "object"
     ? (responseBody as Record<string, any>).cobranca
     : null;
-  const pixKey = clean(charge?.pixKey, 2_000);
-  const qrCodeImage = String(charge?.qrCodeImage ?? "").trim();
+  let pixKey = clean(charge?.pixKey, 2_000);
+  let qrCodeImage = String(charge?.qrCodeImage ?? "").trim();
+  let expirationDate = clean(charge?.expirationDate, 80) || null;
   if (!pixKey || !qrCodeImage.startsWith("data:image/")) {
-    throw new Error("AGENT_EXISTING_PIX_DATA_UNAVAILABLE");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      // A cobrança já existe. Recuperar apenas os dados do QR permite retomar
+      // uma falha temporária do provedor sem criar um segundo pagamento.
+      const response = await fetch(`https://api.asaas.com/v3/payments/${encodeURIComponent(paymentId)}/pixQrCode`, {
+        headers: { accept: "application/json", access_token: process.env.ASAAS_API_KEY ?? "" },
+        signal: controller.signal,
+      });
+      const pix = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok || typeof pix.payload !== "string" || !pix.payload.trim()
+        || typeof pix.encodedImage !== "string" || !pix.encodedImage.trim()) {
+        throw new Error("AGENT_EXISTING_PIX_DATA_UNAVAILABLE");
+      }
+      pixKey = clean(pix.payload, 2_000);
+      qrCodeImage = `data:image/png;base64,${pix.encodedImage}`;
+      expirationDate = clean(pix.expirationDate, 80) || null;
+      if (attempts.docs[0]) {
+        await attempts.docs[0].ref.set({
+          responseBody: {
+            ...(responseBody ?? {}),
+            cobranca: { ...(charge ?? {}), pixKey, qrCodeImage, expirationDate },
+          },
+        }, { merge: true });
+      }
+    } catch {
+      throw new Error("AGENT_EXISTING_PIX_DATA_UNAVAILABLE");
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   const pacoteIds = Array.isArray(reservation.pacoteIds)
@@ -1247,7 +1277,7 @@ export const criarLinkPixExistenteAgente = async (input: {
     paymentId,
     pixKey,
     qrCodeImage,
-    pixExpirationDate: clean(charge?.expirationDate, 80) || null,
+    pixExpirationDate: expirationDate,
     sessionId: clean(reservation.atribuicao?.sessionId, 100) || null,
     geradoEm: now.toISOString(),
     expiraEm: expiresAt.toISOString(),
@@ -1293,7 +1323,12 @@ export const obterCheckoutAgente = async (tokenValue: unknown) => {
     throw new Error("AGENT_CHECKOUT_EXPIRED");
   }
   await ref.set({ acessos: FieldValue.increment(1), ultimoAcessoEm: FieldValue.serverTimestamp() }, { merge: true });
-  return stored.payload as Record<string, unknown>;
+  const payload = stored.payload as Record<string, unknown>;
+  return payload.formaPagamento === "CREDIT_CARD" ? {
+    ...payload,
+    checkoutToken: token,
+    paymentIdempotencyKey: `agent-checkout-${checkoutTokenHash(token)}`,
+  } : payload;
 };
 
 export const processarCheckoutsAgenteExpirados = async () => {
@@ -1373,7 +1408,15 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   }
   if (owns(input, "horariosPorPacote")) patch.horariosPorPacote = timeMap(input.horariosPorPacote);
   if (owns(input, "participantesPorTipo")) patch.participantesPorTipo = numericMap(input.participantesPorTipo);
-  if (owns(input, "idadesPorTipo")) patch.idadesPorTipo = mapaIdadesInteiras(input.idadesPorTipo);
+  if (owns(input, "idadesPorTipo")) {
+    const received = input.idadesPorTipo;
+    const normalized = mapaIdadesInteiras(received);
+    if (!received || typeof received !== "object" || Array.isArray(received)
+      || Object.keys(received).length !== Object.keys(normalized).length) {
+      throw new Error("AGENT_PARTICIPANT_AGES_INVALID");
+    }
+    patch.idadesPorTipo = normalized;
+  }
   if (owns(input, "perguntasPersonalizadas")) patch.perguntasPersonalizadas = customQuestionAnswers(input.perguntasPersonalizadas);
   for (const key of ["confirmouCarteirinhaBariatrica", "temPet", "whatsappMarketingOptIn", "confirmouResumo"] as const) {
     if (owns(input, key) && typeof input[key] === "boolean") patch[key] = input[key];
@@ -1413,6 +1456,15 @@ const mergeReservationDraft = (current: Record<string, unknown>, patch: Record<s
   return merged;
 };
 
+const compararValorRascunho = (value: unknown): string => {
+  if (Array.isArray(value)) return JSON.stringify(value.map(compararValorRascunho));
+  if (value && typeof value === "object") {
+    return JSON.stringify(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, compararValorRascunho(item)]));
+  }
+  return JSON.stringify(value);
+};
+
 export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftInput) => {
   const identity = reservationDraftIdentity(input);
   const db = obterFirestoreAdmin();
@@ -1427,7 +1479,26 @@ export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftIn
   if (existing.exists && existing.data()?.dados && typeof existing.data()!.dados === "object") {
     Object.assign(previous, mergeReservationDraft(previous, existing.data()!.dados as Record<string, unknown>));
   }
-  const dados = mergeReservationDraft(previous, buildReservationDraftPatch(input));
+  const patch = buildReservationDraftPatch(input);
+  const dados = mergeReservationDraft(previous, patch);
+  const composicaoAlterada = [
+    "tipoOferta", "ofertaId", "data", "horario", "horariosPorPacote",
+    "participantesPorTipo", "idadesPorTipo", "perguntasPersonalizadas", "temPet",
+  ].some((key) => owns(patch, key) && previous[key] !== undefined
+    && compararValorRascunho(previous[key]) !== compararValorRascunho(dados[key]));
+  if (composicaoAlterada) {
+    if (patch.confirmouResumo !== true) dados.confirmouResumo = false;
+    let reservaPaga = previous.reservaConfirmada === true;
+    if (!reservaPaga && typeof previous.reservaId === "string" && previous.reservaId) {
+      const reserva = await db.collection("reservas").doc(previous.reservaId).get();
+      reservaPaga = reserva.exists && reservaEstaConfirmada(reserva.data());
+    }
+    if (!reservaPaga) {
+      for (const key of ["reservaId", "pagamentoId", "pixLinkVagafogo", "pixCopiaCola"]) {
+        if (!owns(patch, key)) delete dados[key];
+      }
+    }
+  }
   const now = new Date();
   const expiresAt = new Date(now.getTime() + AGENT_RESERVATION_DRAFT_TTL_MS);
   await ref.set({

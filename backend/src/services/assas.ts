@@ -31,7 +31,7 @@ import {
 import { registrarConclusaoJornadaReserva } from "./crmJourneys";
 import { registrarResultadoCampanhaReserva } from "./whatsappCampaigns";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
-import { concluirLeadAgenteComReserva } from "./agentReservationTools";
+import { concluirLeadAgenteComReserva, obterCheckoutAgente } from "./agentReservationTools";
 
 const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
 
@@ -358,6 +358,7 @@ type CreditCardHolderInfo = {
 };
 
 export type CriarCobrancaPayload = {
+  agentCheckoutToken?: string;
   nome: string;
   email: string;
   valor: number;
@@ -520,6 +521,13 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     return;
   }
 
+  const dataVisita = typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)
+    ? new Date(`${data}T12:00:00Z`) : null;
+  if (!dataVisita || !Number.isFinite(dataVisita.getTime()) || dataVisita.toISOString().slice(0, 10) !== data) {
+    res.status(400).json({ status: "erro", error: "Informe uma data de visita válida." });
+    return;
+  }
+
   // Validar CPF
   const cpfLimpo = somenteNumeros(cpf);
   if (cpfLimpo.length !== 11) {
@@ -626,10 +634,28 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   }
 
   // Impedir reservas em horários que já passaram no dia atual (horário de São Paulo)
+  let handoffIdempotencyKey: string | undefined;
+  if (req.body.agentCheckoutToken !== undefined) {
+    try {
+      const handoff = await obterCheckoutAgente(req.body.agentCheckoutToken);
+      if (handoff.formaPagamento !== "CREDIT_CARD" || typeof handoff.paymentIdempotencyKey !== "string") {
+        throw new Error("AGENT_CHECKOUT_PAYMENT_TYPE_INVALID");
+      }
+      handoffIdempotencyKey = handoff.paymentIdempotencyKey;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AGENT_CHECKOUT_TOKEN_INVALID";
+      res.status(message === "AGENT_CHECKOUT_EXPIRED" ? 410 : 400).json({
+        status: "erro",
+        code: "AGENT_CHECKOUT_INVALID",
+        error: "O link de pagamento expirou ou está inválido. Solicite um novo link ao atendimento.",
+      });
+      return;
+    }
+  }
   let idempotencyKey: string;
   try {
     idempotencyKey = normalizarChaveIdempotenciaPagamento(
-      req.get("Idempotency-Key")
+      handoffIdempotencyKey ?? req.get("Idempotency-Key")
     );
   } catch (error) {
     const message =
@@ -657,7 +683,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       res.status(409).json({
         status: "erro",
         code: "IDEMPOTENCY_KEY_REUSED",
-        error: "Os dados desta tentativa foram alterados. Use uma nova tentativa de pagamento.",
+        error: req.body.agentCheckoutToken
+          ? "Os dados deste link já foram enviados para pagamento. Solicite um novo link ao atendimento para alterar a reserva."
+          : "Os dados desta tentativa foram alterados. Use uma nova tentativa de pagamento.",
       });
       return;
     }
@@ -671,11 +699,15 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     return;
   }
 
+  const hojeSp = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date());
+  if (data < hojeSp) {
+    res.status(400).json({ status: "erro", error: "A data da visita já passou. Escolha uma nova data." });
+    return;
+  }
   const minutosSelecionados = parseHorarioParaMinutos(horarioFormatado);
   if (minutosSelecionados !== null) {
-    const hojeSp = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Sao_Paulo",
-    }).format(new Date());
     if (data === hojeSp) {
       const horarioAtualSp = new Intl.DateTimeFormat("en-GB", {
         timeZone: "America/Sao_Paulo",
@@ -758,7 +790,17 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     const pacotesSnapshot = await getDocs(collection(db, "pacotes"));
     const pacotesPorId = new Map<
       string,
-      { nome: string; limite: number; modoHorario?: string; horarios: string[] }
+      {
+        nome: string;
+        limite: number;
+        modoHorario?: string;
+        horarios: string[];
+        ativo: boolean;
+        dias: number[];
+        datasBloqueadas: string[];
+        horarioInicio?: string;
+        horarioFim?: string;
+      }
     >();
     const pacotesPorNome = new Map<string, string>();
 
@@ -775,6 +817,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         limite: Number.isFinite(limite) ? limite : 0,
         modoHorario,
         horarios,
+        ativo: dataPacote.ativo !== false,
+        dias: Array.isArray(dataPacote.dias) ? dataPacote.dias.map(Number) : [],
+        datasBloqueadas: Array.isArray(dataPacote.datasBloqueadas) ? dataPacote.datasBloqueadas.map(String) : [],
+        horarioInicio: typeof dataPacote.horarioInicio === "string" ? dataPacote.horarioInicio : undefined,
+        horarioFim: typeof dataPacote.horarioFim === "string" ? dataPacote.horarioFim : undefined,
       });
       if (nome) {
         pacotesPorNome.set(normalizarTexto(nome), docSnap.id);
@@ -826,6 +873,15 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
       for (const pacoteId of pacoteIdsSelecionados) {
         const pacoteInfo = pacotesPorId.get(pacoteId);
+        if (!pacoteInfo || !pacoteInfo.ativo) {
+          res.status(400).json({ status: "erro", error: "Uma atividade selecionada não está mais disponível. Atualize a reserva." });
+          return;
+        }
+        if (pacoteInfo.datasBloqueadas.includes(data)
+          || (pacoteInfo.dias.length > 0 && !pacoteInfo.dias.includes(dataVisita.getUTCDay()))) {
+          res.status(400).json({ status: "erro", error: `O pacote ${pacoteInfo.nome} não está disponível na data selecionada.` });
+          return;
+        }
         const limite = Number(pacoteInfo?.limite ?? 0);
         const horarioPacote = horariosPorPacoteNormalizado[pacoteId] ?? horarioFormatado;
         const participantesSolicitados =
@@ -839,7 +895,6 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
           return;
         }
 
-        if (!Number.isFinite(limite) || limite <= 0) continue;
         const ehFaixa =
           pacoteInfo?.modoHorario === "intervalo" ||
           (pacoteInfo?.horarios?.length ?? 0) === 0;
@@ -861,6 +916,16 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
             return;
           }
         }
+        if (ehFaixa) {
+          const selecionado = parseHorarioParaMinutos(horarioPacote);
+          const inicio = parseHorarioParaMinutos(pacoteInfo.horarioInicio);
+          const fim = parseHorarioParaMinutos(pacoteInfo.horarioFim);
+          if (selecionado !== null && inicio !== null && fim !== null && (selecionado < inicio || selecionado > fim)) {
+            res.status(400).json({ status: "erro", error: `O horário selecionado está fora do funcionamento de ${pacoteInfo.nome}.` });
+            return;
+          }
+        }
+        if (!Number.isFinite(limite) || limite <= 0) continue;
 
         const reservados = ehFaixa
           ? reservasPorPacoteDia[pacoteId] ?? 0
@@ -1202,7 +1267,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       const errorResponse = {
         status: "erro",
         code: "PAYMENT_DECLINED",
-        error: `Pagamento nao autorizado (${statusPagamento}). Verifique os dados e tente novamente.`,
+        error: req.body.agentCheckoutToken
+          ? `Pagamento não autorizado (${statusPagamento}). Solicite um novo link ao atendimento para corrigir os dados e tentar novamente.`
+          : `Pagamento nao autorizado (${statusPagamento}). Verifique os dados e tente novamente.`,
       };
       await concluirTentativaPagamento(
         paymentAttempt,
