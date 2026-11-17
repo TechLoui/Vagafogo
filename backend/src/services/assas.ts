@@ -1,9 +1,11 @@
 import type { Request, Response } from "express";
 import {
   criarReserva,
+  normalizarGruposParticipacao,
   type AtribuicaoReservaPayload,
   type GrupoParticipacaoPayload,
 } from "./reservas";
+import { validarIdadesCheckout } from "./reservaIdades";
 import { reservaContaParaOcupacao } from "./reservaStatus";
 import { obterCamposRetencaoReservaNaAtualizacao } from "./reservaRetention";
 import { enviarEmailConfirmacaoReserva } from "./emailReservas";
@@ -15,6 +17,7 @@ import {
   PaymentIdempotencyKeyError,
   aguardarTentativaPagamento,
   concluirTentativaPagamento,
+  consultarPagamentoConcluido,
   iniciarTentativaPagamento,
   liberarTentativaPagamento,
   normalizarChaveIdempotenciaPagamento,
@@ -87,53 +90,6 @@ const normalizarMapa = (mapa?: Record<string, number>) => {
   return Object.fromEntries(
     Object.entries(mapa).map(([chave, valor]) => [chave, normalizarNumero(valor)])
   );
-};
-
-const normalizarIdadesPorTipo = (mapa?: Record<string, number[]>) => {
-  if (!mapa || typeof mapa !== "object") return undefined;
-  const normalizado: Record<string, number[]> = {};
-  Object.entries(mapa).forEach(([chave, valores]) => {
-    if (!Array.isArray(valores)) return;
-    const idades = valores
-      .map((valor) => Number(valor))
-      .filter((valor) => Number.isFinite(valor) && valor >= 0 && valor <= 120);
-    if (idades.length > 0) {
-      normalizado[chave] = idades;
-    }
-  });
-  return Object.keys(normalizado).length > 0 ? normalizado : undefined;
-};
-
-const normalizarGruposParticipacao = (grupos?: GrupoParticipacaoPayload[]) => {
-  if (!Array.isArray(grupos)) return [];
-  return grupos
-    .map((grupo) => {
-      const refId = grupo.refId?.toString().trim();
-      const participantesPorTipo = normalizarMapa(grupo.participantesPorTipo) ?? {};
-      const participantes = Math.max(
-        somarMapa(participantesPorTipo),
-        normalizarNumero(grupo.participantes)
-      );
-      const pacoteIds = Array.isArray(grupo.pacoteIds)
-        ? grupo.pacoteIds
-            .map((id) => id?.toString().trim())
-            .filter((id): id is string => Boolean(id))
-        : [];
-      const idadesPorTipo = normalizarIdadesPorTipo(grupo.idadesPorTipo);
-      return {
-        tipo: grupo.tipo === "combo" ? "combo" : "pacote",
-        refId,
-        nome: grupo.nome?.toString().trim() || (grupo.tipo === "combo" ? "Combo" : "Pacote"),
-        pacoteIds,
-        participantesPorTipo,
-        participantes,
-        ...(idadesPorTipo ? { idadesPorTipo } : {}),
-      };
-    })
-    .filter(
-      (grupo): grupo is GrupoParticipacaoPayload =>
-        Boolean(grupo.refId) && grupo.pacoteIds.length > 0 && grupo.participantes > 0
-    );
 };
 
 const normalizarHorariosPorPacote = (horarios?: Record<string, string>) => {
@@ -416,6 +372,7 @@ export type CriarCobrancaPayload = {
   criancas: number;
   naoPagante: number;
   participantesPorTipo?: Record<string, number>;
+  idadesPorTipo?: Record<string, number[]>;
   gruposParticipacao?: GrupoParticipacaoPayload[];
   pacoteIds?: string[];
   comboId?: string | null;
@@ -458,6 +415,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     criancas,
     naoPagante,
     participantesPorTipo,
+    idadesPorTipo,
     gruposParticipacao,
     pacoteIds,
     comboId,
@@ -686,6 +644,33 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     return;
   }
 
+  // O resultado de uma cobrança já concluída independe de vagas ou regras
+  // alteradas depois do pagamento e deve ser devolvido sem criar outra cobrança.
+  try {
+    const completed = await consultarPagamentoConcluido(idempotencyKey, req.body);
+    if (completed?.type === "replay") {
+      res.set("Idempotent-Replayed", "true");
+      res.status(completed.response.httpStatus).json(completed.response.body);
+      return;
+    }
+    if (completed?.type === "conflict") {
+      res.status(409).json({
+        status: "erro",
+        code: "IDEMPOTENCY_KEY_REUSED",
+        error: "Os dados desta tentativa foram alterados. Use uma nova tentativa de pagamento.",
+      });
+      return;
+    }
+  } catch (error) {
+    console.error("[pagamento] Falha ao consultar tentativa anterior:", error);
+    res.status(503).json({
+      status: "erro",
+      code: "PAYMENT_IDEMPOTENCY_UNAVAILABLE",
+      error: "Não foi possível consultar o pagamento anterior. Tente novamente em instantes.",
+    });
+    return;
+  }
+
   const minutosSelecionados = parseHorarioParaMinutos(horarioFormatado);
   if (minutosSelecionados !== null) {
     const hojeSp = new Intl.DateTimeFormat("en-CA", {
@@ -721,6 +706,33 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
   let provisionalReservationId: string | null = null;
 
   try {
+    const tiposSnapshot = await getDocs(collection(db, "tipos_clientes"));
+    const tiposClientes = tiposSnapshot.docs.map((tipo) => {
+      const raw = tipo.data();
+      return {
+        id: tipo.id,
+        nome: typeof raw.nome === "string" && raw.nome.trim() ? raw.nome.trim() : tipo.id,
+        perguntarIdade: raw.perguntarIdade,
+        idadeMinima: raw.idadeMinima,
+        idadeMaxima: raw.idadeMaxima,
+      };
+    });
+    const validacaoIdades = validarIdadesCheckout(tiposClientes, {
+      participantesPorTipo: participantesPorTipoNormalizado,
+      gruposParticipacao: gruposParticipacaoNormalizados,
+      criancas,
+      naoPagante,
+      idadesPorTipo,
+    });
+    const idadesIncompletas = validacaoIdades.pendencias.length > 0;
+    const responderIdadesIncompletas = () => {
+      res.status(400).json({
+        status: "erro",
+        code: "PARTICIPANT_AGES_INVALID",
+        error: validacaoIdades.pendencias.join(" "),
+      });
+    };
+
     const disponibilidadeRef = doc(db, "disponibilidade", data);
     const disponibilidadeSnap = await getDoc(disponibilidadeRef);
     const disponibilidadeDados = disponibilidadeSnap.exists() ? disponibilidadeSnap.data() : null;
@@ -881,7 +893,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     console.log("💾 Criando reserva no Firebase...");
     let claim;
     try {
-      claim = await iniciarTentativaPagamento(idempotencyKey, req.body);
+      claim = await iniciarTentativaPagamento(idempotencyKey, req.body, !idadesIncompletas);
     } catch (error) {
       console.error("[pagamento] Protecao de idempotencia indisponivel:", error);
       res.status(503).json({
@@ -890,6 +902,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         error:
           "Nao foi possivel iniciar o pagamento com seguranca. Tente novamente em instantes.",
       });
+      return;
+    }
+
+    if (claim.type === "missing") {
+      responderIdadesIncompletas();
       return;
     }
 
@@ -931,7 +948,21 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     }
 
     paymentAttempt = claim.context;
-    const reservaId = await criarReserva({
+    let cobrancaData: any = null;
+    if (idadesIncompletas) {
+      // Uma tentativa anterior à validação de idades só pode retomar uma cobrança já criada.
+      const reservaExistente = await getDoc(doc(db, "reservas", paymentAttempt.reservaId));
+      if (reservaExistente.exists()) {
+        cobrancaData = await buscarCobrancaAsaasPorReferencia(paymentAttempt.reservaId);
+      }
+      if (!cobrancaData?.id) {
+        await liberarTentativaPagamento(paymentAttempt);
+        paymentAttempt = null;
+        responderIdadesIncompletas();
+        return;
+      }
+    }
+    const reservaId = idadesIncompletas ? paymentAttempt.reservaId : await criarReserva({
       reservaId: paymentAttempt.reservaId,
       nome,
       cpf,
@@ -946,6 +977,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       criancas,
       naoPagante,
       participantesPorTipo: participantesPorTipoNormalizado,
+      idadesPorTipo: validacaoIdades.idades,
       gruposParticipacao: gruposParticipacaoNormalizados,
       pacoteIds: pacoteIdsNormalizados,
       comboId: comboIdNormalizado,
@@ -964,9 +996,10 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
     const dataHoje = new Date().toISOString().split("T")[0];
     const splitConfig = getSplitConfig();
-    let cobrancaData: any = await buscarCobrancaAsaasPorReferencia(reservaId);
+    cobrancaData ??= await buscarCobrancaAsaasPorReferencia(reservaId);
 
     if (cobrancaData) {
+      paymentCreationStarted = true;
       console.warn("[asaas] Reutilizando cobranca ja existente.", {
         paymentId: cobrancaData.id,
         externalReference: reservaId,

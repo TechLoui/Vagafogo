@@ -1,3 +1,5 @@
+import { normalizarLimiteIdade, tipoEhInfantil } from './idadeParticipante.ts';
+
 export type TipoParticipanteResumo = { id?: string; nome: string };
 export type ParticipanteReservaResumo = {
   key: string;
@@ -8,6 +10,7 @@ export type ParticipanteReservaResumo = {
 export type AtividadeReservaResumo = { id?: string; nome: string; pacoteIds?: string[] };
 export type ReservaParaResumo = {
   participantesPorTipo?: Record<string, unknown>;
+  idadesPorTipo?: Record<string, unknown>;
   adultos?: unknown;
   criancas?: unknown;
   bariatrica?: unknown;
@@ -26,6 +29,7 @@ export type ReservaParaResumo = {
     nome?: string;
     pacoteIds?: string[];
     participantesPorTipo?: Record<string, unknown>;
+    idadesPorTipo?: Record<string, unknown>;
     participantes?: unknown;
   }>;
 };
@@ -53,7 +57,7 @@ const nomeLegado = (value: string) => {
   if (/^(adultos?|adults?)$/.test(normalized)) return 'Adulto';
   if (/^(criancas?|children|child)$/.test(normalized)) return 'Criança';
   if (/^(bariatric[ao]s?)$/.test(normalized)) return 'Bariátrica';
-  if (/^(nao pagantes?|isentos?)$/.test(normalized)) return 'Não pagante';
+  if (/^(nao ?pagantes?(?: legado)?|isentos?)$/.test(normalized)) return 'Não pagante';
   return undefined;
 };
 
@@ -104,6 +108,57 @@ export function resumirParticipantesReserva(
   add('nao-pagante', 'Não pagante', quantidade(reserva.naoPagante));
   return result.map((item) => ({ ...item, inicial: Array.from(item.label)[0]?.toLocaleUpperCase('pt-BR') || 'P' }))
     .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base', numeric: true }));
+}
+
+const listarIdades = new Intl.ListFormat('pt-BR', { type: 'conjunction' });
+
+export function rotuloParticipanteComIdades(
+  reserva: ReservaParaResumo,
+  participante: ParticipanteReservaResumo,
+  tipos: readonly TipoParticipanteResumo[] = [],
+): string | undefined {
+  const { label, key, quantidade } = participante;
+  if (!tipoEhInfantil({ id: key, nome: label })) return undefined;
+
+  const categoria = normalizar(label);
+  const lerIdades = (mapa?: Record<string, unknown>) => {
+    if (!mapa) return [];
+    const entrada = Array.isArray(mapa[key])
+      ? [key, mapa[key]]
+      : Object.entries(mapa).find(([id, idades]) =>
+        Array.isArray(idades) && normalizar(nomeTipoParticipante(id, tipos)) === categoria);
+    const principais = Array.isArray(entrada?.[1]) ? entrada[1] : [];
+    const adicionais = categoria === 'nao pagante' && entrada?.[0] !== 'nao_pagante_legado'
+      && Array.isArray(mapa.nao_pagante_legado) ? mapa.nao_pagante_legado : [];
+    return [...principais, ...adicionais].flatMap((valor) => {
+      const idade = normalizarLimiteIdade(valor);
+      return idade === undefined ? [] : [idade];
+    });
+  };
+
+  const diretas = lerIdades(reserva.idadesPorTipo);
+  const idades = (diretas.length > 0
+    ? diretas
+    : (Array.isArray(reserva.gruposParticipacao) ? reserva.gruposParticipacao : [])
+      .flatMap((grupo) => lerIdades(grupo?.idadesPorTipo)))
+    .slice(0, quantidade);
+
+  const plural = quantidade !== 1;
+  let nome = label.toLocaleLowerCase('pt-BR');
+  if (/^(criancas?|infantil|infantis)$/.test(categoria)) nome = plural ? 'crianças' : 'criança';
+  if (categoria === 'nao pagante') nome = plural ? 'não pagantes' : 'não pagante';
+  if (/^bebes?$/.test(categoria)) nome = plural ? 'bebês' : 'bebê';
+  if (/^isentos?$/.test(categoria)) nome = plural ? 'isentos' : 'isento';
+  if (/^isentas?$/.test(categoria)) nome = plural ? 'isentas' : 'isenta';
+
+  const inicio = `${quantidade} ${nome} · `;
+  if (idades.length === 0) return inicio + (plural ? 'Idades não informadas' : 'Idade não informada');
+
+  const rotulo = idades.length === 1 ? 'Idade' : 'Idades';
+  const anos = idades.length === 1 && idades[0] === 1 ? 'ano' : 'anos';
+  const faltantes = quantidade - idades.length;
+  const restante = faltantes > 0 ? ` · ${faltantes} sem idade informada` : '';
+  return `${inicio}${rotulo}: ${listarIdades.format(idades.map(String))} ${anos}${restante}`;
 }
 
 const limparNomeAtividade = (value: unknown) => texto(value)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   nomeTipoParticipante, resumirParticipantesReserva, nomesAtividadesReserva, rotuloAtividadeReserva,
+  rotuloParticipanteComIdades,
 } from '../src/utils/reservaResumo.ts';
 
 const adultId = 'wo7n4CGFJYC6WO9Ez1wh';
@@ -54,6 +55,32 @@ test('reservas legadas incluem não pagantes e não alteram o objeto salvo', () 
 });
 
 const packages = [{ id: 'brunch', nome: 'Brunch' }, { id: 'trilha', nome: 'Trilha', iconeUrl: '' }];
+
+test('escreve as idades de crianças no resumo, com preferência pelos dados diretos', () => {
+  const reserva = {
+    participantesPorTipo: { [adultId]: 1, [childId]: 2 },
+    idadesPorTipo: { crianca: [7, 10] },
+    gruposParticipacao: [
+      { idadesPorTipo: { [childId]: [8] } },
+      { idadesPorTipo: { crianca: [11] } },
+    ],
+  };
+  const [adulto, crianca] = resumirParticipantesReserva(reserva, types);
+  assert.equal(rotuloParticipanteComIdades(reserva, adulto, types), undefined);
+  assert.equal(rotuloParticipanteComIdades(reserva, crianca, types), '2 crianças · Idades: 7 e 10 anos');
+  assert.equal(
+    rotuloParticipanteComIdades({ ...reserva, idadesPorTipo: undefined }, crianca, types),
+    '2 crianças · Idades: 8 e 11 anos',
+  );
+});
+
+test('identifica idades não informadas e preserva a idade zero do não pagante', () => {
+  const reserva = { criancas: 2, naoPagante: 1, idadesPorTipo: { crianca: [7, null], nao_pagante: [0] } };
+  const [crianca, naoPagante] = resumirParticipantesReserva(reserva);
+  assert.equal(rotuloParticipanteComIdades(reserva, crianca), '2 crianças · Idade: 7 anos · 1 sem idade informada');
+  assert.equal(rotuloParticipanteComIdades(reserva, naoPagante), '1 não pagante · Idade: 0 anos');
+  assert.equal(rotuloParticipanteComIdades({ criancas: 2 }, crianca), '2 crianças · Idades não informadas');
+});
 test('atividades não dependem de ícone e as duas ficam em uma linha', () => {
   assert.equal(rotuloAtividadeReserva({ pacoteIds: ['brunch'] }, packages), 'Brunch');
   assert.equal(rotuloAtividadeReserva({ pacoteIds: ['trilha'] }, packages), 'Trilha');

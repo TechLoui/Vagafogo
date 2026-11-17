@@ -8,12 +8,13 @@ import {
   FaHiking, FaLeaf, FaQrcode, FaRegCheckCircle, FaUser,
   FaUsers, FaUtensils, FaWhatsapp,
 } from "react-icons/fa";
+import { idadeParticipanteValida, limitesIdade, normalizarLimiteIdade, tipoExigeIdades } from "../utils/idadeParticipante";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
-type VisitorType = { id: string; nome: string; descricao?: string; idadeMinima?: number; idadeMaxima?: number };
+type VisitorType = { id: string; nome: string; descricao?: string; perguntarIdade?: boolean; idadeMinima?: number; idadeMaxima?: number };
 type Package = {
   id: string; nome: string; descricao?: string; iconeUrl?: string; emoji?: string;
   modoHorario: string; horarios: string[]; diasSemana: number[]; datasBloqueadas: string[];
@@ -37,6 +38,7 @@ export type BookingProgress = {
   date: string;
   times: Record<string, string>;
   counts: Record<string, number>;
+  ages: Record<string, string[]>;
 };
 
 export type BookingUi = {
@@ -51,6 +53,7 @@ export type BookingUi = {
     horario?: string;
     horariosPorPacote?: Record<string, string>;
     participantesPorTipo?: Record<string, number>;
+    idadesPorTipo?: Record<string, number[]>;
   };
 };
 
@@ -60,7 +63,8 @@ export type SiteBookingSelection = {
   ofertaId: string;
   data: string;
   horariosPorPacote: Record<string, string>;
-} | { step: "guidance"; accepted: boolean }
+} | { step: "participants"; participantesPorTipo: Record<string, number>; idadesPorTipo: Record<string, number[]> }
+  | { step: "guidance"; accepted: boolean }
   | { step: "booking_mode"; mode: "self_service" | "guided" };
 
 const validCpf = (input: string) => {
@@ -91,7 +95,10 @@ const formatPhone = (value: string) => {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, split)}-${digits.slice(split)}`;
 };
 
-const quantityOf = (counts: Record<string, number>, id: string) => Math.max(0, Math.min(99, Number(counts[id]) || 0));
+const quantityOf = (counts: Record<string, number>, id: string) => {
+  const count = Number(counts[id]);
+  return Number.isInteger(count) ? Math.max(0, Math.min(99, count)) : 0;
+};
 const readableDate = (date: string) => date ? date.split("-").reverse().join("/") : "";
 const dateFromKey = (key: string) => /^\d{4}-\d{2}-\d{2}$/.test(key) ? new Date(`${key}T12:00:00`) : undefined;
 const keyFromDate = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
@@ -110,16 +117,15 @@ const participantOrder = (type: VisitorType) => {
 const participantHint = (type: VisitorType) => {
   const description = type.descricao?.trim() || "";
   const name = type.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const minimum = typeof type.idadeMinima === "number" && Number.isFinite(type.idadeMinima) ? type.idadeMinima : undefined;
-  const maximum = typeof type.idadeMaxima === "number" && Number.isFinite(type.idadeMaxima) ? type.idadeMaxima : undefined;
+  const requiredRange = tipoExigeIdades(type) ? limitesIdade(type) : undefined;
+  const minimum = requiredRange?.min ?? normalizarLimiteIdade(type.idadeMinima);
+  const maximum = requiredRange?.max ?? normalizarLimiteIdade(type.idadeMaxima);
   const age = minimum !== undefined && maximum !== undefined
     ? `De ${minimum} a ${maximum} anos`
     : minimum !== undefined ? `A partir de ${minimum} anos`
       : maximum !== undefined ? `Até ${maximum} anos` : "";
   if (description) return age && !/\d+\s*(?:a|até|anos?)/i.test(description) ? `${age} · ${description}` : description;
   if (age) return name.includes("nao pagante") || name.includes("isento") ? `${age} · sem cobrança` : age;
-  if (name.includes("nao pagante") || name.includes("isento")) return "Crianças de 0 a 4 anos · isentas de pagamento";
-  if (name.includes("crianca")) return "Crianças de 5 a 12 anos";
   if (name.includes("idos")) return "Pessoas a partir de 60 anos";
   if (name.includes("adult")) return "Pessoas a partir de 13 anos";
   if (name.includes("bariat")) return "Categoria bariátrica, com valor próprio";
@@ -177,6 +183,11 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const [preferredComboId, setPreferredComboId] = useState(progress.preferredComboId);
   const [times, setTimes] = useState<Record<string, string>>({ ...progress.times, ...ui.draft?.horariosPorPacote });
   const [counts, setCounts] = useState<Record<string, number>>({ ...progress.counts, ...ui.draft?.participantesPorTipo });
+  const [ages, setAges] = useState<Record<string, string[]>>(() => ({
+    ...progress.ages,
+    ...Object.fromEntries(Object.entries(ui.draft?.idadesPorTipo ?? {}).flatMap(([id, values]) =>
+      Array.isArray(values) ? [[id, values.slice(0, 99).map(String)]] : [])),
+  }));
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [cpf, setCpf] = useState("");
@@ -294,7 +305,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   const quote = orderedTypes.map((type) => {
     const quantity = quantityOf(counts, type.id);
     const packageSum = selected.reduce((sum, item) => sum + (Number(item.precosPorTipo?.[type.id]) || 0), 0);
-    const hasCategoryPrices = combo && catalog.tiposClientes.some((visitor) => Number(combo.precosPorTipo?.[visitor.id]) > 0);
+    const hasCategoryPrices = combo && catalog?.tiposClientes.some((visitor) => Number(combo.precosPorTipo?.[visitor.id]) > 0);
     const unit = combo
       ? hasCategoryPrices ? Number(combo.precosPorTipo?.[type.id]) || 0
         : combo.preco > 0 ? combo.preco : packageSum * (1 - Math.min(100, Math.max(0, combo.desconto || 0)) / 100)
@@ -374,10 +385,33 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
       if (!quote.length) { setError("Informe quantas pessoas vão participar."); return; }
       if (!availabilityReady) { setError("Aguarde a atualização das vagas ou informe as pessoas por mensagem."); return; }
       if (participantsExceedCapacity) { setError(`Há ${remainingPlaces} ${remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta opção. Ajuste a quantidade para continuar.`); return; }
+
+      const participantesPorTipo: Record<string, number> = {};
+      const idadesPorTipo: Record<string, number[]> = {};
+      for (const { type, quantity } of quote) {
+        participantesPorTipo[type.id] = quantity;
+        if (!tipoExigeIdades(type)) continue;
+        const values = ages[type.id] ?? [];
+        if (values.length !== quantity || values.some((age) => !idadeParticipanteValida(age, type))) {
+          const { min, max } = limitesIdade(type);
+          setError(`Informe as idades para ${type.nome} (${min} a ${max} anos).`);
+          return;
+        }
+        idadesPorTipo[type.id] = values.map(Number);
+      }
+
       const timeReminder = scheduled.length && !missingTime
         ? ` Horário escolhido: ${scheduled.map((item) => `${item.nome} às ${knownTime(item)}`).join(" e ")}.`
         : "";
-      await answer(`Seremos ${quote.map(({ type, quantity }) => `${quantity} ${type.nome.toLowerCase()}`).join(", ")}.${timeReminder} Pode confirmar se há vaga para o grupo?`);
+      const visitors = quote.map(({ type, quantity }) => {
+        const agesForType = idadesPorTipo[type.id];
+        return `${quantity} ${type.nome.toLowerCase()}${agesForType ? ` (${agesForType.join(" e ")} anos)` : ""}`;
+      }).join(", ");
+      await answer(`Seremos ${visitors}.${timeReminder} Pode confirmar se há vaga para o grupo?`, undefined, {
+        step: "participants",
+        participantesPorTipo,
+        idadesPorTipo,
+      });
     } else if (step === "contact") {
       if ((needsName && fullName.trim().split(/\s+/).length < 2) || (needsEmail && !email.includes("@")) || (needsCpf && !validCpf(cpf)) || (needsPet && !pet)) {
         setError("Confira os dados solicitados para continuar."); return;
@@ -398,7 +432,32 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
     setSelectedIds(next);
     setTimes({});
     setCounts({});
-    onProgress({ selectedIds: next, preferredComboId: "", times: {}, counts: {} });
+    setAges({});
+    onProgress({ selectedIds: next, preferredComboId: "", times: {}, counts: {}, ages: {} });
+    setError("");
+  };
+
+  const setParticipantCount = (type: VisitorType, count: number) => {
+    const nextCounts = { ...counts, [type.id]: count };
+    const nextAges = { ...ages };
+    if (count > 0 && tipoExigeIdades(type)) {
+      nextAges[type.id] = Array.from({ length: count }, (_, index) => ages[type.id]?.[index] ?? "");
+    } else {
+      delete nextAges[type.id];
+    }
+    setCounts(nextCounts);
+    setAges(nextAges);
+    onProgress({ counts: nextCounts, ages: nextAges });
+    setError("");
+  };
+
+  const setParticipantAge = (type: VisitorType, count: number, index: number, age: string) => {
+    const nextAges = {
+      ...ages,
+      [type.id]: Array.from({ length: count }, (_, i) => i === index ? age : ages[type.id]?.[i] ?? ""),
+    };
+    setAges(nextAges);
+    onProgress({ ages: nextAges });
     setError("");
   };
   // Uma sessão antiga pode conter uma etapa de outra versão do site. Nesse
@@ -441,7 +500,7 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
   );
 
   return (
-    <form onSubmit={(event) => void submit(event)} className="min-w-0 bg-white text-[#263d31]" aria-label="Responder à Jatobá">
+    <form onSubmit={(event) => void submit(event)} noValidate={step === "participants"} className="min-w-0 bg-white text-[#263d31]" aria-label="Responder à Jatobá">
       <div className="border-b border-[#e6ecdf] bg-gradient-to-r from-[#f3f8ee] via-[#fbfcf8] to-white px-3.5 py-3 sm:px-4">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#dfeee0] text-[#20745a]"><StageIcon aria-hidden="true" /></span>
@@ -528,21 +587,71 @@ export function SiteBookingForm({ ui, sending, onAnswer, progress, onProgress, s
           </div>
         ))}{agendaError && <p role="alert" className="text-xs text-amber-800">Não consegui consultar os horários agora. Você pode escolher por mensagem.</p>}{agenda && date && !dateHasTimes(date) && <p role="alert" className="text-xs text-amber-800">Não há mais horários nessa data. Diga outra data no chat para eu verificar.</p>}<p className="text-xs leading-relaxed text-[#617267]">O horário escolhido é para estar à mesa no brunch. A Jatobá ainda confirmará a disponibilidade; há 15 minutos de tolerância.</p></div>)}
 
-        {step === "participants" && (catalogError ? <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p> : !catalog ? <p className="text-sm text-[#667468]">Carregando categorias…</p> : <div className="space-y-2">{!availabilityReady && <p className="text-xs text-[#718075]">{agendaError ? "Não consegui atualizar as vagas. Você pode informar as pessoas por mensagem." : "Atualizando as vagas disponíveis…"}</p>}{availabilityReady && remainingPlaces !== null && <p className="text-xs font-medium text-[#46664d]">{remainingPlaces} {remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta visita.</p>}<div className="grid gap-1.5 min-[430px]:grid-cols-2">{orderedTypes.map((type) => {
-          const count = quantityOf(counts, type.id);
-          const hint = participantHint(type);
-          return <div key={type.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2 min-[430px]:min-h-[88px] min-[430px]:flex-col min-[430px]:items-stretch">
-            <div className="min-w-0 flex-1 min-[430px]:flex-none">
-              <span className="block text-xs font-semibold text-[#33483a]">{type.nome}</span>
-              {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e] min-[430px]:line-clamp-2" title={hint}>{hint}</span>}
+        {step === "participants" && (catalogError ? (
+          <p role="alert" className="text-sm text-amber-800">{catalogError} Informe as pessoas por mensagem.</p>
+        ) : !catalog ? (
+          <p className="text-sm text-[#667468]">Carregando categorias…</p>
+        ) : (
+          <div className="space-y-2">
+            {!availabilityReady && <p className="text-xs text-[#718075]">{agendaError ? "Não consegui atualizar as vagas. Você pode informar as pessoas por mensagem." : "Atualizando as vagas disponíveis…"}</p>}
+            {availabilityReady && remainingPlaces !== null && <p className="text-xs font-medium text-[#46664d]">{remainingPlaces} {remainingPlaces === 1 ? "vaga disponível" : "vagas disponíveis"} para esta visita.</p>}
+            <div className="grid items-start gap-1.5 min-[430px]:grid-cols-2">
+              {orderedTypes.map((type) => {
+                const count = quantityOf(counts, type.id);
+                const hint = participantHint(type);
+                const ageRange = count > 0 && tipoExigeIdades(type) ? limitesIdade(type) : null;
+                const canIncrease = availabilityReady && count < 99 && (remainingPlaces === null || participantCount < remainingPlaces);
+
+                return (
+                  <div key={type.id} className="min-w-0 rounded-xl border border-[#e0e8dd] bg-[#fcfdfb] px-2.5 py-2 min-[430px]:min-h-[88px]">
+                    <div className="flex items-center justify-between gap-2 min-[430px]:flex-col min-[430px]:items-stretch">
+                      <div className="min-w-0 flex-1 min-[430px]:flex-none">
+                        <span className="block text-xs font-semibold text-[#33483a]">{type.nome}</span>
+                        {hint && <span className="mt-0.5 block text-[11px] leading-snug text-[#6b7b6e] min-[430px]:line-clamp-2" title={hint}>{hint}</span>}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5 min-[430px]:justify-end">
+                        <button type="button" onClick={() => setParticipantCount(type, count - 1)} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
+                        <output className="w-5 text-center text-sm font-bold">{count}</output>
+                        <button type="button" onClick={() => setParticipantCount(type, count + 1)} disabled={!canIncrease} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
+                      </div>
+                    </div>
+                    {ageRange && (
+                      <fieldset className="mt-2 min-w-0 rounded-lg border border-[#d4ded1] px-2 pb-2">
+                        <legend className="px-1 text-[11px] font-semibold">Idades ({ageRange.min} a {ageRange.max} anos)</legend>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Array.from({ length: count }, (_, index) => {
+                            const age = ages[type.id]?.[index] ?? "";
+                            const invalid = (age !== "" || error.startsWith("Informe as idades")) && !idadeParticipanteValida(age, type);
+                            return (
+                              <label key={index} className="min-w-0 text-[11px] font-medium text-[#4f6857]">
+                                Pessoa {index + 1}
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={ageRange.min}
+                                  max={ageRange.max}
+                                  step={1}
+                                  required
+                                  aria-label={`Idade ${index + 1} – ${type.nome}`}
+                                  aria-invalid={invalid || undefined}
+                                  value={age}
+                                  onChange={(event) => setParticipantAge(type, count, index, event.target.value)}
+                                  placeholder="Anos"
+                                  className={`mt-0.5 min-h-10 w-full rounded-lg border bg-white px-2 text-sm outline-none focus:border-[#20745a] focus:ring-2 focus:ring-[#20745a]/15 ${invalid ? "border-red-400" : "border-[#d4ded1]"}`}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </fieldset>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex shrink-0 items-center gap-1.5 min-[430px]:justify-end">
-              <button type="button" onClick={() => { const next = { ...counts, [type.id]: Math.max(0, count - 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={count === 0} aria-label={`Diminuir ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">−</button>
-              <output className="w-5 text-center text-sm font-bold">{count}</output>
-              <button type="button" onClick={() => { if (!availabilityReady || (remainingPlaces !== null && participantCount >= remainingPlaces)) return; const next = { ...counts, [type.id]: Math.min(99, count + 1) }; setCounts(next); onProgress({ counts: next }); }} disabled={!availabilityReady || count >= 99 || (remainingPlaces !== null && participantCount >= remainingPlaces)} aria-label={`Aumentar ${type.nome}`} className="grid h-9 w-9 place-items-center rounded-full border border-[#d5e1d2] bg-white disabled:opacity-35">+</button>
-            </div>
-          </div>;
-        })}</div>{participantsExceedCapacity && <p role="alert" className="text-xs text-amber-800">As vagas disponíveis mudaram. Reduza a quantidade de pessoas para continuar.</p>}</div>)}
+            {participantsExceedCapacity && <p role="alert" className="text-xs text-amber-800">As vagas disponíveis mudaram. Reduza a quantidade de pessoas para continuar.</p>}
+          </div>
+        ))}
 
         {step === "contact" && <div className="space-y-2.5">{needsName && <label className="block text-xs font-semibold">Nome completo<input value={fullName} onChange={(event) => setFullName(event.target.value.slice(0, 120))} autoComplete="name" required className={inputClass} /></label>}{needsEmail && <label className="block text-xs font-semibold">E-mail<input value={email} onChange={(event) => setEmail(event.target.value.slice(0, 160))} type="email" autoComplete="email" required className={inputClass} /></label>}{needsCpf && <label className="block text-xs font-semibold">CPF<input value={cpf} onChange={(event) => setCpf(event.target.value.slice(0, 14))} inputMode="numeric" required className={inputClass} /></label>}{needsPet && <div role="group" aria-label="Vai levar pet?" className="text-xs font-semibold"><span className="block">Vai levar pet?</span><div className="mt-1.5 grid grid-cols-2 gap-2">{([ ["yes", "Sim"], ["no", "Não"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={pet === value} onClick={() => setPet(value)} className={`min-h-11 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#20745a] ${pet === value ? "border-[#20745a] bg-[#e7f3e9] text-[#184f3c]" : "border-[#cddfcf] bg-white text-[#305944] hover:border-[#20745a]"}`}>{label}</button>)}</div>{petRestricted && <span className="mt-1 block font-normal text-amber-800">Pets não entram na trilha.</span>}</div>}</div>}
 

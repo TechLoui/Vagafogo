@@ -1,3 +1,5 @@
+import { idadeParticipanteValida, tipoExigeIdades } from "./idadeParticipante.ts";
+
 export type BookingPrefill = {
   participants?: Record<string, number>;
   ages?: Record<string, number[]>;
@@ -33,7 +35,7 @@ export const parseBookingPrefill = (params: Pick<URLSearchParams, "get">): Booki
 export const knownBookingParticipants = (
   participants: BookingPrefill["participants"],
   ages: BookingPrefill["ages"],
-  types: Array<{ id?: string; perguntarIdade?: boolean }>,
+  types: Array<{ id?: string; nome?: string; perguntarIdade?: boolean; idadeMinima?: number; idadeMaxima?: number }>,
 ) => {
   const quantities: Record<string, number> = {};
   const knownAges: Record<string, string[]> = {};
@@ -43,9 +45,9 @@ export const knownBookingParticipants = (
     if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99) continue;
     quantities[type.id] = quantity;
     const sourceAges = ages && Object.hasOwn(ages, type.id) ? ages[type.id] : undefined;
-    if (type.perguntarIdade && Array.isArray(sourceAges) && sourceAges.length <= quantity
-      && sourceAges.every((age) => Number.isInteger(age) && age >= 0 && age <= 120)) {
-      knownAges[type.id] = sourceAges.map(String);
+    const ageCategory = { ...type, nome: type.nome ?? type.id };
+    if (tipoExigeIdades(ageCategory) && Array.isArray(sourceAges) && sourceAges.length <= quantity) {
+      knownAges[type.id] = sourceAges.map((age) => idadeParticipanteValida(age, ageCategory) ? String(age) : "");
     }
   }
   return { quantities, ages: knownAges };

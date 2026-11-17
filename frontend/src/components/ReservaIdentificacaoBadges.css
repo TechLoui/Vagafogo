@@ -1,0 +1,51 @@
+.admin-reserva-identificacao {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.17rem 0.42rem;
+  border: 1px solid var(--reservation-badge-border, #cbd5e1);
+  border-radius: 999px;
+  background: var(--reservation-badge-bg, #f1f5f9);
+  color: var(--reservation-badge-ink, #334155);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.admin-reserva-identificacao > svg {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.admin-reserva-identificacao--pix {
+  --reservation-badge-bg: #effaf4;
+  --reservation-badge-border: #a7d8ba;
+  --reservation-badge-ink: #145c39;
+}
+
+.admin-reserva-identificacao--cartao {
+  --reservation-badge-bg: #eff6ff;
+  --reservation-badge-border: #bfdbfe;
+  --reservation-badge-ink: #1e40af;
+}
+
+.admin-dashboard-theme--dark .admin-reserva-identificacao--manual {
+  --reservation-badge-bg: #263348;
+  --reservation-badge-border: #495975;
+  --reservation-badge-ink: #e2e8f0;
+}
+
+.admin-dashboard-theme--dark .admin-reserva-identificacao--pix {
+  --reservation-badge-bg: #11362b;
+  --reservation-badge-border: #28634e;
+  --reservation-badge-ink: #a7f3d0;
+}
+
+.admin-dashboard-theme--dark .admin-reserva-identificacao--cartao {
+  --reservation-badge-bg: #172d50;
+  --reservation-badge-border: #365787;
+  --reservation-badge-ink: #bfdbfe;
+}

@@ -6,6 +6,7 @@ import jatobaIcon from "../assets/jatoba-crest.webp";
 import { buildWhatsAppLink } from "../config/whatsapp";
 import { SiteBookingForm } from "./SiteBookingForm";
 import type { BookingProgress, BookingUi, SiteBookingSelection } from "./SiteBookingForm";
+import { normalizarLimiteIdade } from "../utils/idadeParticipante";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -72,8 +73,19 @@ const safeBookingUi = (value: unknown): BookingUi | null => {
 };
 
 const emptyBookingProgress = (): BookingProgress => ({
-  selectedIds: [], preferredComboId: "", date: "", times: {}, counts: {},
+  selectedIds: [], preferredComboId: "", date: "", times: {}, counts: {}, ages: {},
 });
+
+const safeBookingAges = (value: unknown): BookingProgress["ages"] | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return Object.fromEntries(Object.entries(value).flatMap(([id, ages]) => {
+    if (!Array.isArray(ages)) return [];
+    return [[id, ages.slice(0, 99).map((age) => {
+      const valid = normalizarLimiteIdade(age);
+      return valid === undefined ? "" : String(valid);
+    })]];
+  }));
+};
 
 const safeBookingProgress = (value: unknown): BookingProgress => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyBookingProgress();
@@ -84,6 +96,7 @@ const safeBookingProgress = (value: unknown): BookingProgress => {
     date: typeof data.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : "",
     times: data.times && typeof data.times === "object" && !Array.isArray(data.times) ? data.times : {},
     counts: data.counts && typeof data.counts === "object" && !Array.isArray(data.counts) ? data.counts : {},
+    ages: safeBookingAges(data.ages) ?? {},
   };
 };
 
@@ -342,6 +355,9 @@ function SecureCheckoutModal({ url, viewport, onClose }: { url: string; viewport
 
   useEffect(() => {
     setLoading(true);
+  }, [url]);
+
+  useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -836,14 +852,23 @@ export function SiteChatWidget() {
       } else if (nextBookingUi?.draft) {
         const nextDraft = nextBookingUi.draft;
         const changedDate = Boolean(nextDraft.data && bookingProgress.date && nextDraft.data !== bookingProgress.date);
+        const previousDraft = bookingUi?.draft;
+        const changedOffer = Boolean(previousDraft?.ofertaId && nextDraft.ofertaId
+          && (previousDraft.ofertaId !== nextDraft.ofertaId || previousDraft.tipoOferta !== nextDraft.tipoOferta));
+        const changedVisit = changedDate || changedOffer;
         const draftTime = nextDraft.horario && nextDraft.ofertaId && nextDraft.tipoOferta !== "combo"
           ? { [nextDraft.ofertaId]: nextDraft.horario } : {};
-        const draftHasCounts = Object.values(nextDraft.participantesPorTipo || {}).some((value) => Number(value) > 0);
+        const draftCounts = nextDraft.participantesPorTipo ?? {};
+        const draftHasCounts = Object.values(draftCounts).some((value) => Number(value) > 0);
+        const changedCounts = draftHasCounts && [...new Set([...Object.keys(draftCounts), ...Object.keys(bookingProgress.counts)])]
+          .some((id) => (Number(draftCounts[id]) || 0) !== (Number(bookingProgress.counts[id]) || 0));
+        const draftAges = safeBookingAges(nextDraft.idadesPorTipo);
         updateBookingProgress({
           ...(nextDraft.data ? { date: nextDraft.data } : {}),
-          ...(changedDate || Object.keys(draftTime).length || nextDraft.horariosPorPacote
-            ? { times: { ...(changedDate ? {} : bookingProgress.times), ...draftTime, ...nextDraft.horariosPorPacote } } : {}),
-          ...(changedDate || draftHasCounts ? { counts: draftHasCounts ? nextDraft.participantesPorTipo! : {} } : {}),
+          ...(changedVisit || Object.keys(draftTime).length || nextDraft.horariosPorPacote
+            ? { times: { ...(changedVisit ? {} : bookingProgress.times), ...draftTime, ...nextDraft.horariosPorPacote } } : {}),
+          ...(changedVisit || draftHasCounts ? { counts: draftHasCounts ? draftCounts : {} } : {}),
+          ...(draftAges || changedVisit || changedCounts ? { ages: draftAges ?? {} } : {}),
         });
       }
       if (result.resposta) {

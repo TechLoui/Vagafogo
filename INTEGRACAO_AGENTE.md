@@ -42,7 +42,10 @@ autenticadas.
    temporario e perguntar somente o que ainda falta.
 3. Para combos, validar cada pacote incluído. Cada pacote com hora marcada
    recebe seu horario; pacotes em faixa usam inicio/fim configurados.
-4. Coletar uma idade para cada categoria marcada com `perguntarIdade=true`.
+4. Coletar uma idade inteira por crianca, inclusive nas categorias isentas,
+   respeitando os limites do catalogo. Categorias infantis sempre exigem idade;
+   as demais seguem `perguntarIdade=true`. Idades ausentes, fracionarias ou fora
+   da faixa impedem avancar para o pagamento.
 5. Havendo participante bariatrico, explicar a carteirinha e registrar que o
    cliente confirmou essa orientacao.
 6. Consultar disponibilidade e valor no backend Vagafogo. O retorno

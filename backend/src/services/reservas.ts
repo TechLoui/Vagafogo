@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas";
 import { reservaEstaConfirmada } from "./reservaStatus";
 import { obterCamposRetencaoReservaNaCriacao } from "./reservaRetention";
+import { mapaIdadesInteiras } from "./reservaIdades";
 
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
@@ -90,24 +91,10 @@ export type GrupoParticipacaoPayload = {
   idadesPorTipo?: Record<string, number[]>;
 };
 
-const normalizarIdadesPorTipo = (mapa?: Record<string, number[]>) => {
-  if (!mapa || typeof mapa !== "object") return undefined;
-  const normalizado: Record<string, number[]> = {};
-  Object.entries(mapa).forEach(([chave, valores]) => {
-    if (!Array.isArray(valores)) return;
-    const idades = valores
-      .map((valor) => Number(valor))
-      .filter((valor) => Number.isFinite(valor) && valor >= 0 && valor <= 120);
-    if (idades.length > 0) {
-      normalizado[chave] = idades;
-    }
-  });
-  return Object.keys(normalizado).length > 0 ? normalizado : undefined;
-};
-
-const normalizarGruposParticipacao = (grupos?: GrupoParticipacaoPayload[]) => {
+export const normalizarGruposParticipacao = (grupos?: GrupoParticipacaoPayload[]) => {
   if (!Array.isArray(grupos)) return [];
   return grupos
+    .filter((grupo) => grupo && typeof grupo === "object")
     .map((grupo) => {
       const refId = grupo.refId?.toString().trim();
       const participantesPorTipo = normalizarMapa(grupo.participantesPorTipo) ?? {};
@@ -120,7 +107,7 @@ const normalizarGruposParticipacao = (grupos?: GrupoParticipacaoPayload[]) => {
             .map((id) => id?.toString().trim())
             .filter((id): id is string => Boolean(id))
         : [];
-      const idadesPorTipo = normalizarIdadesPorTipo(grupo.idadesPorTipo);
+      const idadesPorTipo = mapaIdadesInteiras(grupo.idadesPorTipo);
       return {
         tipo: grupo.tipo === "combo" ? "combo" : "pacote",
         refId,
@@ -128,7 +115,7 @@ const normalizarGruposParticipacao = (grupos?: GrupoParticipacaoPayload[]) => {
         pacoteIds,
         participantesPorTipo,
         participantes,
-        ...(idadesPorTipo ? { idadesPorTipo } : {}),
+        ...(Object.keys(idadesPorTipo).length > 0 ? { idadesPorTipo } : {}),
       };
     })
     .filter(
@@ -161,6 +148,7 @@ export type CriarReservaPayload = {
   naoPagante: number;
   participantes: number;
   participantesPorTipo?: Record<string, number>;
+  idadesPorTipo?: Record<string, number[]>;
   gruposParticipacao?: GrupoParticipacaoPayload[];
   pacoteIds?: string[];
   comboId?: string | null;
@@ -191,6 +179,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     naoPagante,
     participantes,
     participantesPorTipo,
+    idadesPorTipo,
     gruposParticipacao,
     pacoteIds,
     comboId,
@@ -206,6 +195,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
   } = payload;
 
   const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
+  const idadesPorTipoNormalizado = mapaIdadesInteiras(idadesPorTipo);
   const gruposParticipacaoNormalizados = normalizarGruposParticipacao(gruposParticipacao);
   const participantesGrupos = gruposParticipacaoNormalizados.reduce(
     (total, grupo) => total + grupo.participantes,
@@ -255,6 +245,9 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     criancas,
     naoPagante,
     ...(mapaAtivo ? { participantesPorTipo: participantesPorTipoNormalizado } : {}),
+    ...(Object.keys(idadesPorTipoNormalizado).length > 0
+      ? { idadesPorTipo: idadesPorTipoNormalizado }
+      : {}),
     ...(gruposParticipacaoNormalizados.length > 0
       ? { gruposParticipacao: gruposParticipacaoNormalizados }
       : {}),

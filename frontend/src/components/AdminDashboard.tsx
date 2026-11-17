@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import React from 'react';
+import type { IconType } from 'react-icons';
 
 import { collection, query, where, getDocs, doc, deleteDoc, updateDoc, addDoc, getDoc, getDocFromServer, setDoc, onSnapshot, writeBatch, deleteField, Timestamp } from 'firebase/firestore';
 import type { DocumentData, QuerySnapshot } from 'firebase/firestore';
@@ -28,6 +29,7 @@ import {
 import {
   nomesAtividadesReserva,
   resumirParticipantesReserva,
+  rotuloParticipanteComIdades,
   rotuloAtividadeReserva,
 } from '../utils/reservaResumo';
 
@@ -35,8 +37,13 @@ import dayjs from 'dayjs';
 
 import 'dayjs/locale/pt-br';
 
-import { FaChevronLeft, FaChevronRight, FaChevronDown, FaChevronUp, FaTrash, FaEdit, FaPlus, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar, FaFilePdf, FaEye, FaEyeSlash, FaSun, FaMoon, FaColumns, FaGripLines, FaUserCircle, FaUser, FaGraduationCap, FaPhoneAlt, FaIdCard, FaPaw, FaMoneyBillWave, FaClock, FaClipboardList, FaListUl, FaEnvelope, FaPaperPlane, FaWhatsapp, FaQrcode, FaSyncAlt, FaSignOutAlt, FaCog, FaImage } from 'react-icons/fa';
-import logo from '../assets/logo.jpg';
+import { FaChevronLeft, FaChevronRight, FaChevronDown, FaChevronUp, FaTrash, FaEdit, FaPlus, FaSearch, FaCalendarAlt, FaUsers, FaLayerGroup, FaQuestionCircle, FaCheck, FaCreditCard, FaChair, FaEllipsisV, FaChartBar, FaFilePdf, FaEye, FaEyeSlash, FaUserCircle, FaUser, FaGraduationCap, FaPhoneAlt, FaIdCard, FaPaw, FaMoneyBillWave, FaClock, FaClipboardList, FaListUl, FaEnvelope, FaPaperPlane, FaWhatsapp, FaQrcode, FaSyncAlt, FaSignOutAlt, FaCog, FaImage } from 'react-icons/fa';
+import AdminPanelNavigation from './AdminPanelNavigation';
+import AdminSectionHeading from './AdminSectionHeading';
+import AdminSectionOptions from './AdminSectionOptions';
+import { idadeParticipanteValida, limitesIdade, normalizarLimiteIdade, tipoEhInfantil, tipoExigeIdades } from '../utils/idadeParticipante';
+import { ReservaIdentificacaoBadges } from './ReservaIdentificacaoBadges';
+import './AdminCatalog.css';
 import './AdminDashboardTheme.css';
 
 
@@ -369,6 +376,21 @@ interface Pacote {
 
 }
 
+function AdminCatalogPrices({ prices }: { prices: Array<{ key: string; label: string; value: string }> }) {
+  if (prices.length === 0) return null;
+
+  return (
+    <dl className="admin-catalog-card__prices" aria-label="Preços por tipo de cliente">
+      {prices.map(({ key, label, value }) => (
+        <div key={key}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 
 
 interface Combo {
@@ -539,6 +561,8 @@ interface Reserva {
 
   participantesPorTipo?: Record<string, number>;
 
+  idadesPorTipo?: Record<string, number[]>;
+
   data: string;
 
   horario: string;
@@ -556,6 +580,8 @@ interface Reserva {
   criadaManualmente?: boolean;
 
   pagamentoRegistradoNoAsaas?: boolean;
+
+  formaPagamento?: string;
 
   canalOrigem?: string;
 
@@ -976,6 +1002,8 @@ type AdminTabActionConfig = {
   onClick: () => void;
   variant?: 'primary' | 'secondary';
   disabled?: boolean;
+  expanded?: boolean;
+  controls?: string;
 };
 
 type AdminTabMetricConfig = {
@@ -985,15 +1013,6 @@ type AdminTabMetricConfig = {
   hint?: string;
   icon: React.ComponentType<{ className?: string }>;
   tone?: 'sky' | 'emerald' | 'amber' | 'indigo' | 'slate';
-  cardClassName?: string;
-  renderContent?: (params: {
-    label: string;
-    value: string | number;
-    hint?: string;
-    icon: React.ComponentType<{ className?: string }>;
-    toneClassName: string;
-    centered: boolean;
-  }) => React.ReactNode;
 };
 
 const ADMIN_TAB_TONE_CLASSES: Record<NonNullable<AdminTabMetricConfig['tone']>, string> = {
@@ -1007,182 +1026,98 @@ const ADMIN_TAB_TONE_CLASSES: Record<NonNullable<AdminTabMetricConfig['tone']>, 
 function AdminTabHeader({
   title,
   description,
-  icon: Icon,
+  icon,
   actions = [],
   metrics = [],
   toolbar,
-  toolbarAfterMetrics = false,
-  metricsClassName = '',
-  metricsContainerClassName = '',
+  metricsClassName = 'grid-cols-2 xl:grid-cols-4',
   metricsTitle,
-  metricsSubtitle,
-  centerMetrics = false,
-  collapsibleMetrics = false,
   metricsStorageKey,
   defaultMetricsCollapsed = false,
 }: {
   title: string;
   description?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   actions?: AdminTabActionConfig[];
   metrics?: AdminTabMetricConfig[];
   toolbar?: React.ReactNode;
-  toolbarAfterMetrics?: boolean;
   metricsClassName?: string;
-  metricsContainerClassName?: string;
   metricsTitle?: string;
-  metricsSubtitle?: string;
-  centerMetrics?: boolean;
-  collapsibleMetrics?: boolean;
   metricsStorageKey?: string;
   defaultMetricsCollapsed?: boolean;
 }) {
-  const resolvedMetricsClassName = metricsClassName || 'xl:grid-cols-4';
-
   const storageKey = metricsStorageKey ? `admin-metrics-collapsed:${metricsStorageKey}` : null;
-  const [metricsCollapsed, setMetricsCollapsed] = useState<boolean>(() => {
-    if (!collapsibleMetrics) return false;
-    if (storageKey && typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem(storageKey);
-      if (stored === 'true') return true;
-      if (stored === 'false') return false;
-    }
-    return defaultMetricsCollapsed;
+  const [metricsCollapsed, setMetricsCollapsed] = useState(() => {
+    const stored = storageKey && typeof window !== 'undefined' ? window.localStorage.getItem(storageKey) : null;
+    return stored === null ? defaultMetricsCollapsed : stored === 'true';
   });
 
   const toggleMetricsCollapsed = () => {
-    setMetricsCollapsed((prev) => {
-      const next = !prev;
-      if (storageKey && typeof window !== 'undefined') {
-        window.localStorage.setItem(storageKey, String(next));
-      }
-      return next;
-    });
+    const next = !metricsCollapsed;
+    setMetricsCollapsed(next);
+    if (storageKey) window.localStorage.setItem(storageKey, String(next));
   };
 
   return (
-    <div className="admin-tab-hero-card">
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex items-start gap-4">
-            <div className="admin-tab-hero__icon">
-              <Icon className="h-6 w-6" />
-            </div>
-
-            <div className="min-w-0">
-              <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{title}</h2>
-              {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 sm:text-[15px]">{description}</p> : null}
-            </div>
-          </div>
-
-          {actions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              {actions.map(({ label, icon: ActionIcon, onClick, variant = 'secondary', disabled = false }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={onClick}
-                  disabled={disabled}
-                  className={`admin-tab-action admin-tab-action--${variant}`}
-                >
-                  <ActionIcon className="h-4 w-4" />
-                  <span>{label}</span>
-                </button>
-              ))}
+    <div className="flex flex-col gap-3 sm:gap-4">
+      <AdminSectionHeading
+        title={title}
+        description={description}
+        icon={icon}
+        actions={actions.length > 0 ? actions.map(({ label, icon: ActionIcon, onClick, variant = 'secondary', disabled = false, expanded, controls }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-expanded={expanded}
+            aria-controls={controls}
+            className={`admin-tab-action admin-tab-action--${variant}`}
+          >
+            <ActionIcon className="h-4 w-4" />
+            <span>{label}</span>
+          </button>
+        )) : undefined}
+      />
+      {toolbar && <div className="admin-tab-hero__toolbar">{toolbar}</div>}
+      {metrics.length > 0 && (
+        <div className={metricsStorageKey ? 'admin-agenda-metrics' : undefined}>
+          {metricsStorageKey && (
+            <div className="admin-agenda-metrics__heading">
+              <p>{metricsTitle}</p>
+              <button
+                type="button"
+                onClick={toggleMetricsCollapsed}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                aria-expanded={!metricsCollapsed}
+                aria-controls="metricas-agenda"
+              >
+                {metricsCollapsed ? <FaChevronDown aria-hidden="true" /> : <FaChevronUp aria-hidden="true" />}
+                {metricsCollapsed ? 'Mostrar resumo' : 'Recolher resumo'}
+              </button>
             </div>
           )}
-        </div>
-
-        {!toolbarAfterMetrics && toolbar ? <div className="admin-tab-hero__toolbar">{toolbar}</div> : null}
-
-        {metrics.length > 0 && (
-          <div className={metricsContainerClassName}>
-            {(metricsTitle || metricsSubtitle || collapsibleMetrics) ? (
-              <div className="admin-tab-hero__section-head flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  {metricsTitle ? <p className="admin-tab-hero__section-label">{metricsTitle}</p> : null}
-                  {metricsSubtitle ? <p className="admin-tab-hero__section-caption">{metricsSubtitle}</p> : null}
-                </div>
-                {collapsibleMetrics ? (
-                  <button
-                    type="button"
-                    onClick={toggleMetricsCollapsed}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                    aria-expanded={!metricsCollapsed}
-                    title={metricsCollapsed ? 'Mostrar painel' : 'Recolher painel'}
-                  >
-                    {metricsCollapsed ? (
-                      <>
-                        <FaChevronDown className="h-3 w-3" />
-                        <span>Mostrar</span>
-                      </>
-                    ) : (
-                      <>
-                        <FaChevronUp className="h-3 w-3" />
-                        <span>Recolher</span>
-                      </>
-                    )}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-
-            {!metricsCollapsed && (
-            <div className={`grid gap-3 sm:grid-cols-2 ${resolvedMetricsClassName}`.trim()}>
-              {metrics.map(({ metricKey, label, value, hint, icon: MetricIcon, tone = 'sky', cardClassName = '', renderContent }) => {
-                const toneClassName = ADMIN_TAB_TONE_CLASSES[tone];
-
-                return (
-                  <div key={metricKey ?? label} className={`admin-tab-stat-card ${cardClassName}`.trim()}>
-                    {renderContent ? renderContent({
-                      label,
-                      value,
-                      hint,
-                      icon: MetricIcon,
-                      toneClassName,
-                      centered: centerMetrics,
-                    }) : centerMetrics ? (
-                      <div className="flex min-h-[104px] flex-col items-center justify-center gap-4 text-center">
-                        <span className={`admin-tab-stat-card__icon ${toneClassName}`}>
-                          <MetricIcon className="h-4 w-4" />
-                        </span>
-
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{label}</p>
-                          <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{value}</p>
-                          {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="admin-tab-stat-card__body flex items-start justify-between gap-3">
-                        <div className="admin-tab-stat-card__text min-w-0">
-                          <p className="admin-tab-stat-card__label text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{label}</p>
-                          <p className="admin-tab-stat-card__value mt-3 text-2xl font-semibold tracking-tight text-slate-900">{value}</p>
-                          {hint ? <p className="admin-tab-stat-card__hint mt-1 text-xs text-slate-500">{hint}</p> : null}
-                        </div>
-
-                        <span className={`admin-tab-stat-card__icon ${toneClassName}`}>
-                          <MetricIcon className="h-4 w-4" />
-                        </span>
-                      </div>
-                    )}
+          <div id={metricsStorageKey ? 'metricas-agenda' : undefined} className={metricsCollapsed ? 'hidden' : `grid gap-2.5 ${metricsClassName}`}>
+            {metrics.map(({ metricKey, label, value, hint, icon: MetricIcon, tone = 'sky' }) => (
+              <div key={metricKey ?? label} className="admin-tab-stat-card admin-tab-stat-card--compact">
+                <div className="admin-tab-stat-card__body flex items-start justify-between gap-2">
+                  <div className="admin-tab-stat-card__text min-w-0">
+                    <p className="admin-tab-stat-card__label text-xs font-semibold text-slate-500">{label}</p>
+                    <p className="admin-tab-stat-card__value mt-1.5 text-lg font-semibold text-slate-900 sm:text-xl">{value}</p>
+                    {hint && <p className="admin-tab-stat-card__hint mt-1 text-xs text-slate-500">{hint}</p>}
                   </div>
-                );
-              })}
-            </div>
-            )}
+                  <span className={`admin-tab-stat-card__icon ${ADMIN_TAB_TONE_CLASSES[tone]}`}>
+                    <MetricIcon className="h-4 w-4" />
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-
-        {toolbarAfterMetrics && toolbar ? <div className="admin-tab-hero__toolbar">{toolbar}</div> : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
-
-
-
-
 
 const gerarIdModeloMensagem = (indice: number) =>
 
@@ -1357,13 +1292,16 @@ const obterQuantidadeLegada = (
 
   if (nome.includes('adult')) return Number(reserva.adultos ?? 0);
 
-  if (nome.includes('crian')) return Number(reserva.criancas ?? 0);
-
   if (nome.includes('bariat')) return Number(reserva.bariatrica ?? 0);
 
   return 0;
 
 };
+
+const tipoContaCriancas = (tipo: TipoCliente) =>
+  /\b(criancas?|infantil|infantis)\b/.test(
+    normalizarTexto(`${tipo.nome} ${tipo.id ?? ''}`).replace(/[^a-z0-9]+/g, ' '),
+  );
 
 const montarPrecosPorTipo = (
 
@@ -1424,6 +1362,7 @@ const montarParticipantesPorTipo = (
   const mapaAtual = reserva.participantesPorTipo ?? {};
 
   const resultado: Record<string, number> = { ...mapaAtual };
+  const tipoCrianca = tipos.find(tipoContaCriancas);
 
   tipos.forEach((tipo) => {
 
@@ -1431,7 +1370,9 @@ const montarParticipantesPorTipo = (
 
     const existente = obterValorMapa(mapaAtual, tipo);
 
-    const legado = obterQuantidadeLegada(tipo, reserva);
+    const legado = tipo === tipoCrianca
+      ? Number(reserva.criancas ?? 0)
+      : obterQuantidadeLegada(tipo, reserva);
 
     const valor = Number.isFinite(existente) ? Number(existente) : legado;
 
@@ -1450,6 +1391,63 @@ const somarMapa = (mapa?: Record<string, number>) => {
   return Object.values(mapa).reduce((total, valor) => total + (Number(valor) || 0), 0);
 
 };
+
+const tipoCriancaLegado = { id: 'crianca', nome: 'Criança' };
+const tipoNaoPaganteLegado = { id: 'nao_pagante', nome: 'Não pagante' };
+const idCampoIdadeReserva = (tipo: TipoCliente, indice: number) =>
+  `idade-reserva-${encodeURIComponent(obterChaveTipo(tipo))}-${indice}`;
+
+const normalizarChaveIdade = (valor: string) => normalizarTexto(valor)
+  .replace(/[^a-z0-9]/g, '')
+  .replace(/^(crianca|naopagante)s$/, '$1');
+
+function obterIdadesDoTipo(mapa: Record<string, number[]> | undefined, tipo: TipoCliente) {
+  if (!mapa) return undefined;
+  const chave = normalizarChaveIdade(tipo.nome);
+  const entrada = (tipo.id ? mapa[tipo.id] : undefined)
+    ?? Object.entries(mapa).find(([nome]) => normalizarChaveIdade(nome) === chave)?.[1];
+  return Array.isArray(entrada) ? entrada : undefined;
+}
+
+function idadesGravadasParaTipo(reserva: Reserva, tipo: TipoCliente): string[] {
+  const idades = obterIdadesDoTipo(reserva.idadesPorTipo, tipo)
+    ?? (Array.isArray(reserva.gruposParticipacao) ? reserva.gruposParticipacao : [])
+      .flatMap((grupo) => obterIdadesDoTipo(grupo?.idadesPorTipo, tipo) ?? []);
+  return idades.map((idade) => idade == null ? '' : String(idade));
+}
+
+function tiposComIdadesDaReservaManual(reserva: Reserva, tipos: TipoCliente[]) {
+  if (!reservaEhManual(reserva)) return [];
+
+  const faixas: Array<{ tipo: TipoCliente; quantidade: number; naoPaganteLegado?: boolean }> =
+    tipos.filter(tipoExigeIdades).map((tipo) => ({
+      tipo,
+      quantidade: obterValorMapa(reserva.participantesPorTipo, tipo) ?? 0,
+    }));
+  const categoriaCrianca = tipos.find(tipoContaCriancas);
+  if (!categoriaCrianca) {
+    faixas.push({
+      tipo: tipoCriancaLegado,
+      quantidade: obterValorMapa(reserva.participantesPorTipo, tipoCriancaLegado)
+        ?? Number(reserva.criancas ?? 0),
+    });
+  }
+
+  // O contador legado de não pagantes é separado das categorias do catálogo.
+  const configuracaoNaoPagante = tipos.find(
+    ({ nome }) => /\b(nao pagantes?|isent[oa]s?)\b/.test(normalizarTexto(nome).replace(/[^a-z0-9]+/g, ' ')),
+  );
+  const chaveNaoPagante = tipos.some((tipo) => obterChaveTipo(tipo) === tipoNaoPaganteLegado.id)
+    ? 'nao_pagante_legado'
+    : tipoNaoPaganteLegado.id;
+  faixas.push({
+    tipo: { ...configuracaoNaoPagante, ...tipoNaoPaganteLegado, id: chaveNaoPagante },
+    quantidade: Number(reserva.naoPagante ?? 0),
+    naoPaganteLegado: true,
+  });
+
+  return faixas.filter(({ quantidade }) => Number.isSafeInteger(quantidade) && quantidade >= 0);
+}
 
 const calcularValorPacotesSelecionados = (
   pacotesSelecionados: Pacote[],
@@ -1619,30 +1617,31 @@ const obterApresentacaoReserva = (reserva: Reserva, participantes: number) => {
 
 
 
+const adminTabs = [
+  { id: 'reservas', label: 'Reservas', icon: FaCalendarAlt },
+  { id: 'pesquisa', label: 'Pesquisa', icon: FaSearch },
+  { id: 'pacotes', label: 'Pacotes', icon: FaLayerGroup },
+  { id: 'tipos_clientes', label: 'Clientes', icon: FaUsers },
+  { id: 'formularios', label: 'Formulários', icon: FaClipboardList },
+  { id: 'email', label: 'E-mail', icon: FaEnvelope },
+  { id: 'whatsapp', label: 'WhatsApp', icon: FaWhatsapp },
+  { id: 'configuracoes', label: 'Site', icon: FaCog },
+] as const;
+
+const reservasVazias: Record<string, Reserva[]> = {};
+
 export default function AdminDashboard() {
 
   const [aba, setAba] = useState<AdminAba>(() => {
     if (typeof window === 'undefined') return 'reservas';
     const requestedTab = new URLSearchParams(window.location.search).get('aba');
-    const validTabs: AdminAba[] = [
-      'reservas', 'pacotes', 'pesquisa', 'tipos_clientes',
-      'email', 'whatsapp', 'formularios', 'configuracoes',
-    ];
-    return validTabs.includes(requestedTab as AdminAba) ? requestedTab as AdminAba : 'reservas';
+    return adminTabs.find(({ id }) => id === requestedTab)?.id ?? 'reservas';
   });
-
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [temaPainel, setTemaPainel] = useState<'dark' | 'light'>(() => {
     if (typeof window === 'undefined') return 'dark';
     const temaSalvo = window.localStorage.getItem('vagafogo-admin-theme');
     return temaSalvo === 'light' ? 'light' : 'dark';
-  });
-
-  const [layoutHeaderPainel, setLayoutHeaderPainel] = useState<'sidebar' | 'top'>(() => {
-    if (typeof window === 'undefined') return 'sidebar';
-    const layoutSalvo = window.localStorage.getItem('vagafogo-admin-layout');
-    return layoutSalvo === 'top' ? 'top' : 'sidebar';
   });
 
   const abaAtualRef = useRef(aba);
@@ -1693,20 +1692,19 @@ export default function AdminDashboard() {
     window.localStorage.setItem('vagafogo-admin-theme', temaPainel);
   }, [temaPainel]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('vagafogo-admin-layout', layoutHeaderPainel);
-  }, [layoutHeaderPainel]);
-
-
-
   // Reservas
 
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
+  const [mostrarFiltrosAgenda, setMostrarFiltrosAgenda] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches,
+  );
 
-  const [reservas, setReservas] = useState<Record<string, Reserva[]>>({});
+  const [agendaDoDia, setAgendaDoDia] = useState<{ dia: string; reservas: Record<string, Reserva[]> } | null>(null);
+  const diaAgenda = dayjs(selectedDate).format('YYYY-MM-DD');
+  const carregandoAgenda = agendaDoDia?.dia !== diaAgenda;
+  const reservas = carregandoAgenda ? reservasVazias : agendaDoDia.reservas;
 
   const [indicadoresReservasCalendario, setIndicadoresReservasCalendario] = useState<
     Record<string, number>
@@ -1725,6 +1723,8 @@ export default function AdminDashboard() {
   const [carregandoMesas, setCarregandoMesas] = useState(false);
 
   const [editReserva, setEditReserva] = useState<Reserva | null>(null);
+  const [idadesReservaEmEdicao, setIdadesReservaEmEdicao] = useState<Record<string, string[]>>({});
+  const [campoIdadeComErro, setCampoIdadeComErro] = useState<string>();
 
   const [reservaOriginalEmEdicao, setReservaOriginalEmEdicao] = useState<{
     data: string;
@@ -1921,6 +1921,7 @@ export default function AdminDashboard() {
   // Pacotes
 
   const [pacotes, setPacotes] = useState<Pacote[]>([]);
+  const [secaoCatalogo, setSecaoCatalogo] = useState<'pacotes' | 'combos'>('pacotes');
 
   const [modalPacote, setModalPacote] = useState(false);
 
@@ -2044,6 +2045,7 @@ export default function AdminDashboard() {
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
 
   const [editTipoCliente, setEditTipoCliente] = useState<TipoCliente>(criarTipoClienteVazio);
+  const [editorTipoClienteAberto, setEditorTipoClienteAberto] = useState(false);
 
   const [isEditingTipoCliente, setIsEditingTipoCliente] = useState(false);
 
@@ -2053,6 +2055,9 @@ export default function AdminDashboard() {
 
   // Configurações do site
   const [siteConfig, setSiteConfig] = useState<{ textoFuncionamento: string }>({ textoFuncionamento: '' });
+  const [siteConfigTextoSalvo, setSiteConfigTextoSalvo] = useState('');
+  const [siteConfigCarregando, setSiteConfigCarregando] = useState(true);
+  const [siteConfigErro, setSiteConfigErro] = useState(false);
   const [siteConfigSalvando, setSiteConfigSalvando] = useState(false);
 
   // Email e mensagens
@@ -2081,6 +2086,7 @@ export default function AdminDashboard() {
   });
 
   const [whatsappSalvando, setWhatsappSalvando] = useState(false);
+  const [painelWhatsapp, setPainelWhatsapp] = useState<'automacoes' | 'conexao' | 'modelos' | 'testes'>('automacoes');
   const [whatsappTestando, setWhatsappTestando] = useState<'aviso-reserva' | 'lembrete-dia' | 'agradecimento' | null>(null);
   const [whatsappReservationAlerts, setWhatsappReservationAlerts] = useState<WhatsappReservationAlert[]>([]);
   const [whatsappAlertRetryingId, setWhatsappAlertRetryingId] = useState<string | null>(null);
@@ -2100,6 +2106,7 @@ export default function AdminDashboard() {
   });
 
   const [emailFilaCarregando, setEmailFilaCarregando] = useState(false);
+  const [painelEmail, setPainelEmail] = useState<'registro' | 'configuracao'>('registro');
 
   const [emailAcaoCarregando, setEmailAcaoCarregando] = useState<{
     id: string;
@@ -2165,7 +2172,7 @@ export default function AdminDashboard() {
 
 
 
-  
+
 
 
 
@@ -2723,35 +2730,7 @@ export default function AdminDashboard() {
 
 
 
-const totalReservasConfirmadas = useMemo(() => {
-
-
-
-    return Object.values(reservas).reduce(
-
-
-
-      (acc, lista) => acc + lista.filter((reserva) => statusEhConfirmado(reserva)).length,
-
-
-
-      0
-
-
-
-    );
-
-
-
-  }, [reservas]);
-
-
-
-
-
-
-
-const totalParticipantesDoDia = useMemo(() => {
+  const totalParticipantesDoDia = useMemo(() => {
     return Object.values(reservas).reduce(
       (acc, lista) =>
         acc +
@@ -2786,37 +2765,29 @@ const totalParticipantesDoDia = useMemo(() => {
         metricKey: 'participantes-dia',
         label: 'Participantes',
         value: totalParticipantesDoDia.toLocaleString('pt-BR'),
-        hint: 'Total previsto para o dia',
         icon: FaUsers,
         tone: 'indigo',
-        cardClassName: 'admin-tab-stat-card--compact',
       },
       {
         metricKey: 'reservas-dia',
         label: 'Reservas',
         value: totalReservasDoDia.toLocaleString('pt-BR'),
-        hint: 'Itens visiveis na agenda',
         icon: FaCalendarAlt,
         tone: 'sky',
-        cardClassName: 'admin-tab-stat-card--compact',
       },
       {
         metricKey: 'chegadas-dia',
         label: 'Chegadas',
         value: totalChegadasDoDia.toLocaleString('pt-BR'),
-        hint: 'Recepcao ja marcada',
         icon: FaCheck,
         tone: 'emerald',
-        cardClassName: 'admin-tab-stat-card--compact',
       },
       {
         metricKey: 'pendentes-dia',
-        label: 'Pendentes',
+        label: 'Aguardando chegada',
         value: totalNaoChegadasDoDia.toLocaleString('pt-BR'),
-        hint: 'Ainda aguardando chegada',
         icon: FaClock,
         tone: 'amber',
-        cardClassName: 'admin-tab-stat-card--compact',
       },
     ],
     [
@@ -2839,20 +2810,6 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-
-  const pacotesQueNaoAceitamPet = useMemo(() => {
-
-    return pacotes.filter(p => p.aceitaPet === false).length;
-
-  }, [pacotes]);
-
-  const totalTiposComDescricao = useMemo(() => {
-    return tiposClientes.filter((tipo) => (tipo.descricao ?? '').trim().length > 0).length;
-  }, [tiposClientes]);
-
-  const totalPacotesAtivos = pacotes.length;
-
-  const totalCombosAtivos = combos.filter((combo) => combo.ativo !== false).length;
 
   const dashboardReservasFiltradasPorOrigem = useMemo(
     () =>
@@ -3241,48 +3198,6 @@ const totalParticipantesDoDia = useMemo(() => {
     ]
   );
 
-  const filtrosAtivosAgenda = useMemo(
-    () =>
-      [
-        filtroAtividade.trim()
-          ? { key: 'atividade', label: filtroAtividade.trim(), Icon: FaLayerGroup }
-          : null,
-        filtroChegada !== 'todos'
-          ? { key: 'chegada', label: filtroChegada === 'chegou' ? 'Chegou' : 'Não chegou', Icon: FaCheck }
-          : null,
-        filtroStatusReserva !== 'todos'
-          ? {
-              key: 'status',
-              label: filtroStatusReserva === 'confirmadas' ? 'Confirmadas' : 'Pré-reservas',
-              Icon: FaCreditCard,
-            }
-          : null,
-        filtroOrigemReserva !== 'todas'
-          ? {
-              key: 'origem',
-              label: filtroOrigemReserva === 'manual' ? 'Manual' : 'Checkout',
-              Icon: FaClipboardList,
-            }
-          : null,
-        filtroPerfilReserva !== 'todos'
-          ? {
-              key: 'perfil',
-              label: filtroPerfilReserva === 'educativo' ? 'Educativo' : 'Padrão',
-              Icon: FaGraduationCap,
-            }
-          : null,
-      ].filter(
-        (filtro): filtro is NonNullable<typeof filtro> => Boolean(filtro)
-      ),
-    [
-      filtroAtividade,
-      filtroChegada,
-      filtroStatusReserva,
-      filtroOrigemReserva,
-      filtroPerfilReserva,
-    ]
-  );
-
   const limparFiltrosReservas = useCallback(() => {
     setFiltroAtividade('');
     setFiltroChegada('todos');
@@ -3330,121 +3245,22 @@ const totalParticipantesDoDia = useMemo(() => {
     );
   };
 
-  const proximaDataBloqueada = useMemo(() => {
-
-    const hoje = dayjs().startOf('day');
-
-    const datasOrdenadas = pacotes
-
-      .flatMap(p => p.datasBloqueadas ?? [])
-
-      .map(data => dayjs(data))
-
-      .filter(data => data.isValid() && (data.isSame(hoje) || data.isAfter(hoje)))
-
-      .sort((a, b) => a.valueOf() - b.valueOf());
-
-    return datasOrdenadas.length > 0 ? datasOrdenadas[0] : null;
-
-  }, [pacotes]);
-
-
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
-
-
-  const abasDisponiveis: Array<{ id: AdminAba; label: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
-
-    { id: 'reservas', label: 'Reservas', description: 'Agenda do dia', icon: FaCalendarAlt },
-
-    { id: 'pacotes', label: 'Pacotes', description: 'Coleção de atividades', icon: FaLayerGroup },
-
-    { id: 'tipos_clientes', label: 'Clientes', description: 'Tipos de clientes', icon: FaUsers },
-
-    { id: 'email', label: 'Email', description: 'Confirmações automáticas', icon: FaEnvelope },
-
-    { id: 'whatsapp', label: 'WhatsApp', description: 'QR e disparador', icon: FaWhatsapp },
-
-    { id: 'formularios', label: 'Formulários', description: 'Criação, QR e respostas', icon: FaClipboardList },
-
-    { id: 'pesquisa', label: 'Pesquisa', description: 'Histórico de reservas', icon: FaSearch },
-
-    { id: 'configuracoes', label: 'Site', description: 'Informações do site', icon: FaCog },
-
-  ];
-
-  const renderThemeToggle = () => (
-    <button
-      type="button"
-      onClick={() => setTemaPainel((temaAtual) => (temaAtual === 'dark' ? 'light' : 'dark'))}
-      className={`admin-theme-toggle ${temaPainel === 'dark' ? 'is-dark' : 'is-light'}`}
-      aria-label={`Alternar para tema ${temaPainel === 'dark' ? 'claro' : 'escuro'}`}
-      title={`Tema ${temaPainel === 'dark' ? 'escuro' : 'claro'}`}
-    >
-      <span className={`admin-theme-toggle__icon ${temaPainel === 'light' ? 'is-active' : ''}`}>
-        <FaSun className="h-4 w-4" />
-      </span>
-      <span className={`admin-theme-toggle__icon ${temaPainel === 'dark' ? 'is-active' : ''}`}>
-        <FaMoon className="h-4 w-4" />
-      </span>
-      <span className="admin-theme-toggle__thumb" />
-    </button>
+  const faixasEtariasEmEdicao = useMemo(
+    () => editReserva ? tiposComIdadesDaReservaManual(editReserva, tiposClientesAtivos) : [],
+    [editReserva, tiposClientesAtivos],
   );
+  const faixaEtariaNaoPagante = faixasEtariasEmEdicao.find(({ naoPaganteLegado }) => naoPaganteLegado);
+  const retirarUltimaIdade = (tipo: TipoCliente, quantidade: number) => {
+    if (!editReserva || quantidade <= 0) return;
+    const chave = obterChaveTipo(tipo);
+    if (campoIdadeComErro === idCampoIdadeReserva(tipo, quantidade - 1)) setCampoIdadeComErro(undefined);
+    setIdadesReservaEmEdicao((prev) => ({
+      ...prev,
+      [chave]: (prev[chave] ?? idadesGravadasParaTipo(editReserva, tipo)).slice(0, quantidade - 1),
+    }));
+  };
 
-  const renderHeaderLayoutToggle = () => (
-    <div className="admin-layout-toggle" role="group" aria-label="Posicao da navegacao">
-      <button
-        type="button"
-        onClick={() => setLayoutHeaderPainel('sidebar')}
-        className={`admin-layout-toggle__option ${layoutHeaderPainel === 'sidebar' ? 'is-active' : ''}`}
-        aria-pressed={layoutHeaderPainel === 'sidebar'}
-        title="Header lateral"
-      >
-        <FaColumns className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => setLayoutHeaderPainel('top')}
-        className={`admin-layout-toggle__option ${layoutHeaderPainel === 'top' ? 'is-active' : ''}`}
-        aria-pressed={layoutHeaderPainel === 'top'}
-        title="Header superior"
-      >
-        <FaGripLines className="h-4 w-4" />
-      </button>
-    </div>
-  );
-
-  const renderDesktopPreferences = () => (
-    <div className="admin-dashboard-preferences">
-      {renderHeaderLayoutToggle()}
-      {renderThemeToggle()}
-    </div>
-  );
-
-  const renderDesktopToolbarItems = () => (
-    <>
-      {abasDisponiveis.map(({ id, label, icon: Icon }) => {
-        const ativo = aba === id;
-        const whatsappClassName = id === 'whatsapp' ? 'admin-dashboard-toolbar__item--whatsapp' : '';
-
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setAba(id)}
-            className={`admin-dashboard-toolbar__item ${whatsappClassName} ${ativo ? 'is-active' : ''}`.trim()}
-          >
-            <span className="admin-dashboard-toolbar__item-icon">
-              <Icon className="h-4 w-4" />
-            </span>
-
-            <span className="admin-dashboard-toolbar__item-content">
-              <span className="admin-dashboard-toolbar__item-label">{label}</span>
-            </span>
-          </button>
-        );
-      })}
-    </>
-  );
 
   const dadosExemploWhatsapp = useMemo(() => {
     const dataExemplo = dayjs().add(1, 'day').format('YYYY-MM-DD');
@@ -3671,8 +3487,10 @@ const totalParticipantesDoDia = useMemo(() => {
   // Pesquisa Clientes
 
   const [termoPesquisa, setTermoPesquisa] = useState('');
+  const [termoPesquisado, setTermoPesquisado] = useState('');
 
-  const [resultadosPesquisa, setResultadosPesquisa] = useState<Reserva[]>([]);
+  const [resultadosPesquisa, setResultadosPesquisa] = useState<Reserva[] | null>(null);
+  const [erroPesquisa, setErroPesquisa] = useState(false);
 
   const [carregandoPesquisa, setCarregandoPesquisa] = useState(false);
 
@@ -3717,6 +3535,7 @@ const totalParticipantesDoDia = useMemo(() => {
     };
 
     const atualizarReservas = () => {
+      if (primeiraLeituraString || primeiraLeituraTimestamp) return;
       const mapa = new Map<string, Reserva>();
       [...reservasString, ...reservasTimestamp].forEach((reserva) => {
         const id = reserva.id ?? `${reserva.nome}-${reserva.cpf}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
@@ -3741,7 +3560,7 @@ const totalParticipantesDoDia = useMemo(() => {
         return acc;
       }, {} as Record<string, Reserva[]>);
 
-      setReservas(reservasPorHorario);
+      setAgendaDoDia({ dia: formatted, reservas: reservasPorHorario });
     };
 
     const unsubscribeString = onSnapshot(
@@ -3775,6 +3594,7 @@ const totalParticipantesDoDia = useMemo(() => {
       },
       (error) => {
         console.error('Erro ao escutar reservas (string):', error);
+        primeiraLeituraString = false;
         reservasString = [];
         atualizarReservas();
       }
@@ -3811,6 +3631,7 @@ const totalParticipantesDoDia = useMemo(() => {
       },
       (error) => {
         console.error('Erro ao escutar reservas (timestamp):', error);
+        primeiraLeituraTimestamp = false;
         reservasTimestamp = [];
         atualizarReservas();
       }
@@ -4073,6 +3894,12 @@ const totalParticipantesDoDia = useMemo(() => {
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
 
+  const selecionarDiaAgenda = (data: Date) => {
+    setSelectedDate(data);
+    setCurrentMonth(data.getMonth());
+    setCurrentYear(data.getFullYear());
+  };
+
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
 
   const totalDays = daysInMonth(currentMonth, currentYear);
@@ -4195,6 +4022,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
   const handleEditReserva = (reserva: Reserva) => {
+    setIdadesReservaEmEdicao({});
+    setCampoIdadeComErro(undefined);
 
     const mesasRegistradas = Array.isArray(reserva.mesasSelecionadas) ? reserva.mesasSelecionadas : [];
 
@@ -4263,6 +4092,8 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
   const handleAddReserva = () => {
+    setIdadesReservaEmEdicao({});
+    setCampoIdadeComErro(undefined);
     const hoje = dayjs().startOf('day');
     const dataSelecionada = dayjs(selectedDate).startOf('day');
     const dataInicialReserva = dataSelecionada.isBefore(hoje)
@@ -4840,11 +4671,7 @@ const totalParticipantesDoDia = useMemo(() => {
       totalPendentes: Math.max(totalReservas - totalChegadas, 0),
       totalPreReservas: reservasParaResumo.filter((reserva) => statusEhPreReserva(reserva)).length,
       totalPets: reservasParaResumo.filter((reserva) => reserva.temPet === true).length,
-      totalManuais: reservasParaResumo.filter((reserva) => reservaEhManual(reserva)).length,
-      totalCheckout: reservasParaResumo.filter((reserva) => !reservaEhManual(reserva)).length,
       faturamento,
-      gruposTotal: grupos.length,
-      primeiroHorario: grupos[0]?.tituloHorario ?? 'Sem horario',
       participantesPorPacote,
     };
   }, [
@@ -4873,6 +4700,32 @@ const totalParticipantesDoDia = useMemo(() => {
     if (!editReserva.data) {
       setFeedback({ type: 'error', message: 'Por favor, selecione a data da reserva.' });
       return;
+    }
+
+    if (reservaEhManual(editReserva) && carregandoTiposClientes) {
+      setFeedback({ type: 'error', message: 'Aguarde o carregamento dos tipos de clientes para validar as idades.' });
+      return;
+    }
+
+    const faixasEtarias = faixasEtariasEmEdicao;
+    const idadesPorTipo = { ...editReserva.idadesPorTipo };
+    for (const { tipo, quantidade } of faixasEtarias) {
+      const chave = obterChaveTipo(tipo);
+      const idadesGravadas = idadesGravadasParaTipo(editReserva, tipo);
+      const rascunho = idadesReservaEmEdicao[chave] ?? idadesGravadas;
+      const idadesValidas: number[] = [];
+      for (let indice = 0; indice < quantidade; indice += 1) {
+        const idade = rascunho[indice];
+        if (!idadeParticipanteValida(idade, tipo)) {
+          const campo = idCampoIdadeReserva(tipo, indice);
+          setCampoIdadeComErro(campo);
+          document.getElementById(campo)?.focus();
+          return;
+        }
+        idadesValidas.push(Number(idade));
+      }
+
+      if (quantidade > 0 || idadesGravadas.length > 0) idadesPorTipo[chave] = idadesValidas;
     }
 
     try {
@@ -4993,7 +4846,12 @@ const totalParticipantesDoDia = useMemo(() => {
       }
 
       const participantesPorTipo = montarParticipantesPorTipo(tiposClientesAtivos, editReserva);
-      const participantes = calcularParticipantes(editReserva);
+      const quantidadeCriancaLegada = faixasEtarias.find(({ tipo }) => tipo === tipoCriancaLegado)?.quantidade;
+      let participantes = calcularParticipantes(editReserva);
+      if (quantidadeCriancaLegada && obterValorMapa(participantesPorTipo, tipoCriancaLegado) === undefined) {
+        participantesPorTipo[tipoCriancaLegado.id] = quantidadeCriancaLegada;
+        if (somarMapa(editReserva.participantesPorTipo) > 0) participantes += quantidadeCriancaLegada;
+      }
 
       if (participantes <= 0) {
         setFeedback({
@@ -5142,12 +5000,12 @@ const totalParticipantesDoDia = useMemo(() => {
       const areaMesa = editReserva.areaMesa || mesaPrincipalEmEdicao?.area || '';
 
       const statusAtual = isEditingReserva ? editReserva.status ?? 'pre_reserva' : 'confirmado';
-      const statusAtualNormalizado = normalizarStatus(statusAtual);
 
       const adultos =
         obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'adult') ?? 0;
-      const criancas =
-        obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'crian') ?? 0;
+      const criancas = tiposClientesAtivos
+        .filter(tipoContaCriancas)
+        .reduce((total, tipo) => total + (obterValorMapa(participantesPorTipo, tipo) ?? 0), quantidadeCriancaLegada ?? 0);
       const bariatrica =
         obterValorPorTipoNome(participantesPorTipo, tiposClientesAtivos, 'bariat') ?? 0;
 
@@ -5155,6 +5013,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
       const payload = {
         ...restante,
+        ...(reservaEhManual(editReserva) && Object.keys(idadesPorTipo).length > 0 ? { idadesPorTipo } : {}),
         ...(!isEditingReserva ? { criadoEm: new Date() } : {}),
         atividade,
         pacoteIds: pacoteIdsSelecionados,
@@ -5328,9 +5187,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
             perguntarIdade: data.perguntarIdade === true,
 
-            ...(Number.isFinite(Number(data.idadeMinima)) ? { idadeMinima: Number(data.idadeMinima) } : {}),
+            idadeMinima: normalizarLimiteIdade(data.idadeMinima),
 
-            ...(Number.isFinite(Number(data.idadeMaxima)) ? { idadeMaxima: Number(data.idadeMaxima) } : {}),
+            idadeMaxima: normalizarLimiteIdade(data.idadeMaxima),
 
           } as TipoCliente;
 
@@ -5468,25 +5327,37 @@ const totalParticipantesDoDia = useMemo(() => {
   }, []);
 
   const fetchSiteConfig = useCallback(async () => {
+    setSiteConfigCarregando(true);
+    setSiteConfigErro(false);
     try {
       const snap = await getDoc(doc(db, 'configuracoes', 'site'));
-      const data = snap.exists() ? (snap.data() as Record<string, any>) : {};
-      setSiteConfig({ textoFuncionamento: data.textoFuncionamento ?? '' });
+      const texto = snap.data()?.textoFuncionamento;
+      const textoFuncionamento = typeof texto === 'string' ? texto.trim() : '';
+      setSiteConfig({ textoFuncionamento });
+      setSiteConfigTextoSalvo(textoFuncionamento);
     } catch (error) {
       console.error('Erro ao carregar configuracoes do site:', error);
+      setSiteConfigErro(true);
+    } finally {
+      setSiteConfigCarregando(false);
     }
   }, []);
 
   const salvarSiteConfig = useCallback(async () => {
+    const textoFuncionamento = siteConfig.textoFuncionamento.trim();
+    if (siteConfigCarregando || siteConfigErro || siteConfigSalvando || textoFuncionamento === siteConfigTextoSalvo) return;
     setSiteConfigSalvando(true);
     try {
-      await setDoc(doc(db, 'configuracoes', 'site'), { textoFuncionamento: siteConfig.textoFuncionamento.trim() }, { merge: true });
+      await setDoc(doc(db, 'configuracoes', 'site'), { textoFuncionamento }, { merge: true });
+      setSiteConfigTextoSalvo(textoFuncionamento);
+      setFeedback({ type: 'success', message: 'Texto de funcionamento salvo.' });
     } catch (error) {
       console.error('Erro ao salvar configuracoes do site:', error);
+      setFeedback({ type: 'error', message: 'Não foi possível salvar o texto. Tente novamente.' });
     } finally {
       setSiteConfigSalvando(false);
     }
-  }, [siteConfig]);
+  }, [siteConfig.textoFuncionamento, siteConfigCarregando, siteConfigErro, siteConfigSalvando, siteConfigTextoSalvo]);
 
   const obterModelosWhatsappNormalizados = () => {
     const modelosComAlgumValor = (whatsappConfig.modelosMensagemManual ?? []).filter((item) => {
@@ -6426,12 +6297,26 @@ const totalParticipantesDoDia = useMemo(() => {
     void carregarFilaEmails();
   }, [aba, carregarFilaEmails]);
 
+  const tipoClienteNomeRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (aba === 'tipos_clientes' && editorTipoClienteAberto) {
+      tipoClienteNomeRef.current?.focus();
+    }
+  }, [aba, editorTipoClienteAberto]);
+
   const iniciarNovoTipoCliente = () => {
 
     setEditTipoCliente(criarTipoClienteVazio());
 
     setIsEditingTipoCliente(false);
+    setEditorTipoClienteAberto(false);
 
+  };
+
+  const abrirEditorTipoCliente = () => {
+    setEditorTipoClienteAberto(true);
+    if (editorTipoClienteAberto) tipoClienteNomeRef.current?.focus();
   };
 
   const handleEditTipoCliente = (tipo: TipoCliente) => {
@@ -6453,6 +6338,7 @@ const totalParticipantesDoDia = useMemo(() => {
     });
 
     setIsEditingTipoCliente(true);
+    abrirEditorTipoCliente();
 
   };
 
@@ -6486,15 +6372,18 @@ const totalParticipantesDoDia = useMemo(() => {
 
     const descricao = (editTipoCliente.descricao ?? '').trim();
 
-    const idadeMinima = Number.isFinite(editTipoCliente.idadeMinima)
-      ? Math.max(0, Math.trunc(Number(editTipoCliente.idadeMinima)))
-      : undefined;
-
-    const idadeMaxima = Number.isFinite(editTipoCliente.idadeMaxima)
-      ? Math.min(120, Math.max(0, Math.trunc(Number(editTipoCliente.idadeMaxima))))
-      : undefined;
-
-    if (idadeMinima !== undefined && idadeMaxima !== undefined && idadeMinima > idadeMaxima) {
+    const perguntarIdade = tipoExigeIdades(editTipoCliente);
+    const idadeMinima = normalizarLimiteIdade(editTipoCliente.idadeMinima);
+    const idadeMaxima = normalizarLimiteIdade(editTipoCliente.idadeMaxima);
+    if (perguntarIdade && (
+      (editTipoCliente.idadeMinima !== undefined && idadeMinima === undefined) ||
+      (editTipoCliente.idadeMaxima !== undefined && idadeMaxima === undefined)
+    )) {
+      setFeedback({ type: 'error', message: 'Informe limites inteiros entre 0 e 120 anos.' });
+      return;
+    }
+    const { min, max } = limitesIdade(editTipoCliente);
+    if (perguntarIdade && min > max) {
 
       setFeedback({ type: 'error', message: 'A idade mínima não pode ser maior que a idade máxima.' });
 
@@ -6508,11 +6397,11 @@ const totalParticipantesDoDia = useMemo(() => {
 
       ...(descricao ? { descricao } : {}),
 
-      perguntarIdade: editTipoCliente.perguntarIdade === true,
+      perguntarIdade,
 
-      ...(editTipoCliente.perguntarIdade === true && idadeMinima !== undefined ? { idadeMinima } : {}),
+      ...(perguntarIdade && idadeMinima !== undefined ? { idadeMinima } : {}),
 
-      ...(editTipoCliente.perguntarIdade === true && idadeMaxima !== undefined ? { idadeMaxima } : {}),
+      ...(perguntarIdade && idadeMaxima !== undefined ? { idadeMaxima } : {}),
 
     };
 
@@ -6524,8 +6413,9 @@ const totalParticipantesDoDia = useMemo(() => {
 
         await updateDoc(doc(db, 'tipos_clientes', editTipoCliente.id), {
           ...payload,
-          idadeMinima: editTipoCliente.perguntarIdade === true && idadeMinima !== undefined ? idadeMinima : deleteField(),
-          idadeMaxima: editTipoCliente.perguntarIdade === true && idadeMaxima !== undefined ? idadeMaxima : deleteField(),
+          descricao: descricao || deleteField(),
+          idadeMinima: perguntarIdade && idadeMinima !== undefined ? idadeMinima : deleteField(),
+          idadeMaxima: perguntarIdade && idadeMaxima !== undefined ? idadeMaxima : deleteField(),
         });
 
         setFeedback({ type: 'success', message: 'Tipo atualizado com sucesso!' });
@@ -7741,62 +7631,51 @@ const totalParticipantesDoDia = useMemo(() => {
   // Pesquisa Clientes
 
   const pesquisarClientes = async () => {
-
-    if (!termoPesquisa.trim()) return;
-
+    const termo = termoPesquisa.trim();
+    if (!termo || carregandoPesquisa) return;
+    const nome = normalizarTexto(termo);
+    const numero = /^[+\d ().-]+$/.test(termo) ? termo.replace(/\D/g, '') : '';
     setCarregandoPesquisa(true);
+    setErroPesquisa(false);
+    setTermoPesquisado(termo);
 
     try {
-
-      const q = query(collection(db, 'reservas'));
-
-      const snapshot = await getDocs(q);
-
+      const snapshot = await getDocs(collection(db, 'reservas'));
       const matches = snapshot.docs
-
-        .map(doc => ({ id: doc.id, ...doc.data() } as Reserva))
-
-        .filter(
-
-          (r: Reserva) =>
-
-            (r.nome && r.nome.toLowerCase().includes(termoPesquisa.toLowerCase())) ||
-
-            (r.cpf && r.cpf.includes(termoPesquisa)) ||
-
-            (r.telefone && r.telefone.includes(termoPesquisa))
-
-        );
-
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Reserva))
+        .filter((reserva) => {
+          if (reserva.nome && normalizarTexto(reserva.nome).includes(nome)) return true;
+          return !!numero && [reserva.cpf, reserva.telefone].some((valor) =>
+            String(valor ?? '').replace(/\D/g, '').includes(numero),
+          );
+        })
+        .sort((a, b) => normalizarDataReserva(b.data).localeCompare(normalizarDataReserva(a.data)));
       setResultadosPesquisa(matches);
-
-    } catch (e) {
-
-      console.error('Erro na pesquisa de clientes:', e);
-
-      setResultadosPesquisa([]);
-
+    } catch (error) {
+      console.error('Erro na pesquisa de clientes:', error);
+      setResultadosPesquisa(null);
+      setErroPesquisa(true);
+    } finally {
+      setCarregandoPesquisa(false);
     }
-
-    setCarregandoPesquisa(false);
-
   };
-
-
 
   // Render
 
   return (
 
     <main
+      id="conteudo-principal"
+      tabIndex={-1}
       className={`admin-dashboard-theme ${
         temaPainel === 'dark' ? 'admin-dashboard-theme--dark' : 'admin-dashboard-theme--light'
-      } min-h-screen bg-slate-100 py-8`}
+      } min-h-screen bg-slate-100`}
     >
 
       {feedback && (
 
         <div
+          role={feedback.type === 'error' ? 'alert' : 'status'}
 
           className={`fixed top-6 right-6 z-50 flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ${
 
@@ -8109,397 +7988,19 @@ const totalParticipantesDoDia = useMemo(() => {
 
 
 
-      <div className="admin-dashboard-shell mx-auto w-full max-w-[1760px] space-y-8 px-4 sm:px-6 xl:px-8 2xl:px-10">
-
-        <header className="admin-hero admin-dashboard-mobile-hero lg:hidden">
-          <div className="admin-dashboard-mobile-hero__top">
-            <div className="admin-dashboard-mobile-hero__brand">
-              <img
-                src={logo}
-                alt="Logo Vagafogo"
-                className="h-14 w-14 rounded-3xl border border-amber-100 object-cover shadow-sm"
-                loading="lazy"
-              />
-
-              <div className="min-w-0">
-                <p className="admin-dashboard-mobile-hero__eyebrow">Painel administrativo</p>
-                <p className="admin-dashboard-mobile-hero__title">Vagafogo</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="admin-dashboard-mobile-menu-btn"
-              aria-label="Abrir menu"
-              title="Menu"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="admin-dashboard-mobile-hero__preferences">
-            {renderDesktopPreferences()}
-          </div>
-        </header>
-
-
-
-        {/* Cards de estatísticas - apenas na aba reservas */}
-
-        {false && aba === 'reservas' && (
-
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-
-            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
-
-              <div className="flex items-start justify-between">
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Reservas do dia</p>
-
-                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalReservasConfirmadas}</p>
-
-                  <span className="text-xs text-slate-400">{Object.keys(reservas).length} horários ativos</span>
-
-                </div>
-
-                <span className="rounded-full bg-blue-50 p-3 text-blue-600">
-
-                  <FaCalendarAlt className="h-5 w-5" />
-
-                </span>
-
-              </div>
-
-            </article>
-
-
-
-            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
-
-              <div className="flex items-start justify-between">
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Participantes</p>
-
-                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalParticipantesDoDia}</p>
-
-                  <span className="text-xs text-slate-400">Confirmados hoje</span>
-
-                </div>
-
-                <span className="rounded-full bg-emerald-50 p-3 text-emerald-600">
-
-                  <FaUsers className="h-5 w-5" />
-
-                </span>
-
-              </div>
-
-            </article>
-
-
-
-            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
-
-              <div className="flex items-start justify-between">
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Próximo bloqueio</p>
-
-                  <p className="mt-3 text-2xl font-semibold text-slate-900">
-
-                    {proximaDataBloqueada ? proximaDataBloqueada.format('DD/MM/YYYY') : 'Sem bloqueios'}
-
-                  </p>
-
-                  <span className="text-xs text-slate-400">
-
-                    {pacotes.reduce((acc, item) => acc + (item.datasBloqueadas?.length ?? 0), 0)} datas bloqueadas no total
-
-                  </span>
-
-                </div>
-
-                <span className="rounded-full bg-amber-50 p-3 text-amber-500">
-
-                  <FaChevronRight className="h-5 w-5" />
-
-                </span>
-
-              </div>
-
-            </article>
-
-
-
-            <article className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
-
-              <div className="flex items-start justify-between">
-
-                <div>
-
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pacotes ativos</p>
-
-                  <p className="mt-3 text-3xl font-semibold text-slate-900">{totalPacotesAtivos}</p>
-
-                  <span className="text-xs text-slate-400">{pacotesQueNaoAceitamPet} sem pet</span>
-
-                </div>
-
-                <span className="rounded-full bg-purple-50 p-3 text-purple-600">
-
-                  <FaLayerGroup className="h-5 w-5" />
-
-                </span>
-
-              </div>
-
-            </article>
-
-          </section>
-
-        )}
-
-
-
-        <div className={`admin-dashboard-layout ${layoutHeaderPainel === 'top' ? 'admin-dashboard-layout--top' : ''}`}>
-
-        {layoutHeaderPainel === 'top' && (
-          <header className="admin-dashboard-topbar hidden lg:flex">
-            <div className="admin-dashboard-toolbar admin-dashboard-toolbar--top">
-              <div className="admin-dashboard-toolbar__list admin-dashboard-toolbar__list--top">
-                <div className="admin-dashboard-toolbar__brand-chip">
-                  <img
-                    src={logo}
-                    alt="Logo Vagafogo"
-                    className="h-14 w-14 rounded-3xl border border-amber-100 object-cover shadow-sm"
-                    loading="lazy"
-                  />
-                </div>
-
-                <div className="admin-dashboard-toolbar__nav-track">
-                  {renderDesktopToolbarItems()}
-                </div>
-
-                <div className="admin-dashboard-toolbar__preferences-slot">
-                  {renderDesktopPreferences()}
-                </div>
-              </div>
-            </div>
-          </header>
-        )}
-
-        {/* Desktop Navigation */}
-
-        {layoutHeaderPainel === 'sidebar' && (
-        <nav className="admin-dashboard-toolbar admin-dashboard-toolbar--sidebar hidden lg:flex">
-          <div className="admin-dashboard-sidebar__brand">
-            <div className="admin-dashboard-sidebar__brand-mark">
-              <img
-                src={logo}
-                alt="Logo Vagafogo"
-                className="h-14 w-14 rounded-3xl border border-amber-100 object-cover shadow-sm"
-                loading="lazy"
-              />
-            </div>
-
-            <div className="min-w-0">
-              <p className="admin-dashboard-sidebar__eyebrow">Painel administrativo</p>
-            </div>
-          </div>
-
-          <div className="admin-dashboard-sidebar__nav">
-            {renderDesktopToolbarItems()}
-            {false && (
-            <>
-            {abasDisponiveis.map(({ id, label, description, icon: Icon }) => {
-
-              const ativo = aba === id;
-
-              return (
-
-                <button
-
-                  key={id}
-
-                  type="button"
-
-                  onClick={() => setAba(id)}
-
-                  className={`admin-dashboard-toolbar__item ${ativo ? 'is-active' : ''}`}
-
-                >
-
-                  <span className="admin-dashboard-toolbar__item-icon">
-                    <Icon className="h-4 w-4" />
-                  </span>
-
-                  <span className="admin-dashboard-toolbar__item-content">
-                    <span className="admin-dashboard-toolbar__item-label">{label}</span>
-                    <span className="admin-dashboard-toolbar__item-description">{description}</span>
-                  </span>
-
-                </button>
-
-              );
-
-            })}
-
-            {[
-            {
-              key: 'disponibilidade',
-              visible: false,
-              label: 'Disponibilidade',
-              description: 'Editar agenda do dia',
-              icon: FaEdit,
-              className: '',
-              onClick: () => {
-                setAba('reservas');
-                setModalDisponibilidade(true);
-              },
-            },
-            {
-              key: 'relatorios',
-              visible: false,
-              label: 'Relatórios',
-              description: 'Resumo financeiro e metricas',
-              icon: FaChartBar,
-              className: '',
-              onClick: () => setAba('dashboard'),
-            },
-            ]
-              .filter((item) => item.visible !== false)
-              .map(({ key, label, description, icon: Icon, onClick, className }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={onClick}
-                className={`admin-dashboard-toolbar__item ${className}`.trim()}
-              >
-                <span className="admin-dashboard-toolbar__item-icon">
-                  <Icon className="h-4 w-4" />
-                </span>
-
-                <span className="admin-dashboard-toolbar__item-content">
-                  <span className="admin-dashboard-toolbar__item-label">{label}</span>
-                  <span className="admin-dashboard-toolbar__item-description">{description}</span>
-                </span>
-              </button>
-            ))}
-            </>
-            )}
-          </div>
-
-          <div className="admin-dashboard-sidebar__footer">
-            {renderDesktopPreferences()}
-            {false && (
-            <button
-              type="button"
-              onClick={() => setTemaPainel((temaAtual) => (temaAtual === 'dark' ? 'light' : 'dark'))}
-              className={`admin-theme-toggle ${temaPainel === 'dark' ? 'is-dark' : 'is-light'}`}
-              aria-label={`Alternar para tema ${temaPainel === 'dark' ? 'claro' : 'escuro'}`}
-              title={`Tema ${temaPainel === 'dark' ? 'escuro' : 'claro'}`}
-            >
-              <span className={`admin-theme-toggle__icon ${temaPainel === 'light' ? 'is-active' : ''}`}>
-                <FaSun className="h-4 w-4" />
-              </span>
-              <span className={`admin-theme-toggle__icon ${temaPainel === 'dark' ? 'is-active' : ''}`}>
-                <FaMoon className="h-4 w-4" />
-              </span>
-              <span className="admin-theme-toggle__thumb" />
-            </button>
-            )}
-          </div>
-
-        </nav>
-        )}
-
+      <div className="mx-auto w-full max-w-[1760px] px-3 sm:px-6 xl:px-8 2xl:px-10">
+        <AdminPanelNavigation
+          tabs={adminTabs}
+          activeTab={aba}
+          onSelect={(tab) => {
+            if (tab === aba) return;
+            setAba(tab);
+            window.scrollTo({ top: 0, behavior: 'instant' });
+          }}
+          theme={temaPainel}
+          onToggleTheme={() => setTemaPainel((current) => current === 'dark' ? 'light' : 'dark')}
+        />
         <div className="admin-dashboard-main">
-
-        
-
-        {/* Mobile Sidebar */}
-
-        {sidebarOpen && (
-
-          <>
-
-            <div
-              className="admin-dashboard-mobile-sheet__backdrop lg:hidden"
-              onClick={() => setSidebarOpen(false)}
-            />
-
-            <div className="admin-dashboard-mobile-sheet lg:hidden">
-              <div className="admin-dashboard-mobile-sheet__panel">
-                <div className="admin-dashboard-mobile-sheet__header">
-                  <div className="admin-dashboard-mobile-sheet__brand">
-                    <img
-                      src={logo}
-                      alt="Logo Vagafogo"
-                      className="h-12 w-12 rounded-3xl border border-amber-100 object-cover shadow-sm"
-                      loading="lazy"
-                    />
-
-                    <div className="min-w-0">
-                      <p className="admin-dashboard-mobile-sheet__eyebrow">Painel administrativo</p>
-                      <p className="admin-dashboard-mobile-sheet__title">Menu principal</p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setSidebarOpen(false)}
-                    className="admin-dashboard-mobile-sheet__close"
-                    aria-label="Fechar menu"
-                    title="Fechar"
-                  >
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-
-                <div className="admin-dashboard-mobile-sheet__nav">
-                  {abasDisponiveis.map(({ id, label, icon: Icon }) => {
-                    const ativo = aba === id;
-                    const whatsappClassName = id === 'whatsapp' ? 'admin-dashboard-toolbar__item--whatsapp' : '';
-
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => {
-                          setAba(id);
-                          setSidebarOpen(false);
-                        }}
-                        className={`admin-dashboard-toolbar__item ${whatsappClassName} ${ativo ? 'is-active' : ''}`.trim()}
-                      >
-                        <span className="admin-dashboard-toolbar__item-icon">
-                          <Icon className="h-4 w-4" />
-                        </span>
-
-                        <span className="admin-dashboard-toolbar__item-content">
-                          <span className="admin-dashboard-toolbar__item-label">{label}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-          </>
-
-        )}
-
-
 
       {/* ========== Dashboard ========== */}
 
@@ -9327,478 +8828,218 @@ const totalParticipantesDoDia = useMemo(() => {
 
       {aba === 'reservas' && (
 
-        <section className="admin-tab-content space-y-6">
+        <section className="admin-tab-content space-y-3 sm:space-y-4">
 
           <AdminTabHeader
             title={`Reservas de ${dayjs(selectedDate).format('DD/MM/YYYY')}`}
-            description="Resumo em tempo real das reservas do dia."
             icon={FaCalendarAlt}
-            metrics={reservasResumoMetricas}
-            metricsTitle="Painel do dia"
-            metricsContainerClassName="admin-tab-hero__section-shell admin-tab-hero__section-shell--soft"
-            metricsClassName="xl:grid-cols-4"
-            collapsibleMetrics
+            actions={[
+              {
+                label: 'Calendário',
+                icon: FaCalendarAlt,
+                onClick: () => setMostrarCalendario((prev) => !prev),
+                expanded: mostrarCalendario,
+                controls: 'calendario-agenda',
+              },
+              {
+                label: 'Resumo',
+                icon: FaListUl,
+                onClick: () => setModalResumoDia(true),
+                disabled: carregandoAgenda,
+              },
+              {
+                label: 'Nova reserva',
+                icon: FaPlus,
+                onClick: handleAddReserva,
+                variant: 'primary',
+              },
+            ]}
+            metrics={carregandoAgenda ? [] : reservasResumoMetricas}
+            metricsTitle="Visão do dia"
+            metricsClassName="grid-cols-2 min-[760px]:grid-cols-4"
             metricsStorageKey="reservas-painel-do-dia"
-            toolbar={false && (
-              <div className="admin-tab-hero__section-shell admin-tab-hero__section-shell--soft xl:mx-auto xl:w-full xl:max-w-5xl">
-                <div className="admin-tab-hero__section-head">
-                  <p className="admin-tab-hero__section-label">Filtros e acoes</p>
-                  <p className="admin-tab-hero__section-caption">
-                    Ajuste a visualizacao do dia e abra uma reserva manual sem sair desta agenda.
-                  </p>
-                </div>
-
-                <div className="admin-tab-hero__controls-grid admin-tab-hero__controls-grid--reservas">
-                  <button
-                    type="button"
-                    onClick={() => setMostrarCalendario((prev) => !prev)}
-                    className="hidden admin-tab-action admin-tab-action--secondary admin-tab-hero__control-button"
-                  >
-                    <FaCalendarAlt className="h-4 w-4" />
-                    <span>{mostrarCalendario ? 'Recolher calendário' : 'Mostrar calendário'}</span>
-                  </button>
-
-                  <label className="admin-tab-hero__field">
-                    <select
-                      value={filtroAtividade}
-                      onChange={(e) => setFiltroAtividade(e.target.value)}
-                      className="admin-tab-hero__field-input"
-                    >
-                      <option value="">Todas as atividades</option>
-                      {opcoesFiltroAtividade.map((atividade) => (
-                        <option key={atividade} value={atividade}>
-                          {atividade}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="admin-tab-hero__field">
-                    <select
-                      value={filtroChegada}
-                      onChange={(e) => setFiltroChegada(e.target.value as 'todos' | 'chegou' | 'nao')}
-                      className="admin-tab-hero__field-input"
-                    >
-                      <option value="todos">Todos</option>
-                      <option value="chegou">Chegou</option>
-                      <option value="nao">Não chegou</option>
-                    </select>
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={handleAddReserva}
-                    className="admin-tab-action admin-tab-action--primary admin-tab-hero__control-button"
-                  >
-                    <FaPlus className="h-4 w-4" />
-                    <span>Reserva manual</span>
-                  </button>
-                </div>
-              </div>
-            )}
-            toolbarAfterMetrics
+            defaultMetricsCollapsed={typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches}
           />
 
-          <div className="admin-reservas-controls-card admin-tab-hero__section-shell admin-tab-hero__section-shell--soft">
-            <div className="admin-reservas-controls-head">
-              <div className="admin-reservas-controls-intro">
-                <span className="admin-reservas-controls-intro__icon" aria-hidden="true">
-                  <FaSearch className="h-4 w-4" />
-                </span>
-                <div className="admin-reservas-controls-copy">
-                  <span className="admin-reservas-controls-eyebrow">Filtros da agenda</span>
-                  <strong className="admin-reservas-controls-title">
-                    {totalFiltrosAtivosReservas > 0
-                      ? `${totalFiltrosAtivosReservas} filtro${totalFiltrosAtivosReservas !== 1 ? 's' : ''} ativo${totalFiltrosAtivosReservas !== 1 ? 's' : ''}`
-                      : 'Todas as reservas visíveis'}
-                  </strong>
-                </div>
-              </div>
-              <div className="admin-reservas-controls-actions">
-                <button
-                  type="button"
-                  onClick={() => setMostrarCalendario((prev) => !prev)}
-                  className="admin-tab-action admin-tab-action--secondary admin-reservas-controls-action"
-                >
-                  <FaCalendarAlt className="h-3.5 w-3.5" />
-                  <span>{mostrarCalendario ? 'Ocultar calendário' : 'Calendário'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModalResumoDia(true)}
-                  className="admin-tab-action admin-reservas-controls-action"
-                >
-                  <FaListUl className="h-3.5 w-3.5" />
-                  <span>Resumo</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleAddReserva}
-                  className="admin-tab-action admin-tab-action--primary admin-reservas-controls-action"
-                >
-                  <FaPlus className="h-3.5 w-3.5" />
-                  <span>Nova reserva</span>
-                </button>
-
-                {totalFiltrosAtivosReservas > 0 && (
-                  <button
-                    type="button"
-                    onClick={limparFiltrosReservas}
-                    className="admin-reservas-controls-clear"
-                  >
-                    Limpar
+          <div id="calendario-agenda" hidden={!mostrarCalendario}>
+            {mostrarCalendario && (
+              <article className="max-w-sm rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+                <div className="flex items-center justify-between">
+                  <button type="button" aria-label="Mês anterior" onClick={() => changeMonth(-1)}
+                    className="rounded-lg border border-slate-200 p-2.5 text-slate-500 transition hover:bg-slate-100">
+                    <FaChevronLeft className="h-4 w-4" />
                   </button>
+                  <h2 className="text-sm font-semibold capitalize text-slate-700">
+                    {dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}
+                  </h2>
+                  <button type="button" aria-label="Próximo mês" onClick={() => changeMonth(1)}
+                    className="rounded-lg border border-slate-200 p-2.5 text-slate-500 transition hover:bg-slate-100">
+                    <FaChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-semibold text-slate-500">
+                  {diasDaSemanaCurto.map((dia) => <span key={dia}>{dia}</span>)}
+                </div>
+                <div className="mt-2 grid grid-cols-7 gap-1">
+                  {days.map((day, index) => {
+                    if (!day) return <span key={`vazio-${index}`} />;
+                    const date = new Date(currentYear, currentMonth, day);
+                    const dataCalendario = dayjs(date).format('YYYY-MM-DD');
+                    const totalReservasNoDia = indicadoresReservasCalendario[dataCalendario] ?? 0;
+                    const totalParticipantesNoDia = participantesReservasCalendario[dataCalendario] ?? 0;
+                    const isSelected = dayjs(selectedDate).isSame(date, 'day');
+                    const buttonClass = isSelected
+                      ? 'bg-emerald-600 text-white font-bold'
+                      : totalReservasNoDia > 0
+                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'text-slate-600 hover:bg-slate-100';
+
+                    return (
+                      <button
+                        key={dataCalendario}
+                        type="button"
+                        className={`grid min-h-9 place-content-center rounded-lg text-xs ${buttonClass}`}
+                        aria-pressed={isSelected}
+                        aria-label={formatarDataReserva(dataCalendario)}
+                        title={`${totalReservasNoDia} reserva(s) · ${totalParticipantesNoDia} participante(s)`}
+                        onClick={() => selecionarDiaAgenda(date)}
+                      >
+                        <span>{day}</span>
+                        {totalParticipantesNoDia > 0 && <span className="text-[10px]">{totalParticipantesNoDia}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setModalDisponibilidade(true)}
+                  className="admin-tab-action admin-tab-action--secondary mt-3 w-full justify-center"
+                >
+                  <FaEdit className="h-4 w-4" />
+                  Editar disponibilidade
+                </button>
+              </article>
+            )}
+          </div>
+
+          <div className="admin-agenda-filters">
+            <div className="admin-agenda-filters__heading">
+              <div className="admin-agenda-filters__date" role="group" aria-label="Navegar entre dias">
+                <button
+                  type="button"
+                  aria-label="Dia anterior"
+                  onClick={() => selecionarDiaAgenda(dayjs(selectedDate).subtract(1, 'day').toDate())}
+                >
+                  <FaChevronLeft aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  disabled={dayjs(selectedDate).isSame(dayjs(), 'day')}
+                  onClick={() => selecionarDiaAgenda(new Date())}
+                >
+                  Hoje
+                </button>
+                <button
+                  type="button"
+                  aria-label="Próximo dia"
+                  onClick={() => selecionarDiaAgenda(dayjs(selectedDate).add(1, 'day').toDate())}
+                >
+                  <FaChevronRight aria-hidden="true" />
+                </button>
+              </div>
+              <div className="admin-agenda-filters__actions">
+              <button
+                type="button"
+                aria-expanded={mostrarFiltrosAgenda}
+                aria-controls="filtros-agenda"
+                onClick={() => setMostrarFiltrosAgenda((prev) => !prev)}
+              >
+                <FaSearch aria-hidden="true" />
+                <span>Filtros</span>
+                {totalFiltrosAtivosReservas > 0 && (
+                  <span className="admin-agenda-filters__count" aria-label={`${totalFiltrosAtivosReservas} filtros ativos`}>
+                    {totalFiltrosAtivosReservas}
+                  </span>
                 )}
+                {mostrarFiltrosAgenda ? <FaChevronUp aria-hidden="true" /> : <FaChevronDown aria-hidden="true" />}
+              </button>
+              {totalFiltrosAtivosReservas > 0 && (
+                <button type="button" onClick={limparFiltrosReservas}>Limpar filtros</button>
+              )}
               </div>
             </div>
 
-            {filtrosAtivosAgenda.length > 0 && (
-              <div className="admin-reservas-controls-active" aria-label="Filtros ativos">
-                <span className="admin-reservas-controls-active__label">Ativos agora</span>
-                {filtrosAtivosAgenda.map(({ key, label, Icon }) => (
-                  <span key={key} className="admin-reservas-controls-active__chip">
-                    <Icon className="h-3.5 w-3.5" />
-                    {label}
-                  </span>
+            <div id="filtros-agenda" className="admin-agenda-filters__grid" hidden={!mostrarFiltrosAgenda}>
+              <label>
+                Atividade
+                <select value={filtroAtividade} onChange={(event) => setFiltroAtividade(event.target.value)}>
+                  <option value="">Todas as atividades</option>
+                  {opcoesFiltroAtividade.map((atividade) => (
+                    <option key={atividade} value={atividade}>{atividade}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Chegada
+                <select value={filtroChegada} onChange={(event) => setFiltroChegada(event.target.value as typeof filtroChegada)}>
+                  <option value="todos">Todas</option>
+                  <option value="chegou">Chegou</option>
+                  <option value="nao">Não chegou</option>
+                </select>
+              </label>
+              <label>
+                Status
+                <select value={filtroStatusReserva} onChange={(event) => setFiltroStatusReserva(event.target.value as typeof filtroStatusReserva)}>
+                  <option value="todos">Todos</option>
+                  <option value="confirmadas">Confirmadas</option>
+                  <option value="pre_reservas">Pré-reservas</option>
+                </select>
+              </label>
+              <label>
+                Origem
+                <select value={filtroOrigemReserva} onChange={(event) => setFiltroOrigemReserva(event.target.value as OrigemReservaFiltro)}>
+                  <option value="todas">Todas</option>
+                  <option value="manual">Manual</option>
+                  <option value="checkout">Pagas no checkout</option>
+                </select>
+              </label>
+              <label>
+                Perfil
+                <select value={filtroPerfilReserva} onChange={(event) => setFiltroPerfilReserva(event.target.value as typeof filtroPerfilReserva)}>
+                  <option value="todos">Todos</option>
+                  <option value="educativo">Educativo</option>
+                  <option value="padrao">Padrão</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {!carregandoAgenda && (
+          <div className="admin-agenda-results" aria-live="polite">
+            <strong>
+              {reservasAgendaResumo.totalReservas.toLocaleString('pt-BR')} {reservasAgendaResumo.totalReservas === 1 ? 'reserva' : 'reservas'}
+              {totalFiltrosAtivosReservas > 0 ? ' no filtro' : ' na lista'}
+            </strong>
+            {reservasAgendaResumo.totalReservas > 0 && (
+              <span>
+                {reservasAgendaResumo.totalChegadas} {reservasAgendaResumo.totalChegadas === 1 ? 'chegou' : 'chegaram'} ·{' '}
+                {reservasAgendaResumo.totalPendentes} {reservasAgendaResumo.totalPendentes === 1 ? 'aguarda' : 'aguardam'} chegada
+              </span>
+            )}
+            {reservasAgendaResumo.participantesPorPacote.length > 0 && (
+              <div className="admin-agenda-results__packages" aria-label="Participantes por pacote">
+                {reservasAgendaResumo.participantesPorPacote.map((item) => (
+                  <span key={item.nome}>{item.total} {item.nome}</span>
                 ))}
               </div>
             )}
-
-            <div className="admin-reservas-controls-grid">
-              <label className="admin-tab-hero__field admin-reservas-filter">
-                <span className="admin-reservas-filter__label"><FaLayerGroup className="h-3.5 w-3.5" />Atividade</span>
-                <span className="admin-reservas-filter__control">
-                  <FaLayerGroup className="admin-reservas-filter__icon h-4 w-4" />
-                  <select
-                    aria-label="Filtrar por atividade"
-                    value={filtroAtividade}
-                    onChange={(e) => setFiltroAtividade(e.target.value)}
-                    className="admin-tab-hero__field-input"
-                  >
-                    <option value="">Todas as atividades</option>
-                    {opcoesFiltroAtividade.map((atividade) => (
-                      <option key={atividade} value={atividade}>
-                        {atividade}
-                      </option>
-                    ))}
-                  </select>
-                </span>
-              </label>
-
-              <label className="admin-tab-hero__field admin-reservas-filter">
-                <span className="admin-reservas-filter__label"><FaCheck className="h-3.5 w-3.5" />Chegada</span>
-                <span className="admin-reservas-filter__control">
-                  <FaCheck className="admin-reservas-filter__icon h-4 w-4" />
-                  <select
-                    aria-label="Filtrar por chegada"
-                    value={filtroChegada}
-                    onChange={(e) => setFiltroChegada(e.target.value as 'todos' | 'chegou' | 'nao')}
-                    className="admin-tab-hero__field-input"
-                  >
-                    <option value="todos">Todas as chegadas</option>
-                    <option value="chegou">Chegou</option>
-                    <option value="nao">Ainda não chegou</option>
-                  </select>
-                </span>
-              </label>
-
-              <label className="admin-tab-hero__field admin-reservas-filter">
-                <span className="admin-reservas-filter__label"><FaCreditCard className="h-3.5 w-3.5" />Status</span>
-                <span className="admin-reservas-filter__control">
-                  <FaCreditCard className="admin-reservas-filter__icon h-4 w-4" />
-                  <select
-                    aria-label="Filtrar por status"
-                    value={filtroStatusReserva}
-                    onChange={(e) => setFiltroStatusReserva(e.target.value as 'todos' | 'confirmadas' | 'pre_reservas')}
-                    className="admin-tab-hero__field-input"
-                  >
-                    <option value="todos">Todos os status</option>
-                    <option value="confirmadas">Confirmadas</option>
-                    <option value="pre_reservas">Pré-reservas</option>
-                  </select>
-                </span>
-              </label>
-
-              <label className="admin-tab-hero__field admin-reservas-filter">
-                <span className="admin-reservas-filter__label"><FaClipboardList className="h-3.5 w-3.5" />Origem</span>
-                <span className="admin-reservas-filter__control">
-                  <FaClipboardList className="admin-reservas-filter__icon h-4 w-4" />
-                  <select
-                    aria-label="Filtrar por origem"
-                    value={filtroOrigemReserva}
-                    onChange={(e) => setFiltroOrigemReserva(e.target.value as OrigemReservaFiltro)}
-                    className="admin-tab-hero__field-input"
-                  >
-                    <option value="todas">Todas as origens</option>
-                    <option value="manual">Lançadas manualmente</option>
-                    <option value="checkout">Pagas pelo checkout</option>
-                  </select>
-                </span>
-              </label>
-
-              <label className="admin-tab-hero__field admin-reservas-filter">
-                <span className="admin-reservas-filter__label"><FaGraduationCap className="h-3.5 w-3.5" />Perfil</span>
-                <span className="admin-reservas-filter__control">
-                  <FaGraduationCap className="admin-reservas-filter__icon h-4 w-4" />
-                  <select
-                    aria-label="Filtrar por perfil da reserva"
-                    value={filtroPerfilReserva}
-                    onChange={(e) => setFiltroPerfilReserva(e.target.value as 'todos' | 'educativo' | 'padrao')}
-                    className="admin-tab-hero__field-input"
-                  >
-                    <option value="todos">Todos os perfis</option>
-                    <option value="educativo">Educativo</option>
-                    <option value="padrao">Padrão</option>
-                  </select>
-                </span>
-              </label>
-            </div>
           </div>
+          )}
 
-          <div className="admin-reservas-overview admin-tab-hero__section-shell admin-tab-hero__section-shell--soft">
-            <div className="admin-reservas-overview__headline">
-              <div className="admin-reservas-overview__headline-icon">
-                <FaClipboardList className="h-5 w-5" />
-              </div>
-              <div className="admin-reservas-overview__headline-copy">
-                <span className="admin-reservas-overview__eyebrow">Resumo filtrado</span>
-                <strong>{reservasAgendaResumo.totalReservas.toLocaleString('pt-BR')} reserva{reservasAgendaResumo.totalReservas !== 1 ? 's' : ''}</strong>
-                <p>
-                  {reservasAgendaResumo.gruposTotal.toLocaleString('pt-BR')} horario{reservasAgendaResumo.gruposTotal !== 1 ? 's' : ''}
-                </p>
-                {reservasAgendaResumo.participantesPorPacote.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {reservasAgendaResumo.participantesPorPacote.map((item) => (
-                      <span
-                        key={item.nome}
-                        className="inline-flex items-center gap-1 rounded-full bg-white/70 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-900"
-                      >
-                        <span className="text-emerald-700">{item.total}</span>
-                        <span className="text-emerald-900/80">{item.nome}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="admin-reservas-overview__metrics">
-              <div className="admin-reservas-overview__metric">
-                <span><FaClock className="h-3.5 w-3.5" />Primeiro horario</span>
-                <strong>{reservasAgendaResumo.primeiroHorario}</strong>
-              </div>
-              <div className="admin-reservas-overview__metric">
-                <span><FaCheck className="h-3.5 w-3.5" />Chegadas</span>
-                <strong>{reservasAgendaResumo.totalChegadas.toLocaleString('pt-BR')}</strong>
-              </div>
-              <div className="admin-reservas-overview__metric">
-                <span><FaClock className="h-3.5 w-3.5" />Pendentes</span>
-                <strong>{reservasAgendaResumo.totalPendentes.toLocaleString('pt-BR')}</strong>
-              </div>
-              <div className="admin-reservas-overview__metric">
-                <span><FaQrcode className="h-3.5 w-3.5" />Checkout</span>
-                <strong>{reservasAgendaResumo.totalCheckout.toLocaleString('pt-BR')}</strong>
-              </div>
-              <div className="admin-reservas-overview__metric">
-                <span><FaClipboardList className="h-3.5 w-3.5" />Manual</span>
-                <strong>{reservasAgendaResumo.totalManuais.toLocaleString('pt-BR')}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div className={`grid gap-6 ${mostrarCalendario ? 'lg:grid-cols-[320px_minmax(0,1fr)]' : 'lg:grid-cols-1'}`}>
-
-            {mostrarCalendario && (
-              <div className="relative lg:min-w-0">
-                <button
-                  type="button"
-                  onClick={() => setMostrarCalendario(false)}
-                  className="hidden"
-                >
-                  <FaCalendarAlt className="h-4 w-4" />
-                  <span>Recolher calendario</span>
-                </button>
-
-                <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-                <div className="flex items-center justify-between">
-
-                  <button
-
-                    type="button"
-
-                    onClick={() => changeMonth(-1)}
-
-                    className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-
-                  >
-
-                    <FaChevronLeft className="h-4 w-4" />
-
-                  </button>
-
-                  <h2 className="text-sm font-semibold text-slate-700">
-
-                    {dayjs(new Date(currentYear, currentMonth)).format('MMMM [de] YYYY')}
-
-                  </h2>
-
-                  <button
-
-                    type="button"
-
-                    onClick={() => changeMonth(1)}
-
-                    className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-
-                  >
-
-                    <FaChevronRight className="h-4 w-4" />
-
-                  </button>
-
-                </div>
-
-                <div className="mt-4 grid grid-cols-7 gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-
-                  {diasDaSemanaCurto.map((dia) => (
-
-                    <span key={dia} className="text-center">{dia}</span>
-
-                  ))}
-
-                </div>
-
-                <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
-
-                  {days.map((day, idx) => {
-                    const dataCalendario = day
-                      ? dayjs(new Date(currentYear, currentMonth, day)).format('YYYY-MM-DD')
-                      : '';
-                    const totalReservasNoDia = dataCalendario
-                      ? indicadoresReservasCalendario[dataCalendario] ?? 0
-                      : 0;
-                    const totalParticipantesNoDia = dataCalendario
-                      ? participantesReservasCalendario[dataCalendario] ?? 0
-                      : 0;
-                    const temReservasNoDia = totalReservasNoDia > 0;
-
-                    const isSelected =
-
-                      !!day &&
-
-                      selectedDate.getDate() === day &&
-
-                      selectedDate.getMonth() === currentMonth &&
-
-                      selectedDate.getFullYear() === currentYear;
-
-                    const buttonClass = !day
-                      ? 'cursor-default text-slate-300'
-                      : isSelected
-                        ? temReservasNoDia
-                          ? 'bg-emerald-600 text-white shadow-sm ring-4 ring-emerald-100'
-                          : 'bg-rose-500 text-white shadow-sm ring-4 ring-rose-100'
-                        : temReservasNoDia
-                          ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                          : 'bg-rose-50 text-rose-600 hover:bg-rose-100';
-
-                    return (
-                      <div key={idx} className="flex flex-col items-center gap-0.5">
-                        <button
-                          type="button"
-                          disabled={!day}
-                          className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-medium transition ${buttonClass}`}
-                          title={
-                            !day
-                              ? undefined
-                              : temReservasNoDia
-                                ? `${totalReservasNoDia} reserva(s) · ${totalParticipantesNoDia} participante(s)`
-                                : 'Nenhuma reserva neste dia'
-                          }
-                          onClick={() => day && setSelectedDate(new Date(currentYear, currentMonth, day))}
-                        >
-                          {day || ''}
-                        </button>
-                        {day && temReservasNoDia && totalParticipantesNoDia > 0 && (
-                          <span className={`text-[9px] font-semibold leading-none tabular-nums ${
-                            isSelected ? 'text-emerald-700' : 'text-slate-400'
-                          }`}>
-                            {totalParticipantesNoDia}
-                          </span>
-                        )}
-                      </div>
-                    );
-
-                  })}
-
-                </div>
-
-                <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
-
-                  Dia selecionado: <span className="font-semibold text-slate-700">{dayjs(selectedDate).format('DD/MM/YYYY')}</span>
-
-                </p>
-
-                <button
-
-                  onClick={() => setModalDisponibilidade(true)}
-
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-medium text-orange-700 transition hover:bg-orange-100"
-
-                >
-
-                  <FaEdit className="h-4 w-4" />
-
-                  Editar disponibilidade
-
-                </button>
-
-                  </article>
-                  <button
-                    type="button"
-                    onClick={() => setMostrarCalendario(false)}
-                    className="hidden"
-                    aria-label="Recolher calendário"
-                    title="Recolher calendário"
-                  >
-                    <FaChevronLeft className="h-4 w-4" />
-                  </button>
-              </div>
-            )}
-
-
-
+          <div className="min-w-0">
             <div className="relative min-w-0">
-              {!mostrarCalendario && (
-                <button
-                  type="button"
-                  onClick={() => setMostrarCalendario(true)}
-                  className="hidden"
-                  aria-label="Mostrar calendário"
-                  title="Mostrar calendário"
-                >
-                  <FaChevronRight className="h-4 w-4" />
-                </button>
-              )}
-
-              {!mostrarCalendario && (
-                <div className="hidden">
-                  <button
-                    type="button"
-                    onClick={() => setMostrarCalendario(true)}
-                    className="admin-tab-action admin-tab-action--secondary"
-                    aria-label="Mostrar calendario"
-                    title="Mostrar calendario"
-                  >
-                    <FaCalendarAlt className="h-4 w-4" />
-                    <span>Mostrar calendario</span>
-                  </button>
-                </div>
-              )}
-
               <article className="admin-reservas-panel overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
               {false && <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -10342,7 +9583,6 @@ const totalParticipantesDoDia = useMemo(() => {
                                       : 'bg-white border-slate-200';
 
                             const pacoteDescricao = formatarPacote(reserva);
-                            const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
 
                                 const valorFormatado = formatarValor(reserva.valor);
 
@@ -10686,7 +9926,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
               </div>)}
 
-              
+
 
               {false && (<div className="lg:hidden space-y-4">
 
@@ -10934,10 +10174,14 @@ const totalParticipantesDoDia = useMemo(() => {
                   <span role="columnheader">Respostas</span>
                   <span role="columnheader">Pet</span>
                   <span role="columnheader">Valor</span>
-                  <span role="columnheader">Acoes</span>
+                  <span role="columnheader">Ações</span>
                 </div>
 
-                {reservasAgendaResumo.totalReservas === 0 ? (
+                {carregandoAgenda ? (
+                  <div role="status" className="admin-reservas-empty-state">
+                    Carregando reservas do dia…
+                  </div>
+                ) : reservasAgendaResumo.totalReservas === 0 ? (
                   <div className="admin-reservas-empty-state">
                     Nenhuma reserva encontrada para esta data e filtros.
                   </div>
@@ -10974,7 +10218,12 @@ const totalParticipantesDoDia = useMemo(() => {
                             .sort((a, b) => Number(a.chegou === true) - Number(b.chegou === true))
                             .map((reserva) => {
                         const participantes = calcularParticipantes(reserva);
-                        const resumoParticipantes = montarResumoParticipantes(reserva);
+                        const resumoParticipantes = montarResumoParticipantes(reserva).map((item) => ({
+                          ...item,
+                          rotuloIdades: rotuloParticipanteComIdades(reserva, item, tiposClientesAtivos),
+                        }));
+                        const participantesAbreviados = resumoParticipantes.filter(({ rotuloIdades }) => !rotuloIdades);
+                        const participantesComIdades = resumoParticipantes.filter(({ rotuloIdades }) => rotuloIdades);
                         const chegou = reserva.chegou === true;
                         const reservaToneClass = chegou
                           ? 'admin-reservas-tone--arrived'
@@ -11034,7 +10283,6 @@ const totalParticipantesDoDia = useMemo(() => {
                         const podeEnviarWhatsapp = Boolean(
                           normalizarTelefoneWhatsapp(reserva.telefone)
                         );
-                        const reservaManual = reservaEhManual(reserva);
                         const reservaKey =
                           reserva.id ??
                           `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
@@ -11047,6 +10295,7 @@ const totalParticipantesDoDia = useMemo(() => {
                           <article
                             key={`lista-${reservaKey}`}
                             className={`admin-reservation-list__row ${reservaToneClass}`}
+                            data-has-answers={perguntasRespondidas.length > 0}
                             role="row"
                           >
                             <div
@@ -11056,8 +10305,15 @@ const totalParticipantesDoDia = useMemo(() => {
                             >
                               <div className="admin-reservation-list__client-name">
                                 <strong title={reserva.nome || undefined}>{nomeClienteResumido}</strong>
-                                {reservaManual && (
-                                  <span className="admin-reservas-origin-badge">Manual</span>
+                                <ReservaIdentificacaoBadges
+                                  formaPagamento={reserva.formaPagamento}
+                                  criadaManualmente={reservaEhManual(reserva)}
+                                />
+                                {chegou && (
+                                  <span className="admin-reservation-list__arrival-label">
+                                    <FaCheck aria-hidden="true" />
+                                    Chegou
+                                  </span>
                                 )}
                               </div>
                               <span><FaPhoneAlt className="h-3 w-3" />{reserva.telefone?.trim() || 'Sem telefone'}</span>
@@ -11073,19 +10329,28 @@ const totalParticipantesDoDia = useMemo(() => {
                                 <strong>{participantes}</strong>
                                 <span>pessoa{participantes !== 1 ? 's' : ''}</span>
                               </div>
-                              <div className="admin-reservation-list__inline-tags admin-reservation-list__participant-tags">
-                                {resumoParticipantes.map((item) => (
-                                  <span
-                                    key={`${reservaKey}-participante-${item.key}`}
-                                    className="admin-reservation-list__participant-tag"
-                                    title={`${item.label}: ${item.quantidade}`}
-                                    aria-label={`${item.label}: ${item.quantidade}`}
-                                  >
-                                    <span>{item.inicial}</span>
-                                    <strong>{item.quantidade}</strong>
-                                  </span>
-                                ))}
-                              </div>
+                              {participantesAbreviados.length > 0 && (
+                                <div className="admin-reservation-list__inline-tags admin-reservation-list__participant-tags">
+                                  {participantesAbreviados.map((item) => (
+                                    <span
+                                      key={item.key}
+                                      className="admin-reservation-list__participant-tag"
+                                      title={`${item.label}: ${item.quantidade}`}
+                                      aria-label={`${item.label}: ${item.quantidade}`}
+                                    >
+                                      <span>{item.inicial}</span>
+                                      <strong>{item.quantidade}</strong>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {participantesComIdades.length > 0 && (
+                                <ul className="admin-reservation-list__participant-ages min-w-0 space-y-1 text-xs font-medium leading-snug [overflow-wrap:anywhere]">
+                                  {participantesComIdades.map(({ key, rotuloIdades }) => (
+                                    <li key={key}>{rotuloIdades}</li>
+                                  ))}
+                                </ul>
+                              )}
                             </div>
 
                             <div
@@ -11152,7 +10417,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                             <div
                               className="admin-reservation-list__cell admin-reservation-list__cell--actions"
-                              data-label="Acoes"
+                              data-label="Ações"
                               role="cell"
                             >
                               <button
@@ -11679,7 +10944,13 @@ const totalParticipantesDoDia = useMemo(() => {
 
                                         {/* Info */}
                                         <div className="min-w-0 flex-1">
-                                          <p className="truncate text-xs font-semibold text-slate-800">{r.nome || '---'}</p>
+                                          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                                            <p className="min-w-0 truncate text-xs font-semibold text-slate-800">{r.nome || '---'}</p>
+                                            <ReservaIdentificacaoBadges
+                                              formaPagamento={r.formaPagamento}
+                                              criadaManualmente={reservaEhManual(r)}
+                                            />
+                                          </div>
                                           {tipos.length > 0 && (
                                             <p className="mt-0.5 text-[10px] font-medium text-slate-400">{tipos.join(' · ')}</p>
                                           )}
@@ -12017,7 +11288,10 @@ const totalParticipantesDoDia = useMemo(() => {
                             label={tipo.nome}
                             value={valor}
                             description={tipo.descricao || 'Use os botoes para ajustar a quantidade.'}
-                            onDecrease={() => ajustarParticipanteTipoEmEdicao(tipo, -1)}
+                            onDecrease={() => {
+                              if (reservaEhManual(editReserva) && tipoExigeIdades(tipo)) retirarUltimaIdade(tipo, valor);
+                              ajustarParticipanteTipoEmEdicao(tipo, -1);
+                            }}
                             onIncrease={() => ajustarParticipanteTipoEmEdicao(tipo, 1)}
                           />
 
@@ -12029,12 +11303,79 @@ const totalParticipantesDoDia = useMemo(() => {
                         label="Nao pagante"
                         value={Number(editReserva.naoPagante ?? 0)}
                         description="Conta no total geral, mas nao entra como pagante."
-                        onDecrease={() => ajustarNaoPaganteEmEdicao(-1)}
+                        onDecrease={() => {
+                          if (faixaEtariaNaoPagante) retirarUltimaIdade(faixaEtariaNaoPagante.tipo, faixaEtariaNaoPagante.quantidade);
+                          ajustarNaoPaganteEmEdicao(-1);
+                        }}
                         onIncrease={() => ajustarNaoPaganteEmEdicao(1)}
                         emphasis="muted"
                       />
 
                     </div>
+
+                    {faixasEtariasEmEdicao.some(({ quantidade }) => quantidade > 0) && (
+                      <div className="mt-5 grid gap-3 border-t border-slate-200 pt-4">
+                        <h6 className="text-sm font-semibold text-slate-900">Idades obrigatórias</h6>
+                        {faixasEtariasEmEdicao.filter(({ quantidade }) => quantidade > 0).map(({ tipo, quantidade, naoPaganteLegado }) => {
+                          const chave = obterChaveTipo(tipo);
+                          const { min, max } = limitesIdade(tipo);
+                          const idadesIniciais = idadesGravadasParaTipo(editReserva, tipo);
+                          const idades = idadesReservaEmEdicao[chave] ?? idadesIniciais;
+                          const legenda = naoPaganteLegado && tiposClientesAtivos.some(({ nome }) => normalizarChaveIdade(nome) === normalizarChaveIdade(tipo.nome))
+                            ? 'Não pagantes adicionais'
+                            : tipo.nome;
+
+                          return (
+                            <fieldset key={chave} className="min-w-0 rounded-xl border border-slate-200 px-3 py-2">
+                              <legend className="px-1 text-sm font-semibold text-slate-700">
+                                {legenda} <span className="font-normal text-slate-500">({min} a {max} anos)</span>
+                              </legend>
+                              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                {Array.from({ length: quantidade }, (_, indice) => {
+                                  const idade = idades[indice] ?? '';
+                                  const campo = idCampoIdadeReserva(tipo, indice);
+                                  const erroAoSalvar = campoIdadeComErro === campo;
+                                  const invalida = erroAoSalvar || (idade.length > 0 && !idadeParticipanteValida(idade, tipo));
+                                  return (
+                                    <label key={indice} className="block min-w-0 text-xs font-semibold text-slate-700">
+                                      Idade {indice + 1}
+                                      <input
+                                        id={campo}
+                                        className="mt-1 min-h-10 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm aria-[invalid=true]:border-rose-500"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={min}
+                                        max={max}
+                                        step={1}
+                                        required
+                                        value={idade}
+                                        aria-invalid={invalida || undefined}
+                                        aria-label={`Idade ${indice + 1} de ${legenda} (entre ${min} e ${max} anos)`}
+                                        aria-describedby={erroAoSalvar ? `${campo}-erro` : undefined}
+                                        onChange={(event) => {
+                                          const valor = event.target.value;
+                                          if (erroAoSalvar && idadeParticipanteValida(valor, tipo)) setCampoIdadeComErro(undefined);
+                                          setIdadesReservaEmEdicao((prev) => {
+                                            const novasIdades = [...(prev[chave] ?? idadesIniciais)];
+                                            novasIdades[indice] = valor;
+                                            return { ...prev, [chave]: novasIdades };
+                                          });
+                                        }}
+                                      />
+                                      {erroAoSalvar && (
+                                        <span id={`${campo}-erro`} className="mt-1 block text-rose-600" role="alert">
+                                          Informe uma idade inteira entre {min} e {max} anos.
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </fieldset>
+                          );
+                        })}
+                      </div>
+                    )}
 
                   </div>
 
@@ -12647,358 +11988,159 @@ const totalParticipantesDoDia = useMemo(() => {
             {/* ========== Pacotes ========== */}
 
       {aba === 'pacotes' && (
-
-        <section className="admin-tab-content space-y-6">
-
+        <section className="admin-tab-content space-y-4">
           <AdminTabHeader
             title="Pacotes e combos"
-            description={'Organize as experiencias vendidas pela Vagafogo, ajuste horarios, limites e precos e mantenha o catalogo pronto para o time comercial.'}
             icon={FaLayerGroup}
             actions={[
               {
-                label: 'Novo pacote',
+                label: secaoCatalogo === 'pacotes' ? 'Novo pacote' : 'Novo combo',
                 icon: FaPlus,
-                onClick: handleAddPacote,
+                onClick: secaoCatalogo === 'pacotes' ? handleAddPacote : handleAddCombo,
                 variant: 'primary',
+                disabled: secaoCatalogo === 'combos' && pacotes.length === 0,
               },
             ]}
-            metrics={[
-              {
-                label: 'Pacotes ativos',
-                value: totalPacotesAtivos.toLocaleString('pt-BR'),
-                hint: 'Atividades prontas para venda',
-                icon: FaLayerGroup,
-                tone: 'sky',
-              },
-              {
-                label: 'Combos ativos',
-                value: totalCombosAtivos.toLocaleString('pt-BR'),
-                hint: 'Ofertas combinadas habilitadas',
-                icon: FaCheck,
-                tone: 'emerald',
-              },
-              {
-                label: 'Sem pet',
-                value: pacotesQueNaoAceitamPet.toLocaleString('pt-BR'),
-                hint: 'Pacotes com restricao para pets',
-                icon: FaQuestionCircle,
-                tone: 'amber',
-              },
-              {
-                label: 'Tipos precificados',
-                value: tiposClientesAtivos.length.toLocaleString('pt-BR'),
-                hint: 'Categorias disponiveis para composicao de preco',
-                icon: FaUsers,
-                tone: 'indigo',
-              },
-            ]}
+            toolbar={
+              <AdminSectionOptions<'pacotes' | 'combos'>
+                label="Catálogo"
+                options={[
+                  { id: 'pacotes', label: `Pacotes (${pacotes.length})` },
+                  { id: 'combos', label: `Combos (${combos.length})` },
+                ]}
+                value={secaoCatalogo}
+                onChange={setSecaoCatalogo}
+              />
+            }
           />
 
-          {pacotes.length === 0 ? (
-
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
-
-              Nenhum pacote cadastrado. Clique em "Novo pacote" para começar.
-
-            </div>
-
-          ) : (
-
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-
-              {pacotes.map((pacote) => {
-
-                const diasLabel = pacote.dias.length > 0 ? pacote.dias.map((i) => diasDaSemana[i]).join(', ') : 'Todos os dias';
-
-                const horariosLabel =
-
-                  pacote.modoHorario === 'intervalo' && pacote.horarioInicio && pacote.horarioFim
-
-                    ? `${pacote.horarioInicio} - ${pacote.horarioFim} (faixa)`
-
+          {secaoCatalogo === 'pacotes' ? (
+            pacotes.length === 0 ? (
+              <p className="admin-catalog-empty">Nenhum pacote cadastrado.</p>
+            ) : (
+              <div className="admin-catalog-grid">
+                {pacotes.map((pacote) => {
+                  const diasLabel = pacote.dias.length > 0
+                    ? pacote.dias.map((dia) => diasDaSemana[dia]).join(', ')
+                    : 'Todos os dias';
+                  const horariosLabel = pacote.modoHorario === 'intervalo' && pacote.horarioInicio && pacote.horarioFim
+                    ? `${pacote.horarioInicio}–${pacote.horarioFim}`
                     : pacote.horarios.join(', ') || 'Sob consulta';
+                  const datasBloqueadas = pacote.datasBloqueadas?.length ?? 0;
 
-                const precosResumo = tiposClientesAtivos.map((tipo) => ({
-
-                  key: obterChaveTipo(tipo),
-
-                  nome: tipo.nome,
-
-                  valor: obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote),
-
-                }));
-
-                return (
-
-                  <article key={pacote.id} className="flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
-
-                    <div className="space-y-4">
-
-                      <div className="flex items-start justify-between gap-4">
-
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[#8B4F23]/15 bg-[#8B4F23]/5 text-[#8B4F23] shadow-sm">
-                            {pacote.iconeUrl ? (
-                              <img
-                                src={pacote.iconeUrl}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <FaLayerGroup className="h-5 w-5" aria-hidden="true" />
-                            )}
-                          </span>
-
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{pacote.tipo || 'Atividade'}</p>
-
-                            <h3 className="mt-1 truncate text-lg font-semibold text-slate-900">{pacote.nome}</h3>
-                          </div>
-
-                        </div>
-
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${pacote.aceitaPet ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'}`}>
-
-                      {pacote.aceitaPet ? 'Aceita pets' : 'Não aceita pets'}
-
+                  return (
+                    <article key={pacote.id ?? pacote.nome} className="admin-catalog-card">
+                      <div className="admin-catalog-card__heading">
+                        <span className="admin-catalog-card__icon" aria-hidden="true">
+                          {pacote.iconeUrl ? <img src={pacote.iconeUrl} alt="" /> : <FaLayerGroup />}
                         </span>
-
+                        <div className="min-w-0">
+                          <h2>{pacote.nome}</h2>
+                          {pacote.tipo && <p>{pacote.tipo}</p>}
+                        </div>
                       </div>
 
-                      <dl className="space-y-3 text-sm text-slate-600">
-
-                        <div className="flex items-start justify-between gap-2">
-
-                          <dt className="font-medium text-slate-500">Dias</dt>
-
-                          <dd className="text-right text-slate-800">{diasLabel}</dd>
-
-                        </div>
-
-                        <div className="flex items-start justify-between gap-2">
-
-                          <dt className="font-medium text-slate-500">Horário</dt>
-
-                          <dd className="text-right text-slate-800">{horariosLabel}</dd>
-
-                        </div>
-
-                        <div>
-
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Valores</p>
-
-                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-600">
-
-                            {precosResumo.map((item) => (
-
-                              <span key={item.key} className="rounded-full bg-slate-100 px-2 py-1">
-
-                                {item.nome} {formatCurrency(item.valor)}
-
-                              </span>
-
-                            ))}
-
-                          </div>
-
-                        </div>
-
-                        <div className="flex items-center justify-between text-xs text-slate-500">
-
-                          <span>Limite por horário</span>
-
-                          <span className="font-semibold text-slate-800">{pacote.limite}</span>
-
-                        </div>
-
-                        <div className="flex items-center justify-between text-xs text-slate-500">
-
-                          <span>Datas bloqueadas</span>
-
-                          <span className="font-semibold text-slate-800">{pacote.datasBloqueadas?.length ?? 0}</span>
-
-                        </div>
-
+                      <dl className="admin-catalog-card__details">
+                        <div><dt>Dias</dt><dd>{diasLabel}</dd></div>
+                        <div><dt>Horários</dt><dd>{horariosLabel}</dd></div>
+                        <div><dt>Limite por horário</dt><dd>{pacote.limite}</dd></div>
+                        <div><dt>Pets</dt><dd>{pacote.aceitaPet ? 'Permitidos' : 'Não permitidos'}</dd></div>
+                        {datasBloqueadas > 0 && <div><dt>Datas bloqueadas</dt><dd>{datasBloqueadas}</dd></div>}
                       </dl>
 
-                    </div>
+                      <AdminCatalogPrices
+                        prices={tiposClientesAtivos.map((tipo) => ({
+                          key: obterChaveTipo(tipo),
+                          label: tipo.nome,
+                          value: formatCurrency(obterPrecoPorTipo(pacote.precosPorTipo, tipo, pacote)),
+                        }))}
+                      />
 
-                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-200 pt-4">
-
-                      <button
-
-                        onClick={() => pacote.id && excluirPacote(pacote.id)}
-
-                        className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
-
-                      >
-
-                        <FaTrash className="h-3.5 w-3.5" />
-
-                        Excluir
-
-                      </button>
-
-                      <button
-
-                        onClick={() => handleEditPacote(pacote)}
-
-                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-
-                      >
-
-                        <FaEdit className="h-3.5 w-3.5" />
-
-                        Editar
-
-                      </button>
-
-                    </div>
-
-                  </article>
-
-                );
-
-              })}
-
-            </div>
-
-          )}
-
-
-
-
-
-
-
-
-
-
-
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Combos de pacotes</h3>
-                <p className="text-sm text-slate-500">
-                  Agrupe atividades existentes e ofereça um valor especial aos clientes.
-                </p>
-              </div>
-              <button
-                onClick={handleAddCombo}
-                disabled={pacotes.length === 0}
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
-                  pacotes.length === 0 ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
-                }`}
-              >
-                <FaLayerGroup className="h-4 w-4" />
-                Novo combo
-              </button>
-            </div>
-            {pacotes.length === 0 ? (
-              <p className="py-6 text-sm text-slate-500">Cadastre ao menos um pacote antes de criar combos.</p>
-            ) : combos.length === 0 ? (
-              <p className="py-6 text-sm text-slate-500">Nenhum combo cadastrado até o momento.</p>
-            ) : (
-              <div className="mt-4 space-y-4">
-                {combos.map((combo) => {
-                  const pacoteNomes = combo.pacoteIds
-                    .map((id) => (id ? pacotesPorId.get(id)?.nome ?? 'Pacote removido' : ''))
-                    .filter((nome) => nome && nome.length > 0);
-                  const precosResumo = tiposClientesAtivos.map((tipo) => ({
-
-                    key: obterChaveTipo(tipo),
-
-                    nome: tipo.nome,
-
-                    valor: obterPrecoPorTipo(combo.precosPorTipo, tipo, combo),
-
-                  }));
-                  return (
-                    <article key={combo.id ?? combo.nome} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-3">
-                            {combo.iconeUrl && (
-                              <img
-                                src={combo.iconeUrl}
-                                alt=""
-                                aria-hidden="true"
-                                className="h-10 w-10 rounded-xl border border-slate-200 object-cover"
-                              />
-                            )}
-                            <h4 className="text-base font-semibold text-slate-900">{combo.nome}</h4>
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                combo.ativo !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
-                              }`}
-                            >
-                              {combo.ativo !== false ? 'Ativo' : 'Inativo'}
-                            </span>
-                          </div>
-                          <div className="space-y-1 text-sm text-slate-600">
-                            {precosResumo.map((item) => (
-                              <p key={item.key}>
-                                <span className="font-semibold text-slate-700">{item.nome}:</span> {formatCurrency(item.valor)}
-                              </p>
-                            ))}
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            Inclui: {pacoteNomes.length > 0 ? pacoteNomes.join(', ') : 'Pacotes removidos'}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => handleEditCombo(combo)}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-                          >
-                            <FaEdit className="h-3.5 w-3.5" />
-                            Editar
-                          </button>
-                          <button
-                            onClick={() => combo.id && handleDeleteCombo(combo.id)}
-                            className="inline-flex items-center gap-2 rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
-                          >
-                            <FaTrash className="h-3.5 w-3.5" />
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-4 flex flex-col gap-3 border-t border-dashed border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                        <p className="text-xs text-slate-500">Ative ou desative o combo rapidamente.</p>
-                        <button
-                          onClick={() => handleToggleComboAtivo(combo)}
-                          className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-semibold transition ${
-                            combo.ativo !== false ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          }`}
-                        >
-                          {combo.ativo !== false ? 'Desativar combo' : 'Ativar combo'}
+                      <div className="admin-catalog-card__actions">
+                        <button type="button" onClick={() => handleEditPacote(pacote)} aria-label={`Editar pacote ${pacote.nome}`}>
+                          <FaEdit aria-hidden="true" /> Editar
+                        </button>
+                        <button type="button" onClick={() => pacote.id && excluirPacote(pacote.id)} aria-label={`Excluir pacote ${pacote.nome}`} className="is-danger">
+                          <FaTrash aria-hidden="true" /> Excluir
                         </button>
                       </div>
                     </article>
                   );
                 })}
               </div>
-            )}
-          </div>
+            )
+          ) : (
+            combos.length === 0 ? (
+              <p className="admin-catalog-empty">
+                {pacotes.length === 0 ? 'Cadastre um pacote para criar seu primeiro combo.' : 'Nenhum combo cadastrado.'}
+              </p>
+            ) : (
+              <div className="admin-catalog-grid">
+                {combos.map((combo) => {
+                  const pacoteNomes = combo.pacoteIds
+                    .filter(Boolean)
+                    .map((id) => pacotesPorId.get(id)?.nome ?? 'Pacote removido');
+                  const ativo = combo.ativo !== false;
 
+                  return (
+                    <article key={combo.id ?? combo.nome} className="admin-catalog-card">
+                      <div className="admin-catalog-card__heading">
+                        <span className="admin-catalog-card__icon" aria-hidden="true">
+                          {combo.iconeUrl ? <img src={combo.iconeUrl} alt="" /> : <FaLayerGroup />}
+                        </span>
+                        <div className="min-w-0">
+                          <h2>{combo.nome}</h2>
+                          <p>{ativo ? 'Ativo' : 'Inativo'}</p>
+                        </div>
+                      </div>
+
+                      <dl className="admin-catalog-card__details">
+                        <div><dt>Pacotes</dt><dd>{pacoteNomes.join(', ') || 'Sem pacotes'}</dd></div>
+                      </dl>
+
+                      <AdminCatalogPrices
+                        prices={tiposClientesAtivos.map((tipo) => ({
+                          key: obterChaveTipo(tipo),
+                          label: tipo.nome,
+                          value: formatCurrency(obterPrecoPorTipo(combo.precosPorTipo, tipo, combo)),
+                        }))}
+                      />
+
+                      <div className="admin-catalog-card__actions">
+                        <button type="button" onClick={() => handleEditCombo(combo)} aria-label={`Editar combo ${combo.nome}`}>
+                          <FaEdit aria-hidden="true" /> Editar
+                        </button>
+                        <button type="button" onClick={() => handleToggleComboAtivo(combo)} aria-label={`${ativo ? 'Desativar' : 'Ativar'} combo ${combo.nome}`}>
+                          {ativo ? 'Desativar' : 'Ativar'}
+                        </button>
+                        <button type="button" onClick={() => combo.id && handleDeleteCombo(combo.id)} aria-label={`Excluir combo ${combo.nome}`} className="is-danger">
+                          <FaTrash aria-hidden="true" /> Excluir
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )
+          )}
 
           {modalPacote && editPacote && (
 
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+            <div className="admin-catalog-editor">
 
-              <div className="w-full max-w-3xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="admin-catalog-editor__panel w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl" role="dialog" aria-labelledby="editor-pacote-titulo">
 
-                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
 
-                  <h4 className="text-lg font-semibold text-slate-900">
+                  <h2 id="editor-pacote-titulo" className="text-lg font-semibold text-slate-900">
 
                     {isEditingPacote ? 'Editar pacote' : 'Novo pacote'}
 
-                  </h4>
+                  </h2>
 
                   <button
-
+                    type="button"
+                    aria-label="Fechar editor de pacote"
                     onClick={() => {
 
                       setModalPacote(false);
@@ -13011,17 +12153,17 @@ const totalParticipantesDoDia = useMemo(() => {
 
                     }}
 
-                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-xl leading-none text-slate-600 transition hover:bg-slate-100"
 
                   >
 
-                    x
+                    ×
 
                   </button>
 
                 </div>
 
-                <div className="grid gap-4 px-4 sm:px-6 py-5 md:grid-cols-2 max-h-[80vh] overflow-y-auto">
+                <div className="admin-catalog-editor__body grid content-start gap-4 px-4 sm:px-6 py-5 md:grid-cols-2">
 
                   <label className="text-xs font-semibold uppercase text-slate-500">
 
@@ -13513,7 +12655,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                   </div>
 
-                  
+
 
                   <div className="text-xs font-semibold uppercase text-slate-500 md:col-span-2">
 
@@ -13705,7 +12847,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
 
                   <button
 
@@ -13753,20 +12895,21 @@ const totalParticipantesDoDia = useMemo(() => {
 
           {modalCombo && editCombo && (
 
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 px-2 py-2 overflow-y-auto">
+            <div className="admin-catalog-editor">
 
-              <div className="w-full max-w-2xl my-4 overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="admin-catalog-editor__panel w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl" role="dialog" aria-labelledby="editor-combo-titulo">
 
-                <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-4">
 
-                  <h4 className="text-lg font-semibold text-slate-900">
+                  <h2 id="editor-combo-titulo" className="text-lg font-semibold text-slate-900">
 
                     {isEditingCombo ? 'Editar combo' : 'Novo combo'}
 
-                  </h4>
+                  </h2>
 
                   <button
-
+                    type="button"
+                    aria-label="Fechar editor de combo"
                     onClick={() => {
 
                       setModalCombo(false);
@@ -13777,17 +12920,17 @@ const totalParticipantesDoDia = useMemo(() => {
 
                     }}
 
-                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-xl leading-none text-slate-600 transition hover:bg-slate-100"
 
                   >
 
-                    x
+                    ×
 
                   </button>
 
                 </div>
 
-                <div className="space-y-5 px-4 sm:px-6 py-5 max-h-[75vh] overflow-y-auto">
+                <div className="admin-catalog-editor__body space-y-5 px-4 sm:px-6 py-5">
 
                   <label className="text-xs font-semibold uppercase text-slate-500">
 
@@ -14010,7 +13153,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                 </div>
 
-                <div className="flex flex-col gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4 sm:flex-row sm:items-center sm:justify-end">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 sm:px-6 py-4">
 
                   <button
 
@@ -14062,7 +13205,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
           )}
 
-          
+
 
         </section>
 
@@ -14707,425 +13850,208 @@ const totalParticipantesDoDia = useMemo(() => {
       {/* ========== Tipos de Clientes ========== */}
 
       {aba === 'tipos_clientes' && (
-
-        <section className="admin-tab-content space-y-6">
-
+        <section className="admin-tab-content space-y-4">
           <AdminTabHeader
             title="Tipos de clientes"
-            description={'Defina categorias para o formulario, mantenha a politica de precos clara e facilite a operacao das reservas manuais e online.'}
             icon={FaUsers}
             actions={[
               {
                 label: 'Novo tipo',
                 icon: FaPlus,
-                onClick: iniciarNovoTipoCliente,
+                onClick: () => {
+                  iniciarNovoTipoCliente();
+                  abrirEditorTipoCliente();
+                },
                 variant: 'primary',
                 disabled: salvandoTipoCliente,
-              },
-            ]}
-            metrics={[
-              {
-                label: 'Tipos ativos',
-                value: tiposClientes.length.toLocaleString('pt-BR'),
-                hint: 'Categorias cadastradas hoje',
-                icon: FaUsers,
-                tone: 'sky',
-              },
-              {
-                label: 'Com descricao',
-                value: totalTiposComDescricao.toLocaleString('pt-BR'),
-                hint: 'Itens prontos para orientar a equipe',
-                icon: FaCheck,
-                tone: 'emerald',
-              },
-              {
-                label: 'Sem descricao',
-                value: Math.max(0, tiposClientes.length - totalTiposComDescricao).toLocaleString('pt-BR'),
-                hint: 'Tipos que podem ganhar mais contexto',
-                icon: FaQuestionCircle,
-                tone: 'amber',
-              },
-              {
-                label: 'Modo atual',
-                value: isEditingTipoCliente ? 'Edicao' : 'Novo cadastro',
-                hint: isEditingTipoCliente ? 'Um tipo esta sendo ajustado' : 'Formulario pronto para novo registro',
-                icon: FaEdit,
-                tone: 'indigo',
+                expanded: editorTipoClienteAberto && !isEditingTipoCliente,
+                controls: 'editor-tipo-cliente',
               },
             ]}
           />
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className={`admin-client-types ${editorTipoClienteAberto ? 'admin-client-types--editing' : ''}`}>
+            <section
+              id="editor-tipo-cliente"
+              className="admin-client-types__section"
+              aria-labelledby="editor-tipo-cliente-titulo"
+              hidden={!editorTipoClienteAberto}
+            >
+              <h2 id="editor-tipo-cliente-titulo">{isEditingTipoCliente ? 'Editar tipo' : 'Novo tipo'}</h2>
+              <form
+                className="admin-client-types__form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleSalvarTipoCliente();
+                }}
+              >
+                <label className="admin-client-types__field">
+                  Nome do tipo
+                  <input
+                    id="nome-tipo-cliente"
+                    type="text"
+                    ref={tipoClienteNomeRef}
+                    value={editTipoCliente.nome}
+                    onChange={(event) => setEditTipoCliente((prev) => ({ ...prev, nome: event.target.value }))}
+                    placeholder="Ex.: Criança"
+                    required
+                  />
+                </label>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <label className="admin-client-types__field">
+                  Descrição (opcional)
+                  <textarea
+                    value={editTipoCliente.descricao ?? ''}
+                    onChange={(event) => setEditTipoCliente((prev) => ({ ...prev, descricao: event.target.value }))}
+                    rows={3}
+                  />
+                </label>
 
-              <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-
-                <div>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-
-                    {isEditingTipoCliente ? 'Editar tipo' : 'Novo tipo'}
-
-                  </h3>
-
-                  <p className="text-sm text-slate-500">Defina o nome e, se quiser, uma descrição.</p>
-
-                </div>
-
-                {isEditingTipoCliente && (
-
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-
-                    Edição
-
-                  </span>
-
+                {tipoEhInfantil(editTipoCliente) ? (
+                  <p className="admin-client-types__age-required">A idade de cada criança é obrigatória na reserva.</p>
+                ) : (
+                  <label className="admin-client-types__checkbox">
+                    <input
+                      type="checkbox"
+                      checked={editTipoCliente.perguntarIdade === true}
+                      onChange={(event) => setEditTipoCliente((prev) => ({ ...prev, perguntarIdade: event.target.checked }))}
+                    />
+                    Exigir a idade de cada participante na reserva
+                  </label>
                 )}
 
-              </div>
-
-              <form
-
-                onSubmit={(e) => {
-
-                  e.preventDefault();
-
-                  void handleSalvarTipoCliente();
-
-                }}
-
-                className="mt-4 space-y-4"
-
-              >
-
-                <label className="text-xs font-semibold uppercase text-slate-500">
-
-                  Nome do tipo
-
-                  <input
-
-                    type="text"
-
-                    value={editTipoCliente.nome}
-
-                    onChange={(e) => setEditTipoCliente((prev) => ({ ...prev, nome: e.target.value }))}
-
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-
-                    placeholder="Ex: Adulto, Criança"
-
-                  />
-
-                </label>
-
-                <label className="text-xs font-semibold uppercase text-slate-500">
-
-                  Descrição (opcional)
-
-                  <textarea
-
-                    value={editTipoCliente.descricao ?? ''}
-
-                    onChange={(e) => setEditTipoCliente((prev) => ({ ...prev, descricao: e.target.value }))}
-
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-
-                    rows={3}
-
-                    placeholder="Detalhe quando este tipo deve ser usado."
-
-                  />
-
-                </label>
-
-                <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3 cursor-pointer transition hover:border-blue-300">
-                  <input
-                    type="checkbox"
-                    checked={editTipoCliente.perguntarIdade === true}
-                    onChange={(e) => setEditTipoCliente((prev) => ({ ...prev, perguntarIdade: e.target.checked }))}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="flex-1 text-xs">
-                    <span className="block font-bold uppercase tracking-wider text-slate-700">
-                      Perguntar idade de cada participante?
-                    </span>
-                    <span className="mt-1 block font-normal normal-case tracking-normal text-slate-500 leading-snug">
-                      Ao marcar, o formulário de reserva pedirá a idade individual de cada
-                      participante desse tipo (ex: idade de cada criança). Útil para políticas
-                      etárias e histórico.
-                    </span>
-                  </span>
-                </label>
-
-                {editTipoCliente.perguntarIdade === true && (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <label className="text-xs font-semibold uppercase text-slate-500">
-                      Idade mínima (opcional)
+                {tipoExigeIdades(editTipoCliente) && (
+                  <div className="admin-client-types__age-fields">
+                    <label className="admin-client-types__field">
+                      Idade mínima
                       <input
                         type="number"
                         min={0}
                         max={120}
+                        step={1}
+                        placeholder={String(limitesIdade(editTipoCliente).min)}
                         value={editTipoCliente.idadeMinima ?? ''}
-                        onChange={(e) => setEditTipoCliente((prev) => ({
+                        onChange={(event) => setEditTipoCliente((prev) => ({
                           ...prev,
-                          idadeMinima: e.target.value === '' ? undefined : Number(e.target.value),
+                          idadeMinima: event.target.value === '' ? undefined : Number(event.target.value),
                         }))}
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        placeholder="Ex: 6"
                       />
                     </label>
-                    <label className="text-xs font-semibold uppercase text-slate-500">
-                      Idade máxima (opcional)
+                    <label className="admin-client-types__field">
+                      Idade máxima
                       <input
                         type="number"
                         min={0}
                         max={120}
+                        step={1}
+                        placeholder={String(limitesIdade(editTipoCliente).max)}
                         value={editTipoCliente.idadeMaxima ?? ''}
-                        onChange={(e) => setEditTipoCliente((prev) => ({
+                        onChange={(event) => setEditTipoCliente((prev) => ({
                           ...prev,
-                          idadeMaxima: e.target.value === '' ? undefined : Number(e.target.value),
+                          idadeMaxima: event.target.value === '' ? undefined : Number(event.target.value),
                         }))}
-                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        placeholder="Ex: 12"
                       />
                     </label>
                   </div>
                 )}
 
-                <div className="flex flex-col gap-2 sm:flex-row">
-
-                  <button
-
-                    type="submit"
-
-                    disabled={salvandoTipoCliente}
-
-                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition ${
-
-                      salvandoTipoCliente ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
-
-                    }`}
-
-                  >
-
-                    {salvandoTipoCliente ? 'Salvando...' : isEditingTipoCliente ? 'Salvar alterações' : 'Cadastrar tipo'}
-
+                <div className="admin-client-types__form-actions">
+                  <button type="submit" className="admin-tab-action admin-tab-action--primary" disabled={salvandoTipoCliente}>
+                    {salvandoTipoCliente ? 'Salvando…' : isEditingTipoCliente ? 'Salvar alterações' : 'Cadastrar tipo'}
                   </button>
-
-                  {isEditingTipoCliente && (
-
-                    <button
-
-                      type="button"
-
-                      onClick={iniciarNovoTipoCliente}
-
-                      className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-
-                    >
-
-                      Cancelar edição
-
-                    </button>
-
-                  )}
-
+                  <button type="button" className="admin-tab-action admin-tab-action--secondary" onClick={iniciarNovoTipoCliente} disabled={salvandoTipoCliente}>
+                    Cancelar
+                  </button>
                 </div>
-
               </form>
+            </section>
 
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-              <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-
-                <div>
-
-                  <h3 className="text-lg font-semibold text-slate-900">Tipos cadastrados</h3>
-
-                  <p className="text-sm text-slate-500">Gerencie os tipos de clientes cadastrados.</p>
-
-                </div>
-
-                <span className="text-xs font-semibold uppercase text-slate-400">{tiposClientes.length} tipo(s)</span>
-
-              </div>
-
+            <section className="admin-client-types__section">
+              <h2>Tipos cadastrados ({tiposClientes.length})</h2>
               {carregandoTiposClientes ? (
-
-                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-
-                  Carregando tipos de clientes...
-
-                </div>
-
+                <p className="admin-client-types__subtitle mt-3" role="status">Carregando tipos de clientes…</p>
               ) : tiposClientes.length === 0 ? (
-
-                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
-
-                  Nenhum tipo cadastrado. Cadastre um tipo para comecar.
-
-                </div>
-
+                <p className="admin-client-types__subtitle mt-3">Nenhum tipo cadastrado.</p>
               ) : (
-
-                <div className="mt-4 space-y-3">
-
+                <ul className="admin-client-types__list">
                   {tiposClientes.map((tipo) => {
-
-
-
-                    const emEdicao = isEditingTipoCliente && editTipoCliente.id === tipo.id;
+                    const emEdicao = editorTipoClienteAberto && isEditingTipoCliente && editTipoCliente.id === tipo.id;
+                    const { min, max } = limitesIdade(tipo);
 
                     return (
-
-                      <div
-
-                        key={tipo.id ?? tipo.nome}
-
-                        className={`rounded-xl border p-4 transition ${
-
-                          emEdicao ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 bg-white'
-
-                        }`}
-
-                      >
-
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-
-                          <div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-
-                              <h4 className="text-base font-semibold text-slate-900">{tipo.nome}</h4>
-
-                              {tipo.perguntarIdade && (
-                                <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                                  Pergunta idade
-                                </span>
-                              )}
-
-                            </div>
-
-                            {tipo.descricao ? (
-
-                              <p className="text-sm text-slate-500">{tipo.descricao}</p>
-
-                            ) : (
-
-                              <p className="text-xs text-slate-400">Sem descrição.</p>
-
-                            )}
-
-                          </div>
-
-                          <div className="flex flex-wrap gap-2">
-
-                            <button
-
-                              onClick={() => handleEditTipoCliente(tipo)}
-
-                              className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-
-                            >
-
-                              <FaEdit className="h-3.5 w-3.5" />
-
-                              Editar
-
-                            </button>
-
-                            <button
-
-                              onClick={() => handleExcluirTipoCliente(tipo)}
-
-                              className="inline-flex items-center gap-2 rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
-
-                            >
-
-                              <FaTrash className="h-3.5 w-3.5" />
-
-                              Excluir
-
-                            </button>
-
-                          </div>
-
+                      <li key={tipo.id ?? tipo.nome} className={`admin-client-types__row ${emEdicao ? 'is-editing' : ''}`}>
+                        <div className="min-w-0">
+                          <h3>{tipo.nome}</h3>
+                          {tipo.descricao && <p className="admin-client-types__subtitle">{tipo.descricao}</p>}
+                          {tipoExigeIdades(tipo) && (
+                            <p className="admin-client-types__subtitle">
+                              Idade obrigatória · {min} a {max} anos
+                            </p>
+                          )}
                         </div>
-
-                      </div>
-
+                        <div className="admin-client-types__actions">
+                          <button
+                            type="button"
+                            onClick={() => handleEditTipoCliente(tipo)}
+                            aria-label={`Editar ${tipo.nome}`}
+                            aria-expanded={emEdicao}
+                            aria-controls="editor-tipo-cliente"
+                            disabled={salvandoTipoCliente}
+                          >
+                            <FaEdit aria-hidden="true" /> Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleExcluirTipoCliente(tipo)}
+                            className="is-danger"
+                            aria-label={`Excluir ${tipo.nome}`}
+                            disabled={salvandoTipoCliente}
+                          >
+                            <FaTrash aria-hidden="true" /> Excluir
+                          </button>
+                        </div>
+                      </li>
                     );
-
                   })}
-
-                </div>
-
+                </ul>
               )}
-
-            </div>
-
+            </section>
           </div>
-
         </section>
-
       )}
 
       {/* ========== Email ========== */}
 
       {aba === 'email' && (
 
-        <section className="admin-tab-content space-y-6">
+        <section className="admin-tab-content space-y-4">
 
           <AdminTabHeader
-            title="Email"
-            description={'Acompanhe emails pendentes, enviados e com erro, com reenvio manual dentro do limite disponivel.'}
+            title="E-mail"
+            description="Configure os e-mails de confirmação e acompanhe a fila de envio."
             icon={FaEnvelope}
-            actions={[
-              {
-                label: 'Atualizar fila',
-                icon: FaSyncAlt,
-                onClick: carregarFilaEmails,
-                disabled: emailFilaCarregando,
-              },
-              {
-                label: 'Salvar configuracao',
-                icon: FaCheck,
-                onClick: salvarEmailConfig,
-                disabled: whatsappSalvando,
-              },
-            ]}
-            metrics={[
-              {
-                label: 'Confirmacao automatica',
-                value: whatsappConfig.ativo ? 'Ativa' : 'Inativa',
-                hint: 'Disparo quando o pagamento e confirmado',
-                icon: FaEnvelope,
-                tone: whatsappConfig.ativo ? 'emerald' : 'slate',
-              },
-              {
-                label: 'Enviados hoje',
-                value: `${emailFila.uso.diario.enviados}/${emailFila.uso.diario.limite}`,
-                hint: `${emailFila.uso.diario.restantes.toLocaleString('pt-BR')} restante(s) no limite diario`,
-                icon: FaPaperPlane,
-                tone: emailFila.uso.diario.restantes > 0 ? 'sky' : 'amber',
-              },
-              {
-                label: 'Enviados no mes',
-                value: `${emailFila.uso.mensal.enviados}/${emailFila.uso.mensal.limite}`,
-                hint: `${emailFila.uso.mensal.restantes.toLocaleString('pt-BR')} restante(s) no limite mensal`,
-                icon: FaChartBar,
-                tone: emailFila.uso.mensal.restantes > 0 ? 'emerald' : 'amber',
-              },
-              {
-                label: 'Corpo do email',
-                value: whatsappConfig.mensagemConfirmacaoAutomatica.trim() ? 'Configurado' : 'Pendente',
-                hint: 'Texto enviado apos a confirmacao do pagamento',
-                icon: FaClipboardList,
-                tone: whatsappConfig.mensagemConfirmacaoAutomatica.trim() ? 'sky' : 'amber',
-              },
+            actions={painelEmail === 'registro' ? [{
+              label: emailFilaCarregando ? 'Atualizando…' : 'Atualizar fila',
+              icon: FaSyncAlt,
+              onClick: carregarFilaEmails,
+              disabled: emailFilaCarregando,
+            }] : [{
+              label: whatsappSalvando ? 'Salvando…' : 'Salvar configuração',
+              icon: FaCheck,
+              onClick: salvarEmailConfig,
+              variant: 'primary',
+              disabled: whatsappSalvando,
+            }]}
+            toolbar={
+              <AdminSectionOptions<'registro' | 'configuracao'>
+                label="Seções de e-mail"
+                options={[{ id: 'registro', label: 'Registro de envios' }, { id: 'configuracao', label: 'Configuração' }]}
+                value={painelEmail}
+                onChange={setPainelEmail}
+              />
+            }
+            metricsClassName="grid-cols-2"
+            metrics={painelEmail === 'registro' ? [
               {
                 label: 'Na fila',
                 value: emailFila.pendentes.toLocaleString('pt-BR'),
@@ -15140,75 +14066,54 @@ const totalParticipantesDoDia = useMemo(() => {
                 icon: FaQuestionCircle,
                 tone: emailFila.erros > 0 ? 'amber' : 'emerald',
               },
-              {
-                label: 'Assunto',
-                value: whatsappConfig.assuntoConfirmacaoEmail.trim() ? 'Configurado' : 'Pendente',
-                hint: 'Linha de assunto da confirmacao',
-                icon: FaEnvelope,
-                tone: whatsappConfig.assuntoConfirmacaoEmail.trim() ? 'emerald' : 'amber',
-              },
-            ]}
+            ] : []}
           />
 
-          {/* Disparar fila com data minima */}
-          <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-50/60 p-5 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <FaPaperPlane className="h-4 w-4 text-amber-600" />
-                  <h3 className="text-base font-semibold text-slate-900">Disparar fila de emails pendentes</h3>
+          {painelEmail === 'registro' && (
+            <details className="admin-operation-disclosure">
+              <summary><FaPaperPlane aria-hidden="true" /> Disparar e-mails pendentes</summary>
+              <div className="admin-operation-disclosure__body">
+                <p>Serão enviados e-mails para reservas pagas com visita a partir da data informada.</p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="flex flex-1 flex-col gap-1.5 sm:max-w-xs">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      Enviar para visitas a partir de
+                    </span>
+                    <input
+                      type="date"
+                      value={emailDataMinima}
+                      onChange={(e) => setEmailDataMinima(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEmailDataMinima(dayjs().format('YYYY-MM-DD'))}
+                    className="admin-tab-action admin-tab-action--secondary"
+                  >
+                    Hoje
+                  </button>
+                  <button
+                    type="button"
+                    onClick={processarFilaEmails}
+                    disabled={processandoFila || !emailDataMinima}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <FaPaperPlane className="h-3.5 w-3.5" />
+                    {processandoFila ? 'Disparando...' : 'Disparar fila agora'}
+                  </button>
                 </div>
-                <p className="text-sm text-slate-600">
-                  Envia confirmacao para reservas pagas cuja <strong>data da visita</strong> seja
-                  igual ou posterior à data escolhida. Considera a data do agendamento, não a data de criação da reserva.
-                </p>
               </div>
-            </div>
+            </details>
+          )}
 
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-              <label className="flex flex-col gap-1.5 flex-1 sm:max-w-xs">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Data da visita ≥
-                </span>
-                <input
-                  type="date"
-                  value={emailDataMinima}
-                  onChange={(e) => setEmailDataMinima(e.target.value)}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={processarFilaEmails}
-                disabled={processandoFila || !emailDataMinima}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <FaPaperPlane className="h-3.5 w-3.5" />
-                {processandoFila ? 'Disparando...' : 'Disparar fila agora'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEmailDataMinima(dayjs().format('YYYY-MM-DD'))}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                Hoje
-              </button>
-            </div>
-
-            {emailDataMinima && (
-              <p className="mt-3 text-xs text-amber-800/80">
-                <strong>Atenção:</strong> reservas cuja <strong>visita</strong> seja anterior a {dayjs(emailDataMinima).format('DD/MM/YYYY')} não receberão email
-                (mesmo se a reserva tiver sido criada recentemente).
-              </p>
-            )}
-          </div>
-
+          {painelEmail === 'configuracao' && (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Confirmacoes</h3>
-                  <p className="text-sm text-slate-500">Controle o disparo automatico quando uma reserva for paga.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Confirmações automáticas</h2>
+                  <p className="text-sm text-slate-500">Envie a confirmação após o pagamento da reserva.</p>
                 </div>
 
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
@@ -15218,7 +14123,7 @@ const totalParticipantesDoDia = useMemo(() => {
                     onChange={(e) => setWhatsappConfig((prev) => ({ ...prev, ativo: e.target.checked }))}
                     className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                   />
-                  Ativar envio automatico
+                  Ativar envio automático
                 </label>
               </div>
 
@@ -15409,14 +14314,12 @@ const totalParticipantesDoDia = useMemo(() => {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          )}
+
+          {painelEmail === 'registro' && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
             <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Registro de emails</h3>
-                <p className="text-sm text-slate-500">
-                  Emails pendentes, enviados e com falha no envio.
-                </p>
-              </div>
+              <h2 className="text-lg font-semibold text-slate-900">Registro de e-mails</h2>
 
               <div className="flex flex-wrap gap-2">
                 {[
@@ -15429,7 +14332,8 @@ const totalParticipantesDoDia = useMemo(() => {
                     key={filtro.id}
                     type="button"
                     onClick={() => setEmailRegistroFiltro(filtro.id as typeof emailRegistroFiltro)}
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                    aria-pressed={emailRegistroFiltro === filtro.id}
+                    className={`min-h-9 rounded-full border px-3 py-1 text-xs font-semibold transition ${
                       emailRegistroFiltro === filtro.id
                         ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300'
@@ -15618,7 +14522,7 @@ const totalParticipantesDoDia = useMemo(() => {
 
                         <div className="shrink-0 text-left text-sm text-slate-500 lg:text-right">
                           <p className="font-semibold text-slate-900">{formatCurrency(Number(item.valor ?? 0))}</p>
-                          <p className="mt-1">{statusLabel}</p>
+
                           <p className="mt-1 text-xs text-slate-400">Reserva {item.id}</p>
                           {item.statusEmail !== 'enviado' ? (
                             <div className="mt-3 flex flex-wrap justify-start gap-2 lg:justify-end">
@@ -15658,7 +14562,7 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             )}
           </div>
-
+          )}
         </section>
 
       )}
@@ -15667,46 +14571,34 @@ const totalParticipantesDoDia = useMemo(() => {
 
       {aba === 'whatsapp' && (
 
-        <section className="admin-tab-content space-y-6">
+        <section className="admin-tab-content space-y-4">
 
           <AdminTabHeader
             title="Central do WhatsApp"
-            description="Configure campanhas e automações. Confirmações, lembretes e avisos internos aproveitam a sessão já ativa da Jatobá."
+            description="Gerencie a conexão da Jatobá e as mensagens de reserva."
             icon={FaWhatsapp}
-            actions={[
-              {
-                label: whatsappSalvando ? 'Salvando...' : 'Salvar configurações',
-                icon: FaCheck,
-                onClick: salvarMensagensWhatsapp,
-                disabled: whatsappSalvando,
-                variant: 'primary',
-              },
-            ]}
-            metrics={[
-              {
-                label: 'Campanhas',
-                value: whatsappStatusInfo.label,
-                hint: whatsappStatusInfo.hint,
-                icon: FaWhatsapp,
-                tone: whatsappStatusInfo.tone,
-              },
-              {
-                label: 'Sessao',
-                value:
-                  whatsappStatus.authStrategy === 'remote'
-                    ? 'Persistente'
-                    : whatsappStatus.authStrategy === 'local'
-                      ? 'Local'
-                      : 'Aguardando',
-                hint:
-                  whatsappStatus.authStrategy === 'remote'
-                    ? 'Salva no Firebase Storage'
-                    : whatsappStatus.authStrategy === 'local'
-                      ? 'Pode perder no deploy'
-                      : 'Inicia junto com o servidor',
-                icon: FaSyncAlt,
-                tone: whatsappStatus.authStrategy === 'remote' ? 'emerald' : 'amber',
-              },
+            actions={painelWhatsapp === 'automacoes' || painelWhatsapp === 'modelos' ? [{
+              label: whatsappSalvando ? 'Salvando…' : 'Salvar configurações',
+              icon: FaCheck,
+              onClick: salvarMensagensWhatsapp,
+              disabled: whatsappSalvando,
+              variant: 'primary',
+            }] : []}
+            toolbar={
+              <AdminSectionOptions<'automacoes' | 'conexao' | 'modelos' | 'testes'>
+                label="Seções do WhatsApp"
+                options={[
+                  { id: 'automacoes', label: 'Automações' },
+                  { id: 'conexao', label: 'Conexão' },
+                  { id: 'modelos', label: 'Modelos' },
+                  { id: 'testes', label: 'Testes' },
+                ]}
+                value={painelWhatsapp}
+                onChange={setPainelWhatsapp}
+              />
+            }
+            metricsClassName="grid-cols-2"
+            metrics={painelWhatsapp === 'automacoes' ? [
               {
                 label: 'Automações',
                 value: `${[
@@ -15726,38 +14618,16 @@ const totalParticipantesDoDia = useMemo(() => {
                 icon: FaPaperPlane,
                 tone: whatsappReservationAlerts.some((item) => item.status === 'erro') ? 'amber' : 'emerald',
               },
-            ]}
-            metricsClassName="xl:grid-cols-4"
+            ] : []}
           />
 
-          <nav className="admin-whatsapp-shortcuts" aria-label="Atalhos da configuração do WhatsApp">
-            {[
-              { id: 'whatsapp-conexao', label: 'Campanhas', hint: 'Sessão separada, quando necessária', icon: FaQrcode },
-              { id: 'whatsapp-nova-reserva', label: 'Aviso ao Uirá', hint: 'Somente visitas do dia', icon: FaCalendarAlt },
-              { id: 'whatsapp-lembrete-dia', label: 'Lembrete do dia', hint: 'Visitantes confirmados às 08h', icon: FaClock },
-              { id: 'whatsapp-confirmacao', label: 'Confirmação', hint: 'Pagamento aprovado no site', icon: FaCheck },
-              { id: 'whatsapp-testes', label: 'Testes', hint: 'Envio somente ao número interno', icon: FaPaperPlane },
-            ].map(({ id, label, hint, icon: ShortcutIcon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                className="admin-whatsapp-shortcut"
-              >
-                <span><ShortcutIcon className="h-4 w-4" /></span>
-                <span><strong>{label}</strong><small>{hint}</small></span>
-                <FaChevronRight className="h-3.5 w-3.5" />
-              </button>
-            ))}
-          </nav>
-
+          {painelWhatsapp === 'testes' && (
           <div id="whatsapp-testes" className="admin-whatsapp-section admin-whatsapp-test-center rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-2xl">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Central de testes</p>
-                <h3 className="mt-1 text-lg font-semibold text-slate-900">Teste as automações sem envolver clientes</h3>
+                <h2 className="text-lg font-semibold text-slate-900">Testar automações</h2>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  O teste usa a sessão já ativa da Jatobá e envia somente para o número interno salvo em “Aviso ao Uirá”. Salve alterações antes de testar.
+                  Salve as configurações antes de testar. A Jatobá envia os testes para o número interno em “Aviso de nova reserva”.
                 </p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -15792,12 +14662,14 @@ const totalParticipantesDoDia = useMemo(() => {
             </div>
           </div>
 
-          <div className="admin-whatsapp-config-grid grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.82fr)]">
-            <div id="whatsapp-conexao" className="admin-whatsapp-section admin-whatsapp-card--connection rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+          )}
+
+          {painelWhatsapp === 'conexao' && (
+            <div id="whatsapp-conexao" className="admin-whatsapp-section admin-whatsapp-card--connection rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Conexão compartilhada da Jatobá</h3>
-                  <p className="text-sm text-slate-500">Atendimento, campanhas e automações usam a mesma conexão do Agente. Não existe mais uma segunda sessão com navegador consumindo memória no Railway.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Conexão da Jatobá</h2>
+                  <p className="text-sm text-slate-500">Atendimento, campanhas e automações usam esta conexão.</p>
                 </div>
 
                 <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${
@@ -15811,33 +14683,18 @@ const totalParticipantesDoDia = useMemo(() => {
                 </span>
               </div>
 
-              <div className="mt-4 grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)]">
-                <div className="flex min-h-[230px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
-                  {whatsappStatus.qr ? (
-                    <img
-                      src={whatsappStatus.qr}
-                      alt="QR Code do WhatsApp da Jatobá"
-                      className="h-48 w-48 rounded-lg bg-white object-contain p-2 shadow-sm"
-                    />
-                  ) : (
-                    <div className="text-center text-sm text-slate-500">
-                      <FaQrcode className="mx-auto h-10 w-10 text-slate-300" />
-                      <p className="mt-2 font-semibold text-slate-700">QR Code indisponivel</p>
-                      <p className="mt-1">Clique em Gerar QR Code para iniciar a conexao.</p>
-                    </div>
-                  )}
-                </div>
+              <div className={`mt-4 grid gap-4 ${whatsappStatus.qr ? 'sm:grid-cols-[200px_minmax(0,1fr)]' : ''}`}>
+                {whatsappStatus.qr && (
+                  <img
+                    src={whatsappStatus.qr}
+                    alt="QR Code do WhatsApp da Jatobá"
+                    className="mx-auto h-48 w-48 rounded-lg bg-white object-contain p-2 shadow-sm"
+                  />
+                )}
 
                 <div className="space-y-3">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Nome da conexao</p>
-                    <p className="mt-1 text-base font-semibold text-slate-900">Jatobá — Fazenda Vagafogo</p>
-                    <p className="mt-1 text-sm text-slate-500">Esse nome aparece nos dispositivos vinculados do WhatsApp.</p>
-                  </div>
-
                   <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Estado atual</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">{whatsappStatusInfo.label}</p>
+                    <p className="text-sm font-semibold text-slate-900">Jatobá — Fazenda Vagafogo</p>
                     <p className="mt-1 text-sm text-slate-500">{whatsappStatusInfo.hint}</p>
                     {whatsappStatus.lastQrAt ? (
                       <p className="mt-2 text-xs text-slate-400">
@@ -15879,16 +14736,33 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             </div>
 
-            <div className="admin-whatsapp-automation-heading xl:col-span-2">
-              <span>Automações</span>
-              <div>
-                <h3>Configure quando cada mensagem será enviada</h3>
-                <p>Confirmação, lembrete do dia e aviso ao Uirá usam a sessão ativa do bot e respeitam a lista de contatos bloqueados.</p>
-              </div>
-            </div>
+          )}
+
+          {painelWhatsapp === 'automacoes' && (
+          <div className="space-y-4">
+            <nav className="admin-wa-links" aria-label="Atalhos das automações">
+              {[
+                { id: 'whatsapp-confirmacao', label: 'Confirmação de pagamento' },
+                { id: 'whatsapp-nova-reserva', label: 'Aviso de nova reserva' },
+                { id: 'whatsapp-lembrete-dia', label: 'Lembrete da visita' },
+                { id: 'whatsapp-agradecimento', label: 'Agradecimento' },
+              ].map(({ id, label }) => (
+                <button
+                  type="button"
+                  key={id}
+                  onClick={() => {
+                    const section = document.getElementById(id);
+                    section?.focus({ preventScroll: true });
+                    section?.scrollIntoView({ block: 'start' });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
 
             {/* Confirmacao automatica (quando reserva e paga) */}
-            <div id="whatsapp-confirmacao" className="admin-whatsapp-section admin-whatsapp-card--confirmation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div id="whatsapp-confirmacao" tabIndex={-1} className="admin-whatsapp-section admin-whatsapp-card--confirmation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Confirmação de pagamento</h3>
@@ -15947,7 +14821,7 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             </div>
 
-            <div id="whatsapp-nova-reserva" className="admin-whatsapp-section admin-whatsapp-card--new-reservation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+            <div id="whatsapp-nova-reserva" tabIndex={-1} className="admin-whatsapp-section admin-whatsapp-card--new-reservation rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Aviso interno de nova reserva para o Uirá</h3>
@@ -16073,7 +14947,7 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             </div>
 
-            <div id="whatsapp-lembrete-dia" className="admin-whatsapp-section rounded-2xl border border-sky-200 bg-white p-5 shadow-sm xl:col-span-2">
+            <div id="whatsapp-lembrete-dia" tabIndex={-1} className="admin-whatsapp-section rounded-2xl border border-sky-200 bg-white p-5 shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Bom dia para quem visita hoje</h3>
@@ -16181,7 +15055,7 @@ const totalParticipantesDoDia = useMemo(() => {
               </div>
             </div>
 
-            <div id="whatsapp-agradecimento" className="admin-whatsapp-section admin-whatsapp-card--gratitude rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div id="whatsapp-agradecimento" tabIndex={-1} className="admin-whatsapp-section admin-whatsapp-card--gratitude rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="border-b border-slate-100 pb-4">
                 <h3 className="text-lg font-semibold text-slate-900">Agradecimento após a chegada</h3>
                 <p className="text-sm text-slate-500">Mensagem automática enviada ao cliente quando a equipe confirma a chegada.</p>
@@ -16242,50 +15116,30 @@ const totalParticipantesDoDia = useMemo(() => {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Modelos antes de abrir WhatsApp do cliente</h3>
-                <p className="text-sm text-slate-500">
-                  Estes textos aparecem no seletor quando a equipe clica no WhatsApp de uma reserva.
-                </p>
-              </div>
+          )}
 
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={adicionarModeloMensagemManual}
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
-                >
-                  <FaPlus className="h-3.5 w-3.5" />
-                  Novo modelo
-                </button>
-                <button
-                  type="button"
-                  onClick={salvarMensagensWhatsapp}
-                  disabled={whatsappSalvando}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  <FaCheck className="h-3.5 w-3.5" />
-                  {whatsappSalvando ? 'Salvando...' : 'Salvar modelos'}
-                </button>
+          {painelWhatsapp === 'modelos' && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Modelos de mensagem</h2>
+                <p className="text-sm text-slate-500">Disponíveis ao abrir o WhatsApp de uma reserva.</p>
               </div>
+              <button
+                type="button"
+                onClick={adicionarModeloMensagemManual}
+                className="admin-tab-action admin-tab-action--secondary"
+              >
+                <FaPlus aria-hidden="true" />
+                Novo modelo
+              </button>
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {modelosPreviewWhatsappManual.map((modelo) => (
                 <div
                   key={modelo.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setWhatsappModeloAbertoId(modelo.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setWhatsappModeloAbertoId(modelo.id);
-                    }
-                  }}
-                  className={`group flex min-h-[230px] cursor-pointer flex-col rounded-xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-emerald-200 ${
+                  className={`flex flex-col rounded-xl border p-4 text-left ${
                     modelo.pronto
                       ? 'border-slate-200 bg-white'
                       : 'border-amber-200 bg-amber-50'
@@ -16314,10 +15168,7 @@ const totalParticipantesDoDia = useMemo(() => {
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setWhatsappModeloAbertoId(modelo.id);
-                      }}
+                      onClick={() => setWhatsappModeloAbertoId(modelo.id)}
                       className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
                     >
                       <FaEdit className="h-3.5 w-3.5" />
@@ -16327,10 +15178,7 @@ const totalParticipantesDoDia = useMemo(() => {
                     {modelo.id !== 'padrao' ? (
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removerModeloMensagemManual(modelo.id);
-                        }}
+                        onClick={() => removerModeloMensagemManual(modelo.id)}
                         className="inline-flex items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
                       >
                         <FaTrash className="h-3.5 w-3.5" />
@@ -16341,180 +15189,110 @@ const totalParticipantesDoDia = useMemo(() => {
                 </div>
               ))}
 
-              <button
-                type="button"
-                onClick={adicionarModeloMensagemManual}
-                className="flex min-h-[230px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-slate-500 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
-              >
-                <FaPlus className="h-5 w-5" />
-                <span className="mt-3 text-sm font-semibold">Novo modelo</span>
-              </button>
             </div>
           </div>
-
+          )}
         </section>
 
       )}
 
-      {/* ========== Pesquisa de Clientes ========== */}
-
       {aba === 'pesquisa' && (
-
-        <section className="admin-tab-content space-y-6">
-
-          <AdminTabHeader
+        <section className="admin-tab-content space-y-4">
+          <AdminSectionHeading
             title="Pesquisa de clientes"
-            description={'Encontre reservas por nome, CPF ou telefone e abra o contato certo com poucos cliques quando precisar atender ou confirmar detalhes.'}
             icon={FaSearch}
-            metrics={[
-              {
-                label: 'Termo atual',
-                value: termoPesquisa.trim() || 'Sem filtro',
-                hint: 'Busca principal do momento',
-                icon: FaSearch,
-                tone: 'sky',
-              },
-              {
-                label: 'Resultados',
-                value: resultadosPesquisa.length.toLocaleString('pt-BR'),
-                hint: 'Reservas encontradas na consulta',
-                icon: FaUsers,
-                tone: 'indigo',
-              },
-              {
-                label: 'Status',
-                value: carregandoPesquisa ? 'Buscando' : 'Pronto',
-                hint: carregandoPesquisa ? 'Aguarde o retorno do banco' : 'Painel pronto para nova busca',
-                icon: FaCheck,
-                tone: carregandoPesquisa ? 'amber' : 'emerald',
-              },
-            ]}
           />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-          <form
-
-            onSubmit={(e) => {
-
-              e.preventDefault();
-
-              pesquisarClientes();
-
-            }}
-
-            className="mt-4 flex flex-col gap-3 md:flex-row"
-
-          >
-
-            <div className="flex-1">
-
-              <label className="text-xs font-semibold uppercase text-slate-500">
-
-                Termo de busca
-
+          <div className="admin-search-panel">
+            <form
+              className="admin-search-panel__form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void pesquisarClientes();
+              }}
+            >
+              <label>
+                Nome, CPF ou telefone
                 <input
-
-                  type="text"
-
+                  type="search"
                   value={termoPesquisa}
-
-                  onChange={(e) => setTermoPesquisa(e.target.value)}
-
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-
-                  placeholder="Ex: Ana Silva, 00000000000, 629999999"
-
+                  onChange={(event) => setTermoPesquisa(event.target.value)}
+                  placeholder="Digite para pesquisar"
+                  required
                 />
-
               </label>
-
-            </div>
-
-            <div className="flex items-end">
-
               <button
-
                 type="submit"
-
-                className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-
+                className="admin-tab-action admin-tab-action--primary justify-center"
+                disabled={carregandoPesquisa || !termoPesquisa.trim()}
               >
-
-                <FaSearch className="h-4 w-4" />
-
+                <FaSearch aria-hidden="true" />
                 Pesquisar
-
               </button>
+              {(termoPesquisa || resultadosPesquisa !== null) && (
+                <button
+                  type="button"
+                  className="admin-tab-action admin-tab-action--secondary justify-center"
+                  disabled={carregandoPesquisa}
+                  onClick={() => {
+                    setTermoPesquisa('');
+                    setTermoPesquisado('');
+                    setResultadosPesquisa(null);
+                    setErroPesquisa(false);
+                  }}
+                >
+                  Limpar busca
+                </button>
+              )}
+            </form>
 
+            <div role="status" className={`admin-search-panel__status ${!carregandoPesquisa && !erroPesquisa && resultadosPesquisa === null ? 'sr-only' : ''}`}>
+              {carregandoPesquisa ? 'Buscando reservas…' : erroPesquisa
+                ? 'Não foi possível buscar reservas. Tente novamente.'
+                : resultadosPesquisa === null ? ''
+                  : resultadosPesquisa.length === 0 ? `Nenhuma reserva encontrada para “${termoPesquisado}”.`
+                    : `${resultadosPesquisa.length.toLocaleString('pt-BR')} ${resultadosPesquisa.length === 1 ? 'reserva encontrada' : 'reservas encontradas'} para “${termoPesquisado}”.`}
             </div>
 
-          </form>
+            {!carregandoPesquisa && !!resultadosPesquisa?.length && (
+              <ul className="admin-search-panel__results">
+                {resultadosPesquisa.map((resultado) => {
+                  const participantes = calcularParticipantes(resultado);
+                  const pacoteDescricao = formatarPacote(resultado);
+                  const valorFormatado = formatarValor(resultado.valor);
+                  const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(resultado.telefone));
 
-          {carregandoPesquisa ? (
-            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-              Buscando resultados...
-            </div>
-          ) : resultadosPesquisa.length > 0 ? (
-            <div className="mt-6">
-              <table className="w-full table-fixed divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 text-left w-[26%]">Nome</th>
-                    <th className="px-4 py-3 text-left w-[14%]">CPF</th>
-                    <th className="px-4 py-3 text-left w-[18%]">Telefone</th>
-                    <th className="px-4 py-3 text-left w-[14%]">Data</th>
-                    <th className="px-4 py-3 text-left w-[18%]">Atividade</th>
-                    <th className="px-4 py-3 text-right w-[10%]">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {resultadosPesquisa.map((resultado) => {
-                    const participantes = calcularParticipantes(resultado);
-                    const pacoteDescricao = formatarPacote(resultado);
-                    const valorFormatado = formatarValor(resultado.valor);
-                    const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(resultado.telefone));
-
-                    return (
-                      <tr key={resultado.id} className="hover:bg-slate-50/80">
-                        <td className="px-4 py-3 font-medium text-slate-800 break-words">{resultado.nome}</td>
-                        <td className="px-4 py-3 text-slate-600 break-all">{resultado.cpf}</td>
-                        <td className="px-4 py-3 text-slate-600 break-all">{resultado.telefone}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatarDataReserva(resultado.data)}</td>
-                        <td className="px-4 py-3 text-slate-600 break-words">{resultado.atividade}</td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              abrirEnvioWhatsapp(resultado, participantes, pacoteDescricao, valorFormatado)
-                            }
-                            disabled={!podeEnviarWhatsapp}
-                            className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <FaWhatsapp className="h-3.5 w-3.5" />
-                            WhatsApp
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-
-            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
-
-              Nenhum cliente encontrado para o termo informado.
-
-            </div>
-
-          )}
-
+                  return (
+                    <li key={resultado.id} className="admin-search-panel__result">
+                      <div className="admin-search-panel__client">
+                        <strong>{resultado.nome}</strong>
+                        <ReservaIdentificacaoBadges
+                          formaPagamento={resultado.formaPagamento}
+                          criadaManualmente={reservaEhManual(resultado)}
+                        />
+                      </div>
+                      <dl>
+                        <div><dt>CPF</dt><dd>{resultado.cpf || '—'}</dd></div>
+                        <div><dt>Telefone</dt><dd>{resultado.telefone || '—'}</dd></div>
+                        <div><dt>Data</dt><dd>{formatarDataReserva(resultado.data)}</dd></div>
+                        <div><dt>Atividade</dt><dd>{pacoteDescricao || '—'}</dd></div>
+                      </dl>
+                      <button
+                        type="button"
+                        onClick={() => abrirEnvioWhatsapp(resultado, participantes, pacoteDescricao, valorFormatado)}
+                        disabled={!podeEnviarWhatsapp}
+                        className="admin-tab-action admin-tab-action--secondary"
+                      >
+                        <FaWhatsapp aria-hidden="true" />
+                        WhatsApp
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
-
         </section>
-
       )}
 
       {aba === 'formularios' && (
@@ -16524,47 +15302,63 @@ const totalParticipantesDoDia = useMemo(() => {
       )}
 
       {aba === 'configuracoes' && (
-        <section className="admin-tab-content space-y-6">
-          <AdminTabHeader
+        <section className="admin-tab-content space-y-4">
+          <AdminSectionHeading
             title="Configurações do site"
-            description="Informações exibidas publicamente no site. Altere aqui e o site atualiza automaticamente."
             icon={FaCog}
-            actions={[
-              {
-                label: siteConfigSalvando ? 'Salvando...' : 'Salvar',
-                icon: FaCheck,
-                onClick: salvarSiteConfig,
-                disabled: siteConfigSalvando,
-              },
-            ]}
           />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
-                Texto de funcionamento
-              </label>
-              <input
-                type="text"
-                value={siteConfig.textoFuncionamento}
-                onChange={(e) => setSiteConfig((prev) => ({ ...prev, textoFuncionamento: e.target.value }))}
-                placeholder="Ex: Sábados e Domingos · 9h às 14h · Vagas limitadas"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/20 focus:border-[#8B4F23] bg-white"
-              />
-              <p className="text-xs text-slate-400 mt-1.5">
-                Aparece abaixo do botão de reserva na seção Brunch e no rodapé do site. Deixe em branco para ocultar.
-              </p>
+          {siteConfigCarregando ? (
+            <p role="status" className="admin-site-card">Carregando configurações…</p>
+          ) : siteConfigErro ? (
+            <div className="admin-site-card">
+              <p role="alert">Não foi possível carregar as configurações do site.</p>
+              <button type="button" className="admin-tab-action admin-tab-action--secondary" onClick={fetchSiteConfig}>
+                Tentar novamente
+              </button>
             </div>
-          </div>
+          ) : (
+            <div className="admin-site-layout">
+              <form
+                className="admin-site-card"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void salvarSiteConfig();
+                }}
+              >
+                <label htmlFor="site-funcionamento">Texto de funcionamento</label>
+                <p id="site-funcionamento-ajuda">Aparece abaixo de “Reservar Brunch” e no rodapé. Deixe em branco para ocultar.</p>
+                <input
+                  type="text"
+                  id="site-funcionamento"
+                  aria-describedby="site-funcionamento-ajuda"
+                  value={siteConfig.textoFuncionamento}
+                  onChange={(e) => setSiteConfig({ textoFuncionamento: e.target.value })}
+                  placeholder="Ex.: Sábados e domingos · 9h às 14h"
+                  disabled={siteConfigSalvando}
+                />
+                <button
+                  type="submit"
+                  className="admin-tab-action admin-tab-action--primary"
+                  disabled={siteConfigSalvando || siteConfig.textoFuncionamento.trim() === siteConfigTextoSalvo}
+                >
+                  <FaCheck aria-hidden="true" />
+                  {siteConfigSalvando ? 'Salvando…' : 'Salvar no site'}
+                </button>
+              </form>
+              <div className="admin-site-card">
+                <h2>Prévia do texto</h2>
+                {siteConfig.textoFuncionamento.trim()
+                  ? <div className="admin-site-card__preview"><FaClock aria-hidden="true" /><span>{siteConfig.textoFuncionamento.trim()}</span></div>
+                  : <p>O texto fica oculto no site quando este campo está vazio.</p>}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
         </div>
-
       </div>
-
-      </div>
-
     </main>
 
   );

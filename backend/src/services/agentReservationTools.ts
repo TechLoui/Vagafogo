@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { normalizarStatusReserva, reservaContaParaOcupacao, reservaEstaConfirmada } from "./reservaStatus";
+import { classeInfantil, mapaIdadesInteiras, regraIdade, validarIdadesPorTipo } from "./reservaIdades";
 
 type AgentAvailabilityInput = {
   tipoOferta?: unknown;
@@ -473,18 +474,6 @@ const numericMap = (value: unknown) => {
     .map(([key, quantity]) => [clean(key, 100), nonNegativeInteger(quantity)])
     .filter(([key]) => Boolean(key))) as Record<string, number>;
 };
-const ageMap = (value: unknown) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, number[]>;
-  const result: Record<string, number[]> = {};
-  Object.entries(value as Record<string, unknown>).forEach(([key, ages]) => {
-    if (!Array.isArray(ages)) return;
-    result[clean(key, 100)] = ages
-      .map((age) => Number(age))
-      .filter((age) => Number.isFinite(age) && age >= 0 && age <= 120)
-      .map(Math.trunc);
-  });
-  return result;
-};
 const timeMap = (value: unknown) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, string>;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
@@ -565,27 +554,36 @@ const participantCountForPackage = (reservation: FirebaseFirestore.DocumentData,
   );
 };
 
+const loadCustomerTypes = async (db: FirebaseFirestore.Firestore): Promise<CustomerType[]> => {
+  const typeSnapshot = await db.collection("tipos_clientes").get();
+  return typeSnapshot.docs.map((document) => {
+    const raw = document.data();
+    const nome = clean(raw.nome, 160);
+    const regra = regraIdade({
+      id: document.id,
+      nome,
+      perguntarIdade: raw.perguntarIdade,
+      idadeMinima: raw.idadeMinima,
+      idadeMaxima: raw.idadeMaxima,
+    });
+    return {
+      id: document.id,
+      nome,
+      descricao: clean(raw.descricao, 500),
+      perguntarIdade: Boolean(regra),
+      ...(regra ? { idadeMinima: regra.minima, idadeMaxima: regra.maxima } : {}),
+    };
+  }).filter((type) => type.nome);
+};
+
 const loadCatalogRecords = async () => {
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
-  const [typeSnapshot, packageSnapshot, comboSnapshot] = await Promise.all([
-    db.collection("tipos_clientes").get(),
+  const [types, packageSnapshot, comboSnapshot] = await Promise.all([
+    loadCustomerTypes(db),
     db.collection("pacotes").get(),
     db.collection("combos").get(),
   ]);
-  const types: CustomerType[] = typeSnapshot.docs.map((document) => {
-    const raw = document.data();
-    const minimum = Number(raw.idadeMinima);
-    const maximum = Number(raw.idadeMaxima);
-    return {
-      id: document.id,
-      nome: clean(raw.nome, 160),
-      descricao: clean(raw.descricao, 500),
-      perguntarIdade: raw.perguntarIdade === true,
-      ...(Number.isFinite(minimum) ? { idadeMinima: Math.max(0, Math.trunc(minimum)) } : {}),
-      ...(Number.isFinite(maximum) ? { idadeMaxima: Math.min(120, Math.trunc(maximum)) } : {}),
-    };
-  }).filter((type) => type.nome);
   const packages: PackageRecord[] = packageSnapshot.docs.map((document) => ({ id: document.id, raw: document.data() }));
   const combos: ComboRecord[] = comboSnapshot.docs.map((document) => ({ id: document.id, raw: document.data() }));
   return { db, types, packages, combos };
@@ -661,9 +659,11 @@ export const listarCatalogoAgente = async (includeVisuals = false) => {
 export const listarExperienciasAgente = async () => (await listarCatalogoAgente()).pacotes;
 
 const findType = (types: CustomerType[], term: string) => types.find((type) => normalizeText(type.nome).includes(term));
-const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerType[]) => {
+const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerType[], verificarCarteirinha = true) => {
   const direct = numericMap(input.participantesPorTipo);
   const participants: Record<string, number> = {};
+  const childType = types.find((type) => classeInfantil(type) === "crianca");
+  const nonPayingType = types.find((type) => classeInfantil(type) === "nao_pagante");
   if (Object.keys(direct).length > 0) {
     types.forEach((type) => {
       const value = valueFromMap(direct, type);
@@ -674,57 +674,40 @@ const normalizeParticipation = (input: AgentAvailabilityInput, types: CustomerTy
     if (unknown.length > 0) throw new Error(`AGENT_PARTICIPANT_TYPE_INVALID:${unknown.join(",")}`);
   } else {
     const legacy = [
-      ["adult", input.adultos],
-      ["bariat", input.bariatrica],
-      ["crian", input.criancas],
-      ["nao pag", input.naoPagantes],
+      [findType(types, "adult"), input.adultos],
+      [findType(types, "bariat"), input.bariatrica],
+      [childType, input.criancas],
+      [nonPayingType, input.naoPagantes],
     ] as const;
-    legacy.forEach(([term, quantity]) => {
-      const type = findType(types, term);
+    legacy.forEach(([type, quantity]) => {
       if (type) participants[typeKey(type)] = nonNegativeInteger(quantity);
     });
   }
   types.forEach((type) => { if (!(typeKey(type) in participants)) participants[typeKey(type)] = 0; });
 
-  const ages = ageMap(input.idadesPorTipo);
-  const normalizedAges: Record<string, number[]> = {};
-  types.forEach((type) => {
-    const exact = ages[typeKey(type)] ?? ages[type.nome];
-    if (exact) {
-      normalizedAges[typeKey(type)] = exact;
-      return;
-    }
-    const matchingKey = Object.keys(ages).find((key) => normalizeText(key) === normalizeText(type.nome));
-    if (matchingKey) normalizedAges[typeKey(type)] = ages[matchingKey];
-  });
-  const childType = findType(types, "crian");
-  const nonPayingType = findType(types, "nao pag");
-  if (childType && Array.isArray(input.idadesCriancas)) normalizedAges[typeKey(childType)] = input.idadesCriancas.map(Number).filter(Number.isFinite).map(Math.trunc);
-  if (nonPayingType && Array.isArray(input.idadesNaoPagantes)) normalizedAges[typeKey(nonPayingType)] = input.idadesNaoPagantes.map(Number).filter(Number.isFinite).map(Math.trunc);
-
-  const pending: string[] = [];
-  types.forEach((type) => {
-    const key = typeKey(type);
-    const quantity = nonNegativeInteger(participants[key]);
-    if (!type.perguntarIdade || quantity <= 0) return;
-    const values = normalizedAges[key] ?? [];
-    // No atendimento assistido, a categoria escolhida pelo cliente ja define
-    // a faixa etaria. Idades individuais sao opcionais; se forem informadas,
-    // ainda precisam corresponder a quantidade e aos limites da categoria.
-    if (values.length === 0) return;
-    if (values.length > quantity) {
-      pending.push(`A categoria ${type.nome} recebeu mais idades do que participantes.`);
-      return;
-    }
-    if (values.some((age) => age < 0 || age > 120)) pending.push(`Existe idade invalida na categoria ${type.nome}.`);
-    if (type.idadeMinima !== undefined && values.some((age) => age < type.idadeMinima!)) pending.push(`A categoria ${type.nome} exige idade minima de ${type.idadeMinima} anos.`);
-    if (type.idadeMaxima !== undefined && values.some((age) => age > type.idadeMaxima!)) pending.push(`A categoria ${type.nome} aceita idade maxima de ${type.idadeMaxima} anos.`);
-  });
+  const ages: Record<string, unknown> = input.idadesPorTipo && typeof input.idadesPorTipo === "object"
+    && !Array.isArray(input.idadesPorTipo) ? { ...input.idadesPorTipo } : {};
+  if (childType && Array.isArray(input.idadesCriancas)) ages[typeKey(childType)] = input.idadesCriancas;
+  if (nonPayingType && Array.isArray(input.idadesNaoPagantes)) ages[typeKey(nonPayingType)] = input.idadesNaoPagantes;
+  const { idades: normalizedAges, pendencias: pending } = validarIdadesPorTipo(types, participants, ages);
   const bariatricType = findType(types, "bariat");
-  if (bariatricType && nonNegativeInteger(participants[typeKey(bariatricType)]) > 0 && input.confirmouCarteirinhaBariatrica !== true) {
+  if (verificarCarteirinha && bariatricType && nonNegativeInteger(participants[typeKey(bariatricType)]) > 0 && input.confirmouCarteirinhaBariatrica !== true) {
     pending.push("Confirme que o cliente foi informado de que deve enviar/apresentar a carteirinha bariatrica para validacao.");
   }
   return { participants, ages: normalizedAges, pending };
+};
+
+export const validarParticipacaoSite = async (input: Pick<AgentAvailabilityInput,
+  "participantesPorTipo" | "idadesPorTipo" | "adultos" | "bariatrica" | "criancas" | "naoPagantes" | "idadesCriancas" | "idadesNaoPagantes"
+>) => {
+  const db = obterFirestoreAdmin();
+  if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  const types = await loadCustomerTypes(db);
+  const { participants, ages, pending } = normalizeParticipation(input, types, false);
+  if (!Object.values(participants).some((quantity) => quantity > 0)) {
+    pending.unshift("Informe pelo menos um participante.");
+  }
+  return { participantesPorTipo: participants, idadesPorTipo: ages, pendencias: pending };
 };
 
 const validateRequiredQuestions = (packages: PackageRecord[], input: AgentAvailabilityInput) => {
@@ -919,8 +902,10 @@ export const simularReservaAgente = async (input: AgentAvailabilityInput) => {
     categoriasLegadas: {
       adultos: standardQuantity("adult"),
       bariatrica: standardQuantity("bariat"),
-      criancas: standardQuantity("crian"),
-      naoPagantes: standardQuantity("nao pag"),
+      criancas: types.filter((type) => classeInfantil(type) === "crianca")
+        .reduce((total, type) => total + participation.participants[typeKey(type)], 0),
+      naoPagantes: types.filter((type) => classeInfantil(type) === "nao_pagante")
+        .reduce((total, type) => total + participation.participants[typeKey(type)], 0),
     },
     vagasRestantes: packageResults.reduce<number | null>((remaining, item) => {
       if (item.vagasRestantes === null) return remaining;
@@ -1245,7 +1230,7 @@ export const criarLinkPixExistenteAgente = async (input: {
     horario: clean(reservation.horario, 20),
     horariosPorPacote: timeMap(reservation.horariosPorPacote),
     participantesPorTipo: numericMap(reservation.participantesPorTipo),
-    idadesPorTipo: ageMap(reservation.idadesPorTipo ?? firstParticipationGroup.idadesPorTipo),
+    idadesPorTipo: mapaIdadesInteiras(reservation.idadesPorTipo ?? firstParticipationGroup.idadesPorTipo),
     perguntasPersonalizadas: customQuestionAnswers(reservation.perguntasPersonalizadas),
     confirmouCarteirinhaBariatrica: reservation.confirmouCarteirinhaBariatrica === true,
     nome: clean(reservation.nome, 160),
@@ -1388,7 +1373,7 @@ const buildReservationDraftPatch = (input: AgentReservationDraftInput) => {
   }
   if (owns(input, "horariosPorPacote")) patch.horariosPorPacote = timeMap(input.horariosPorPacote);
   if (owns(input, "participantesPorTipo")) patch.participantesPorTipo = numericMap(input.participantesPorTipo);
-  if (owns(input, "idadesPorTipo")) patch.idadesPorTipo = ageMap(input.idadesPorTipo);
+  if (owns(input, "idadesPorTipo")) patch.idadesPorTipo = mapaIdadesInteiras(input.idadesPorTipo);
   if (owns(input, "perguntasPersonalizadas")) patch.perguntasPersonalizadas = customQuestionAnswers(input.perguntasPersonalizadas);
   for (const key of ["confirmouCarteirinhaBariatrica", "temPet", "whatsappMarketingOptIn", "confirmouResumo"] as const) {
     if (owns(input, key) && typeof input[key] === "boolean") patch[key] = input[key];

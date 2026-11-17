@@ -21,6 +21,7 @@ import {
 } from "../utils/disponibilidade";
 import type { AgentCheckoutHandoff } from "../features/agentCheckout";
 import { knownBookingParticipants, knownBookingTimes } from "../utils/bookingPrefill";
+import { idadeParticipanteValida, limitesIdade, normalizarLimiteIdade, tipoExigeIdades } from "../utils/idadeParticipante";
 
 type PerguntaCondicional = {
   condicao: "sim" | "nao";
@@ -133,7 +134,7 @@ type GrupoParticipacaoPayload = {
   pacoteIds: string[];
   participantesPorTipo: TipoClienteQuantidade;
   participantes: number;
-  /** Idades individuais por chave de tipo (só para tipos com perguntarIdade). */
+  /** Idades individuais por chave de tipo para categorias que exigem idade. */
   idadesPorTipo?: Record<string, number[]>;
 };
 
@@ -555,7 +556,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const [diaSelecionadoFechado, setDiaSelecionadoFechado] = useState(false);
   const [participantesPorGrupo, setParticipantesPorGrupo] = useState<ParticipantesPorGrupo>({});
   // Idades individuais por (chaveGrupo -> chaveTipo -> array de strings, uma por participante).
-  // Só é populado para tipos de cliente com perguntarIdade === true.
+  // Idades dos participantes nas categorias que exigem essa informação.
   const [idadesPorGrupoETipo, setIdadesPorGrupoETipo] = useState<Record<string, Record<string, string[]>>>({});
   const [naoPagante] = useState<number>(0);
   const [temPet, setTemPet] = useState<boolean | null>(null);
@@ -964,8 +965,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
               nome: data.nome ?? "",
               descricao: data.descricao ?? "",
               perguntarIdade: data.perguntarIdade === true,
-              ...(Number.isFinite(Number(data.idadeMinima)) ? { idadeMinima: Number(data.idadeMinima) } : {}),
-              ...(Number.isFinite(Number(data.idadeMaxima)) ? { idadeMaxima: Number(data.idadeMaxima) } : {}),
+              idadeMinima: normalizarLimiteIdade(data.idadeMinima),
+              idadeMaxima: normalizarLimiteIdade(data.idadeMaxima),
             } as TipoCliente;
           })
           .filter((tipo) => tipo.nome.trim().length > 0)
@@ -1124,9 +1125,6 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     setWhatsappMarketingOptIn(initialAgentCheckout.whatsappMarketingOptIn === true);
     setTemPet(initialAgentCheckout.temPet);
 
-    const groupKey = initialAgentCheckout.tipoOferta === "combo"
-      ? `combo:${initialAgentCheckout.ofertaId}`
-      : "geral";
     const quantities: TipoClienteQuantidade = {};
     const ages: Record<string, string[]> = {};
     tiposClientes.forEach((tipo) => {
@@ -1136,11 +1134,8 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       const sourceAges = tipo.id
         ? initialAgentCheckout.idadesPorTipo[tipo.id]
         : initialAgentCheckout.idadesPorTipo[tipo.nome];
-      if (Array.isArray(sourceAges)) ages[key] = sourceAges.map(String);
+      if (tipoExigeIdades(tipo) && Array.isArray(sourceAges)) ages[key] = sourceAges.slice(0, quantity).map(String);
     });
-    setParticipantesPorGrupo({ [groupKey]: quantities });
-    setIdadesPorGrupoETipo(Object.keys(ages).length > 0 ? { [groupKey]: ages } : {});
-
     const respostasCheckout = Object.fromEntries(
       initialAgentCheckout.perguntasPersonalizadas.map((answer) => [
         `${answer.pacoteId}-${answer.perguntaId}`,
@@ -1183,6 +1178,13 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     const existingPix = initialAgentCheckout.tipo === "pix_existente"
       && initialAgentCheckout.formaPagamento === "PIX"
       && Boolean(initialAgentCheckout.pixKey || initialAgentCheckout.qrCodeImage);
+    const tipoComIdadeFaltando = existingPix ? undefined : tiposClientes.find((tipo) => {
+      const key = obterChaveTipo(tipo);
+      const quantidade = quantities[key] ?? 0;
+      if (quantidade <= 0 || !tipoExigeIdades(tipo)) return false;
+      const idades = ages[key] ?? [];
+      return idades.length !== quantidade || idades.some((idade) => !idadeParticipanteValida(idade, tipo));
+    });
     setFormaPagamento(existingPix ? "PIX" : "CREDIT_CARD");
     setSubEtapaPagamento(existingPix ? "pix" : "metodo");
     if (existingPix) {
@@ -1195,11 +1197,16 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       setIndicePacoteHorario(indicePerguntaPendente);
       setEtapa(2);
       setFormErrors({ perguntas: "Confirme as informações adicionais antes de seguir para o pagamento." });
+    } else if (tipoComIdadeFaltando) {
+      const { min, max } = limitesIdade(tipoComIdadeFaltando);
+      setSubPassoParticipantes(0);
+      setEtapa(3);
+      setFormErrors({ participantes: `Informe as idades para ${tipoComIdadeFaltando.nome} (${min} a ${max} anos).` });
     } else {
       setEtapa(4);
       setFormErrors({});
     }
-    setModalReembolsoAberto(!existingPix);
+    setModalReembolsoAberto(!existingPix && indicePerguntaPendente < 0 && !tipoComIdadeFaltando);
   }, [initialAgentCheckout, loadingPacotes, pacotes, tiposClientes]);
 
   const tiposClientesAtivos = useMemo(() => tiposClientes, [tiposClientes]);
@@ -1506,7 +1513,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   }, [gruposParticipacao, tiposClientesAtivos]);
 
   // Mantém arrays de idade coerentes com as quantidades: cresce → adiciona strings vazias;
-  // reduz → trunca. Só aplica para tipos com perguntarIdade === true.
+  // reduz → trunca, nas categorias que exigem idade.
   useEffect(() => {
     setIdadesPorGrupoETipo((prev) => {
       const proximo: Record<string, Record<string, string[]>> = {};
@@ -1514,7 +1521,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         const idadesGrupoAnterior = prev[grupo.chave] ?? {};
         const idadesGrupo: Record<string, string[]> = {};
         tiposClientesAtivos.forEach((tipo) => {
-          if (!tipo.perguntarIdade) return;
+          if (!tipoExigeIdades(tipo)) return;
           const chaveTipo = obterChaveTipo(tipo);
           const qtdAtual = Number(participantesPorGrupo[grupo.chave]?.[chaveTipo] ?? 0);
           const arrAnterior = Array.isArray(idadesGrupoAnterior[chaveTipo])
@@ -1531,6 +1538,30 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       return proximo;
     });
   }, [gruposParticipacao, tiposClientesAtivos, participantesPorGrupo]);
+
+  useEffect(() => {
+    if (!initialAgentCheckout || loadingPacotes || !tiposClientes.length) return;
+    const selectionKey = `agent-checkout:${initialAgentCheckout.sessionId ?? ""}:${initialAgentCheckout.geradoEm}`;
+    if (initialParticipantsAppliedRef.current === selectionKey) return;
+    const group = gruposParticipacao[0];
+    if (!group || group.pacoteIds.length !== initialAgentCheckout.pacoteIds.length
+      || !initialAgentCheckout.pacoteIds.every((id) => group.pacoteIds.includes(id))) return;
+
+    const quantities: TipoClienteQuantidade = {};
+    const ages: Record<string, string[]> = {};
+    tiposClientes.forEach((tipo) => {
+      const key = obterChaveTipo(tipo);
+      const quantity = obterValorMapa(initialAgentCheckout.participantesPorTipo, tipo) ?? 0;
+      quantities[key] = quantity;
+      const sourceAges = tipo.id
+        ? initialAgentCheckout.idadesPorTipo[tipo.id]
+        : initialAgentCheckout.idadesPorTipo[tipo.nome];
+      if (tipoExigeIdades(tipo) && Array.isArray(sourceAges)) ages[key] = sourceAges.slice(0, quantity).map(String);
+    });
+    initialParticipantsAppliedRef.current = selectionKey;
+    setParticipantesPorGrupo({ [group.chave]: quantities });
+    setIdadesPorGrupoETipo(Object.keys(ages).length ? { [group.chave]: ages } : {});
+  }, [gruposParticipacao, initialAgentCheckout, loadingPacotes, tiposClientes]);
 
   useEffect(() => {
     if (initialAgentCheckout || !initialParticipantsByType || loadingPacotes || !tiposClientes.length
@@ -1578,15 +1609,13 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           const participantes = somarMapa(participantesGrupo);
           const idadesGrupo = idadesPorGrupoETipo[grupo.chave] ?? {};
           const idadesPorTipo: Record<string, number[]> = {};
-          Object.entries(idadesGrupo).forEach(([chaveTipo, arr]) => {
-            const idadesNumericas = arr
-              .map((valor) => {
-                const num = Number(valor);
-                return Number.isFinite(num) && num >= 0 ? Math.floor(num) : null;
-              })
-              .filter((num): num is number => num !== null);
-            if (idadesNumericas.length > 0) {
-              idadesPorTipo[chaveTipo] = idadesNumericas;
+          tiposClientesAtivos.forEach((tipo) => {
+            if (!tipoExigeIdades(tipo)) return;
+            const chaveTipo = obterChaveTipo(tipo);
+            const quantidade = participantesGrupo[chaveTipo] ?? 0;
+            const idades = idadesGrupo[chaveTipo] ?? [];
+            if (quantidade > 0 && idades.length === quantidade && idades.every((idade) => idadeParticipanteValida(idade, tipo))) {
+              idadesPorTipo[chaveTipo] = idades.map(Number);
             }
           });
           return {
@@ -1600,7 +1629,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
           };
         })
         .filter((grupo) => grupo.participantes > 0),
-    [gruposParticipacao, participantesPorGrupo, idadesPorGrupoETipo]
+    [gruposParticipacao, participantesPorGrupo, idadesPorGrupoETipo, tiposClientesAtivos]
   );
 
   const temPacoteFaixa = useMemo(
@@ -2048,6 +2077,55 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     setFieldError("participantes");
   };
 
+  const renderIdadesParticipantes = (grupoChave: string, tipo: TipoCliente, quantidade: number) => {
+    if (quantidade <= 0 || !tipoExigeIdades(tipo)) return null;
+
+    const chaveTipo = obterChaveTipo(tipo);
+    const idades = idadesPorGrupoETipo[grupoChave]?.[chaveTipo] ?? [];
+    const { min, max } = limitesIdade(tipo);
+
+    return (
+      <fieldset className="mt-3 min-w-0 rounded-xl border border-slate-200 bg-white/80 px-3 pb-3 pt-1">
+        <legend className="px-1 text-xs font-semibold text-slate-700">Idades ({min} a {max} anos)</legend>
+        <div className="grid grid-cols-2 gap-2">
+          {Array.from({ length: quantidade }, (_, index) => {
+            const valor = idades[index] ?? "";
+            const invalida = (valor !== "" || Boolean(formErrors.participantes)) && !idadeParticipanteValida(valor, tipo);
+
+            return (
+              <label key={index} className="min-w-0 text-[11px] font-medium text-slate-600">
+                Pessoa {index + 1}
+                <input
+                  type="number"
+                  min={min}
+                  max={max}
+                  step={1}
+                  inputMode="numeric"
+                  required
+                  aria-label={`Idade ${index + 1} – ${tipo.nome}`}
+                  aria-invalid={invalida || undefined}
+                  value={valor}
+                  onChange={(event) => {
+                    const novaIdade = event.target.value;
+                    setIdadesPorGrupoETipo((prev) => {
+                      const grupo = prev[grupoChave] ?? {};
+                      const atuais = grupo[chaveTipo] ?? [];
+                      const novasIdades = Array.from({ length: quantidade }, (_, i) => i === index ? novaIdade : atuais[i] ?? "");
+                      return { ...prev, [grupoChave]: { ...grupo, [chaveTipo]: novasIdades } };
+                    });
+                    setFieldError("participantes");
+                  }}
+                  placeholder="Anos"
+                  className={`mt-0.5 min-h-10 w-full rounded-md border bg-white px-2 text-sm text-slate-800 focus:border-[#8B4F23] focus:outline-none focus:ring-1 focus:ring-[#8B4F23]/40 ${invalida ? "border-red-400" : "border-slate-300"}`}
+                />
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+    );
+  };
+
   const hasDisponibilidadeNoDia = (day: Date) => {
     // Cliente escolhe pacotes ANTES da data (etapa 0 -> 1),
     // entao filtra apenas pelos pacotes selecionados (precisam estar TODOS disponiveis).
@@ -2491,25 +2569,16 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         for (const grupo of gruposParticipacao) {
           const quantidadesGrupo = participantesPorGrupo[grupo.chave] ?? {};
           const tipoComIdadeFaltando = tiposClientesAtivos.find((tipo) => {
-            if (!tipo.perguntarIdade) return false;
+            if (!tipoExigeIdades(tipo)) return false;
             const valor = Number(obterValorMapa(quantidadesGrupo, tipo) ?? 0);
             if (valor <= 0) return false;
             const chaveTipo = obterChaveTipo(tipo);
             const idadesDoTipo = idadesPorGrupoETipo[grupo.chave]?.[chaveTipo] ?? [];
-            return Array.from({ length: valor }, (_, i) => idadesDoTipo[i]).some((idadeStr) => {
-              const valorLimpo = (idadeStr ?? "").trim();
-              if (!valorLimpo) return true;
-              const idadeNum = Number(valorLimpo);
-              const idadeMinima = tipo.idadeMinima ?? 0;
-              const idadeMaxima = tipo.idadeMaxima ?? 120;
-              return !Number.isFinite(idadeNum) || idadeNum < idadeMinima || idadeNum > idadeMaxima;
-            });
+            return idadesDoTipo.length !== valor || idadesDoTipo.some((idade) => !idadeParticipanteValida(idade, tipo));
           });
           if (tipoComIdadeFaltando) {
-            const faixa = tipoComIdadeFaltando.idadeMinima !== undefined || tipoComIdadeFaltando.idadeMaxima !== undefined
-              ? ` (de ${tipoComIdadeFaltando.idadeMinima ?? 0} a ${tipoComIdadeFaltando.idadeMaxima ?? 120} anos)`
-              : "";
-            errors.participantes = `Informe uma idade válida para cada ${tipoComIdadeFaltando.nome.toLowerCase()}${faixa} em "${grupo.nome}".`;
+            const { min, max } = limitesIdade(tipoComIdadeFaltando);
+            errors.participantes = `Informe as idades para ${tipoComIdadeFaltando.nome} (${min} a ${max} anos) em "${grupo.nome}".`;
             break;
           }
         }
@@ -2803,6 +2872,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     if (!validation.ok) {
       const etapaComErro = etapaParaPrimeiroErro(validation.errors);
       setEtapa(etapaComErro);
+      if (etapaComErro === 3 && validation.errors.participantes) setSubPassoParticipantes(0);
       if (etapaComErro === 4) {
         const subEtapaErro = subEtapaPagamentoParaErro(validation.errors);
         if (subEtapaErro) {
@@ -4288,8 +4358,6 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                           const chaveTipo = obterChaveTipo(tipo);
                           const valor = Number(obterValorMapa(participantesPorGrupo[grupo.chave] ?? {}, tipo) ?? 0);
                           const precoUnitario = precoPorTipoNoGrupo(grupo, tipo);
-                          const perguntarIdadeAtivo = tipo.perguntarIdade === true && valor > 0;
-                          const idadesDoTipo = idadesPorGrupoETipo[grupo.chave]?.[chaveTipo] ?? [];
                           return (
                             <div key={chaveTipo} className="space-y-2">
                               <div className="flex items-center justify-between gap-2">
@@ -4323,45 +4391,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                                   >+</button>
                                 </div>
                               </div>
-                              {perguntarIdadeAtivo && (
-                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">
-                                    Idade de cada {tipo.nome.toLowerCase()} <span className="text-red-500">*</span>
-                                  </p>
-                                  <div className="grid grid-cols-3 gap-2">
-                                    {Array.from({ length: valor }, (_, idx) => {
-                                      const idadeValor = idadesDoTipo[idx] ?? "";
-                                      return (
-                                        <label key={`${grupo.chave}-${chaveTipo}-idade-${idx}`} className="flex flex-col">
-                                          <span className="text-[10px] font-semibold text-slate-500">#{idx + 1}</span>
-                                          <input
-                                            type="number"
-                                            min={tipo.idadeMinima ?? 0}
-                                            max={tipo.idadeMaxima ?? 120}
-                                            inputMode="numeric"
-                                            value={idadeValor}
-                                            onChange={(e) => {
-                                              const novoValor = e.target.value;
-                                              setIdadesPorGrupoETipo((prev) => {
-                                                const grupoAtual = { ...(prev[grupo.chave] ?? {}) };
-                                                const arrAtual = Array.isArray(grupoAtual[chaveTipo])
-                                                  ? [...grupoAtual[chaveTipo]]
-                                                  : Array.from({ length: valor }, () => "");
-                                                while (arrAtual.length < valor) arrAtual.push("");
-                                                arrAtual[idx] = novoValor;
-                                                grupoAtual[chaveTipo] = arrAtual;
-                                                return { ...prev, [grupo.chave]: grupoAtual };
-                                              });
-                                            }}
-                                            placeholder="anos"
-                                            className="mt-0.5 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 focus:border-[#8B4F23] focus:outline-none focus:ring-1 focus:ring-[#8B4F23]/40"
-                                          />
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
+                              {renderIdadesParticipantes(grupo.chave, tipo, valor)}
                             </div>
                           );
                         })}
@@ -4378,7 +4408,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                     </div>
 
                     {formErrors.participantes && (
-                      <p className="text-sm text-red-600">{formErrors.participantes}</p>
+                      <p role="alert" className="text-sm text-red-600">{formErrors.participantes}</p>
                     )}
                       </>
                     )}
@@ -4522,8 +4552,6 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                         {tiposClientesAtivos.map((tipo) => {
                           const chave = obterChaveTipo(tipo);
                           const valor = Number(obterValorMapa(quantidadesGrupo, tipo) ?? 0);
-                          const perguntarIdadeAtivo = tipo.perguntarIdade === true && valor > 0;
-                          const idadesDoTipo = idadesPorGrupoETipo[grupo.chave]?.[chave] ?? [];
                           return (
                             <div
                               key={`${grupo.chave}-${chave}`}
@@ -4555,47 +4583,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                                   +
                                 </button>
                               </div>
-                              {perguntarIdadeAtivo && (
-                                <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
-                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                                    Idade de cada {tipo.nome.toLowerCase()}
-                                  </p>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    {Array.from({ length: valor }, (_, idx) => {
-                                      const idadeValor = idadesDoTipo[idx] ?? "";
-                                      return (
-                                        <label key={`${grupo.chave}-${chave}-idade-${idx}`} className="flex flex-col">
-                                          <span className="text-[10px] font-semibold text-slate-500">
-                                            #{idx + 1}
-                                          </span>
-                                          <input
-                                            type="number"
-                                            min={tipo.idadeMinima ?? 0}
-                                            max={tipo.idadeMaxima ?? 120}
-                                            inputMode="numeric"
-                                            value={idadeValor}
-                                            onChange={(e) => {
-                                              const novoValor = e.target.value;
-                                              setIdadesPorGrupoETipo((prev) => {
-                                                const grupoAtual = { ...(prev[grupo.chave] ?? {}) };
-                                                const arrAtual = Array.isArray(grupoAtual[chave])
-                                                  ? [...grupoAtual[chave]]
-                                                  : Array.from({ length: valor }, () => "");
-                                                while (arrAtual.length < valor) arrAtual.push("");
-                                                arrAtual[idx] = novoValor;
-                                                grupoAtual[chave] = arrAtual;
-                                                return { ...prev, [grupo.chave]: grupoAtual };
-                                              });
-                                            }}
-                                            placeholder="anos"
-                                            className="mt-0.5 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 focus:border-[#8B4F23] focus:outline-none focus:ring-1 focus:ring-[#8B4F23]/40"
-                                          />
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
+                              {renderIdadesParticipantes(grupo.chave, tipo, valor)}
                             </div>
                           );
                         })}
@@ -4606,7 +4594,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
               </div>
 
               {formErrors.participantes && (
-                <p className="mt-2 text-sm text-red-600">{formErrors.participantes}</p>
+                <p role="alert" className="mt-2 text-sm text-red-600">{formErrors.participantes}</p>
               )}
             </div>
 
@@ -5060,6 +5048,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
                   {pagamentoPrecisaContinuar ? (
                     <button
+                      key="continuar-etapa"
                       type="button"
                       onClick={handleAvancarEtapa}
                       className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8B4F23] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md sm:ml-auto sm:flex-none sm:px-7"
@@ -5071,6 +5060,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                     </button>
                   ) : (
                     <button
+                      key="enviar-pagamento"
                       type="submit"
                       disabled={loading || selectedPackages.length === 0 || bloqueiaEnvioCartao || pixGerado}
                       className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8B4F23] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-[#A05D2B] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto sm:flex-none sm:px-7"

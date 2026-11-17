@@ -2,6 +2,7 @@ import express, { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
 import { createHash } from "crypto";
 import { criarCobrancaHandler } from "../services/assas";
+import { exigirIdadesReservaSite } from "../services/siteBookingAges";
 import "dotenv/config";
 import webhookRouter, {
   iniciarProcessadorConfirmacoesReservaAgente,
@@ -137,6 +138,7 @@ import {
   reservaAgenteTemConfirmacaoResumo,
   salvarRascunhoReservaAgente,
   simularReservaAgente,
+  validarParticipacaoSite,
 } from "../services/agentReservationTools";
 import {
   alterarDisponibilidadeOperadorAgente,
@@ -536,6 +538,32 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
     return;
   }
 
+  const respostaInterativa = req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object"
+    && !Array.isArray(req.body.respostaInterativa) ? req.body.respostaInterativa : null;
+  const bookingAtual = storedClientMessage.conversation.bookingUi;
+  let participacao: Awaited<ReturnType<typeof validarParticipacaoSite>> | null = null;
+  if (respostaInterativa?.step === "participants" && bookingAtual?.step === "participants" && !reschedulingContext.pendente) {
+    participacao = await validarParticipacaoSite(respostaInterativa);
+    if (participacao.pendencias.length) {
+      const resposta = participacao.pendencias.join(" ");
+      await registrarMensagemConversaSite(sessionId, {
+        from: "bot", text: resposta, sourceId: `bot:${clientSourceId}:participantes`, name: contactName, phone: contactPhone,
+      });
+      await atualizarProgressoReservaSite(sessionId, bookingAtual, storedClientMessage.message.ts);
+      res.json({
+        resposta, session_id: sessionId, nome_contato: contactName, atendimento_humano: false,
+        media: null, mensagens_adicionais: [], handoff: null, booking_ui: bookingAtual,
+        ...dadosContinuacaoWhatsapp(storedClientMessage.conversation.whatsappContinuation),
+      });
+      return;
+    }
+    await salvarRascunhoReservaAgente({
+      sessionId, telefone: contactPhone,
+      participantesPorTipo: participacao.participantesPorTipo,
+      idadesPorTipo: participacao.idadesPorTipo,
+    });
+  }
+
   const response = await requestAgentService("ai", "/ask", {
     method: "POST",
     body: {
@@ -547,9 +575,11 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
       telefone: contactPhone,
       nome_contato: contactName,
       historico,
-      resposta_interativa: bookingModeSelection?.selection || (req.body?.respostaInterativa && typeof req.body.respostaInterativa === "object" && !Array.isArray(req.body.respostaInterativa)
-        ? req.body.respostaInterativa
-        : null),
+      resposta_interativa: bookingModeSelection?.selection || (participacao ? {
+        step: "participants",
+        participantesPorTipo: participacao.participantesPorTipo,
+        idadesPorTipo: participacao.idadesPorTipo,
+      } : respostaInterativa),
     },
     timeoutMs: 100_000,
   });
@@ -561,6 +591,22 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   }
 
   const body = response.body as Record<string, any>;
+  if (participacao && body.booking_ui && typeof body.booking_ui === "object" && !Array.isArray(body.booking_ui)) {
+    body.booking_ui.draft = {
+      ...bookingAtual?.draft as Record<string, unknown>,
+      ...body.booking_ui.draft,
+      participantesPorTipo: participacao.participantesPorTipo,
+      idadesPorTipo: participacao.idadesPorTipo,
+    };
+  }
+  if (!reschedulingContext.pendente && !body.handoff) {
+    const correctedAges = await exigirIdadesReservaSite(body.booking_ui, bookingAtual?.draft);
+    if (correctedAges) {
+      body.booking_ui = correctedAges.ui;
+      body.resposta = correctedAges.resposta;
+      body.mensagens_adicionais = [];
+    }
+  }
   if (body.handoff && typeof body.handoff === "object" && !deveEfetivarHandoffSite({
     message: identity.pendingRequest || mensagem,
     reply: String(body.resposta || ""),

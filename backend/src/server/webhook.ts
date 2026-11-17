@@ -349,7 +349,7 @@ async function processQueue() {
 async function processTask(task: { payload: WebhookPayload; attempt: number }) {
   while (task.attempt <= MAX_RETRIES) {
     try {
-      await handleWebhook(task.payload);
+      await processarWebhookPagamento(task.payload);
       return;
     } catch (error) {
       task.attempt += 1;
@@ -373,7 +373,7 @@ async function processTask(task: { payload: WebhookPayload; attempt: number }) {
   }
 }
 
-async function handleWebhook(payload: WebhookPayload) {
+export async function processarWebhookPagamento(payload: WebhookPayload) {
   const event = payload?.event;
   const payment = payload?.payment ?? undefined;
 
@@ -402,11 +402,16 @@ async function handleWebhook(payload: WebhookPayload) {
   }
 
   const reservaExistente = reservaSnap.data() as Record<string, any>;
+  const pagamentoEsperado = String(reservaExistente.asaasPaymentId ?? reservaExistente.pagamentoId ?? "").trim();
+  if (pagamentoEsperado && payment?.id !== pagamentoEsperado) {
+    console.warn(`[webhook] Pagamento não corresponde à cobrança da reserva ${externalReference}.`);
+    return;
+  }
 
   await updateDoc(reservaRef, {
     status: "pago",
     confirmada: true,
-    dataPagamento: new Date(),
+    dataPagamento: reservaExistente.dataPagamento ?? new Date(),
     ...obterCamposRetencaoReservaNaAtualizacao({
       status: "pago",
       confirmada: true,

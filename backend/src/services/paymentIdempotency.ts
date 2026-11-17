@@ -22,6 +22,7 @@ export type PaymentAttemptClaim =
   | { type: "acquired"; context: PaymentAttemptContext }
   | { type: "replay"; response: PaymentHttpResponse }
   | { type: "in_progress"; documentId: string; requestHash: string }
+  | { type: "missing" }
   | { type: "conflict" };
 
 export class PaymentIdempotencyKeyError extends Error {
@@ -143,9 +144,25 @@ const lerRespostaArmazenada = (
   return { httpStatus, body: body as Record<string, unknown> };
 };
 
+export const consultarPagamentoConcluido = async (
+  idempotencyKey: string,
+  payload: unknown,
+): Promise<Extract<PaymentAttemptClaim, { type: "replay" | "conflict" }> | null> => {
+  const firestore = obterFirestoreObrigatorio();
+  const ref = firestore.collection(PAYMENT_IDEMPOTENCY_COLLECTION).doc(calcularIdDocumento(idempotencyKey));
+  const snapshot = await ref.get();
+  if (!snapshot.exists) return null;
+  const data = snapshot.data() as Record<string, unknown>;
+  if (data.requestHash !== calcularHashRequisicaoPagamento(payload)) return { type: "conflict" };
+  if (data.status !== "completed") return null;
+  const response = lerRespostaArmazenada(data);
+  return response ? { type: "replay", response } : null;
+};
+
 export const iniciarTentativaPagamento = async (
   idempotencyKey: string,
-  payload: unknown
+  payload: unknown,
+  permitirNovaTentativa = true,
 ): Promise<PaymentAttemptClaim> => {
   const firestore = obterFirestoreObrigatorio();
   const documentId = calcularIdDocumento(idempotencyKey);
@@ -159,6 +176,7 @@ export const iniciarTentativaPagamento = async (
     const snapshot = await transaction.get(ref);
 
     if (!snapshot.exists) {
+      if (!permitirNovaTentativa) return { type: "missing" };
       transaction.create(ref, {
         requestHash,
         reservaId,

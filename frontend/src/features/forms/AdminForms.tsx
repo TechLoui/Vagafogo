@@ -3,8 +3,6 @@ import type { ReactNode } from 'react';
 import {
   FaArrowDown,
   FaArrowUp,
-  FaCheck,
-  FaClipboardCheck,
   FaClipboardList,
   FaClone,
   FaCopy,
@@ -25,6 +23,7 @@ import {
   FaTimes,
   FaTrash,
 } from 'react-icons/fa';
+import AdminSectionHeading from '../../components/AdminSectionHeading';
 import {
   cloneFormAsDraft,
   createEmptyField,
@@ -69,6 +68,12 @@ const STATUS_CONFIG: Record<FormStatus, { label: string; className: string }> = 
 const CONTROL_CLASS =
   'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 
+const LIST_ACTION_CLASS =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:cursor-wait disabled:opacity-50';
+
+const LIST_ICON_ACTION_CLASS =
+  'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:cursor-wait disabled:opacity-50';
+
 const modalStack: symbol[] = [];
 
 function Modal({ children, onClose, label, wide = false, nested = false }: { children: ReactNode; onClose: () => void; label: string; wide?: boolean; nested?: boolean }) {
@@ -100,7 +105,7 @@ function Modal({ children, onClose, label, wide = false, nested = false }: { chi
         dialogRef.current.querySelectorAll<HTMLElement>(
           'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((element) => !element.hasAttribute('aria-hidden'));
+      ).filter((element) => !element.hasAttribute('aria-hidden') && element.getClientRects().length > 0);
       if (focusable.length === 0) {
         event.preventDefault();
         dialogRef.current.focus();
@@ -191,7 +196,7 @@ function FormFieldPreview({ field }: { field: FormField }) {
 
 function FormPreview({ draft }: { draft: FormDraft }) {
   return (
-    <div className="forms-public-preview overflow-hidden rounded-2xl border border-slate-200 bg-[#f7f5ef] shadow-sm">
+    <div className="forms-public-preview overflow-hidden break-words rounded-2xl border border-slate-200 bg-[#f7f5ef] shadow-sm">
       <div className="border-b border-amber-900/10 bg-gradient-to-br from-[#382414] to-[#75451f] px-5 py-6 text-white">
         <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-200">Pré-visualização</p>
         <h3 className="mt-2 text-xl font-semibold">{draft.title || 'Formulário sem título'}</h3>
@@ -258,7 +263,7 @@ function FieldEditor({
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <label className="sm:col-span-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           Pergunta
-          <input value={field.label} onChange={(event) => onChange({ ...field, label: event.target.value })} className={`${CONTROL_CLASS} mt-1.5`} maxLength={180} placeholder="Digite a pergunta" />
+          <input id={`form-question-${field.id}`} value={field.label} onChange={(event) => onChange({ ...field, label: event.target.value })} className={`${CONTROL_CLASS} mt-1.5`} maxLength={180} placeholder="Digite a pergunta" />
         </label>
         <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Tipo de resposta
@@ -378,8 +383,17 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
   const [draft, setDraft] = useState<FormDraft>(() => ({ ...initial, fields: initial.fields.map((field) => ({ ...field, options: field.options ? [...field.options] : undefined })) }));
   const [error, setError] = useState('');
   const [hasConflict, setHasConflict] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [errorFocusRequest, setErrorFocusRequest] = useState(0);
   const errorRef = useRef<HTMLDivElement>(null);
+  const newQuestionIdRef = useRef<string>(null);
+
+  useEffect(() => {
+    const id = newQuestionIdRef.current;
+    if (!id) return;
+    newQuestionIdRef.current = null;
+    document.getElementById(`form-question-${id}`)?.focus();
+  }, [draft.fields]);
 
   useEffect(() => {
     if (!error || errorFocusRequest === 0) return;
@@ -396,6 +410,13 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
   };
 
   const updateField = (index: number, next: FormField) => setDraft((current) => ({ ...current, fields: current.fields.map((field, fieldIndex) => fieldIndex === index ? next : field) }));
+  const addQuestion = () => {
+    if (draft.fields.length >= 50) return;
+    const question = createEmptyField();
+    newQuestionIdRef.current = question.id;
+    setDraft((current) => ({ ...current, fields: [...current.fields, question] }));
+  };
+
   const moveField = (index: number, direction: -1 | 1) => setDraft((current) => {
     const target = index + direction;
     if (target < 0 || target >= current.fields.length) return current;
@@ -435,6 +456,7 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
   };
 
   const requestClose = () => {
+    if (busy) return;
     const changed = JSON.stringify(draft) !== JSON.stringify(initial);
     if (changed && !window.confirm('Descartar as alterações não salvas deste formulário?')) return;
     onClose();
@@ -442,27 +464,28 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
 
   return (
     <Modal onClose={requestClose} label={initial.id ? `Editar ${initial.title}` : 'Criar formulário'} wide>
-      <div className="sticky top-0 z-10 flex flex-col gap-4 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-7">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Construtor de formulário</p>
-          <h2 className="mt-1 text-xl font-semibold text-slate-900">{initial.id ? 'Editar formulário' : 'Criar formulário'}</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={requestClose} disabled={busy} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancelar</button>
+      <div className="admin-forms-dialog__header sticky top-0 z-10 rounded-t-3xl border-b border-slate-200 bg-white px-3 py-2 sm:px-6">
+        <h2 className="admin-forms-dialog__heading text-lg font-semibold text-slate-900">{initial.id ? 'Editar formulário' : 'Criar formulário'}</h2>
+        <div className="admin-forms-dialog__actions">
           {initial.status !== 'published' ? (
-            <button type="button" onClick={() => submit(initial.status)} disabled={busy} className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+            <button type="button" onClick={() => void submit(initial.status)} disabled={busy} className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}>
               {initial.status === 'closed' ? 'Salvar sem reabrir' : 'Salvar rascunho'}
             </button>
           ) : null}
-          <button type="button" onClick={() => submit('published')} disabled={busy} className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50">
-            <FaCheck className="h-3.5 w-3.5" /> {busy ? 'Salvando...' : initial.status === 'published' ? 'Salvar alterações' : 'Salvar e publicar'}
+          <button type="button" onClick={() => void submit('published')} disabled={busy} className={`${LIST_ACTION_CLASS} border-transparent bg-emerald-600 text-white hover:bg-emerald-700`}>
+            {busy ? 'Salvando...' : initial.status === 'published' ? 'Salvar alterações' : 'Salvar e publicar'}
           </button>
-          <button type="button" onClick={requestClose} className="ml-1 rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Fechar editor"><FaTimes /></button>
+          <button type="button" onClick={() => setShowPreview(true)} className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50 xl:hidden`}>
+            <FaEye aria-hidden="true" /> Prévia
+          </button>
         </div>
+        <button type="button" onClick={requestClose} disabled={busy} className={`${LIST_ICON_ACTION_CLASS} admin-forms-dialog__close text-slate-500 hover:bg-slate-100`} aria-label="Fechar editor">
+          <FaTimes aria-hidden="true" />
+        </button>
       </div>
 
-      <div className="grid gap-6 p-5 sm:p-7 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
-        <div className="space-y-5">
+      <div className="grid min-w-0 gap-5 p-3 sm:p-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
+        <div className="min-w-0 space-y-5">
           {error ? (
             <div ref={errorRef} tabIndex={-1} className="scroll-mt-28 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 outline-none" role="alert">
               <p>{error}</p>
@@ -473,11 +496,8 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
               ) : null}
             </div>
           ) : null}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4">
-              <h3 className="text-base font-semibold text-slate-900">Informações principais</h3>
-              <p className="mt-1 text-sm text-slate-500">Apresente o objetivo do formulário de forma clara para o visitante.</p>
-            </div>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <h3 className="mb-4 text-base font-semibold text-slate-900">Informações principais</h3>
             <div className="space-y-4">
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Título <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className={`${CONTROL_CLASS} mt-1.5`} maxLength={160} /></label>
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Descrição <textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} className={`${CONTROL_CLASS} mt-1.5 min-h-[96px] resize-y`} maxLength={1500} placeholder="Explique por que estas informações estão sendo coletadas." /></label>
@@ -485,9 +505,9 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
           </section>
 
           <section>
-            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-              <div><h3 className="text-base font-semibold text-slate-900">Perguntas</h3><p className="mt-1 text-sm text-slate-500">{draft.fields.length} de 50 campos utilizados</p></div>
-              <button type="button" onClick={() => setDraft({ ...draft, fields: [...draft.fields, createEmptyField()] })} disabled={draft.fields.length >= 50} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-40"><FaPlus className="h-3.5 w-3.5" /> Nova pergunta</button>
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-base font-semibold text-slate-900">Perguntas</h3>
+              <p className="text-xs tabular-nums text-slate-500">{draft.fields.length} de 50</p>
             </div>
             <div className="space-y-3">
               {draft.fields.map((field, index) => (
@@ -503,10 +523,13 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
                 />
               ))}
             </div>
+            <button type="button" onClick={addQuestion} disabled={draft.fields.length >= 50} className={`${LIST_ACTION_CLASS} mt-3 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}>
+              <FaPlus className="h-3.5 w-3.5" aria-hidden="true" /> Nova pergunta
+            </button>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Depois do envio</h3>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <h3 className="text-base font-semibold text-slate-900">Envio e privacidade</h3>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Título de confirmação <input value={draft.confirmationTitle} onChange={(event) => setDraft({ ...draft, confirmationTitle: event.target.value })} className={`${CONTROL_CLASS} mt-1.5`} maxLength={160} /></label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Texto do botão <input value={draft.submitButtonLabel} onChange={(event) => setDraft({ ...draft, submitButtonLabel: event.target.value })} className={`${CONTROL_CLASS} mt-1.5`} maxLength={60} /></label>
@@ -516,13 +539,21 @@ function FormEditor({ initial, busy, onClose, onReload, onSave }: { initial: For
           </section>
         </div>
 
-        <aside className="xl:sticky xl:top-24 xl:self-start">
+        <aside className="hidden xl:sticky xl:top-20 xl:block xl:max-h-[calc(100dvh-6rem)] xl:self-start xl:overflow-y-auto">
           <FormPreview draft={draft} />
-          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-800">
-            O endereço público e o QR Code não mudam quando você edita este formulário.
-          </div>
         </aside>
       </div>
+      {showPreview ? (
+        <Modal nested onClose={() => setShowPreview(false)} label="Prévia do formulário">
+          <div className="flex items-center justify-between gap-3 rounded-t-3xl border-b border-slate-200 bg-white px-4 py-2">
+            <h2 className="font-semibold text-slate-900">Prévia do formulário</h2>
+            <button type="button" onClick={() => setShowPreview(false)} className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-slate-100`} aria-label="Fechar prévia">
+              <FaTimes aria-hidden="true" />
+            </button>
+          </div>
+          <div className="p-3 sm:p-5"><FormPreview draft={draft} /></div>
+        </Modal>
+      ) : null}
     </Modal>
   );
 }
@@ -558,37 +589,47 @@ function QrDialog({ form, onClose, onNotice }: { form: ManagedForm; onClose: () 
   };
   return (
     <Modal onClose={onClose} label={`QR Code de ${form.title}`}>
-      <div className="flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5">
-        <div><p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Acesso permanente</p><h2 className="mt-1 text-xl font-semibold text-slate-900">QR Code do formulário</h2></div>
-        <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-slate-100" aria-label="Fechar"><FaTimes /></button>
+      <div className="flex items-center justify-between gap-3 rounded-t-3xl border-b border-slate-200 bg-white px-4 py-2 sm:px-6">
+        <h2 className="text-lg font-semibold text-slate-900">Compartilhar formulário</h2>
+        <button type="button" onClick={onClose} className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-slate-100`} aria-label="Fechar">
+          <FaTimes aria-hidden="true" />
+        </button>
       </div>
-      <div className="grid gap-6 p-6 md:grid-cols-[260px_1fr]">
-        <div className="relative flex aspect-square items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="grid items-center gap-4 p-4 sm:grid-cols-[12rem_minmax(0,1fr)] sm:p-6">
+        <div className="relative mx-auto flex aspect-square w-full max-w-48 items-center justify-center rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           {qrState === 'loading' ? <div className="absolute inset-4 animate-pulse rounded-xl bg-slate-100" role="status" aria-label="Carregando QR Code" /> : null}
-          {qrState === 'error' ? <div className="absolute inset-4 flex flex-col items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-4 text-center text-sm text-rose-700"><FaQrcode className="mb-2 h-7 w-7" /><span>Não foi possível gerar o QR. Confira as URLs configuradas no frontend e no backend.</span></div> : null}
+          {qrState === 'error' ? (
+            <div className="absolute inset-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-center text-xs text-rose-700" role="alert">
+              <FaQrcode className="h-5 w-5" aria-hidden="true" />
+              Não foi possível carregar o QR Code. Compartilhe pelo link abaixo.
+            </div>
+          ) : null}
           <img
             src={getQrCodeUrl(form.publicId)}
             alt={`QR Code para ${form.title}`}
             onLoad={() => setQrState('ready')}
             onError={() => setQrState('error')}
-            className={`aspect-square w-full rounded-xl transition-opacity ${qrState === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+            className={`aspect-square w-full rounded-xl bg-[#fff] p-1 object-contain transition-opacity ${qrState === 'ready' ? 'opacity-100' : 'opacity-0'}`}
           />
         </div>
-        <div className="flex flex-col justify-center">
-          <StatusBadge status={form.status} />
-          <h3 className="mt-3 text-xl font-semibold text-slate-900">{form.title}</h3>
-          <p className="mt-2 text-sm leading-6 text-slate-500">Este QR usa um identificador imutável. Você pode editar, pausar e reabrir o formulário sem precisar imprimir outro código.</p>
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 pl-3">
-            <FaLink className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-            <input ref={publicUrlInputRef} readOnly value={publicUrl} className="min-w-0 flex-1 bg-transparent text-xs text-slate-600 outline-none" aria-label="Link público" />
-            <button type="button" onClick={copyLink} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200">Copiar</button>
+        <div className="min-w-0 space-y-3">
+          <div>
+            <h3 className="mb-1.5 break-words text-lg font-semibold text-slate-900">{form.title}</h3>
+            <StatusBadge status={form.status} />
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <a href={getQrCodeUrl(form.publicId, true)} className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"><FaDownload className="h-3.5 w-3.5" /> Baixar PNG</a>
-            <a href={getQrCodeUrl(form.publicId, true, 'svg')} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"><FaDownload className="h-3.5 w-3.5" /> Baixar SVG</a>
-            <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"><FaExternalLinkAlt className="h-3.5 w-3.5" /> Abrir formulário</a>
+          <div className="flex items-center gap-2">
+            <input ref={publicUrlInputRef} readOnly value={publicUrl} className={`${CONTROL_CLASS} min-w-0 flex-1`} aria-label="Link público" />
+            <button type="button" onClick={copyLink} className={`${LIST_ACTION_CLASS} shrink-0 border-transparent bg-emerald-600 text-white hover:bg-emerald-700`}>
+              <FaLink className="h-3.5 w-3.5" aria-hidden="true" /> Copiar link
+            </button>
           </div>
-          {form.status !== 'published' ? <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">O QR já pode ser impresso, mas o formulário só aceitará respostas quando estiver publicado.</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <a href={getQrCodeUrl(form.publicId, true)} className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}><FaDownload className="h-3.5 w-3.5" aria-hidden="true" /> Baixar PNG</a>
+            <a href={getQrCodeUrl(form.publicId, true, 'svg')} className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}><FaDownload className="h-3.5 w-3.5" aria-hidden="true" /> Baixar SVG</a>
+            <a href={publicUrl} target="_blank" rel="noreferrer" className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}><FaExternalLinkAlt className="h-3.5 w-3.5" aria-hidden="true" /> Abrir formulário</a>
+          </div>
+          <p className="text-xs leading-5 text-slate-500">O QR Code e o link continuam os mesmos após a edição.</p>
+          {form.status !== 'published' ? <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">Publique o formulário para começar a receber respostas.</p> : null}
         </div>
       </div>
     </Modal>
@@ -815,76 +856,109 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
     if (!deletingResponseId) setSelected(null);
   };
 
+  const hasSearch = Boolean(search.trim());
+
   return (
     <Modal onClose={onClose} label={`Respostas de ${form.title}`} wide>
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur sm:px-7">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div><p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700">Respostas coletadas</p><h2 className="mt-1 text-xl font-semibold text-slate-900">{form.title}</h2><p className="mt-1 text-sm text-slate-500">{responses.length.toLocaleString('pt-BR')} {responses.length === 1 ? 'resposta carregada' : 'respostas carregadas'}{nextCursor ? ' · há mais disponíveis' : ''}</p></div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => exporting ? cancelExport() : void exportAllResponses()} disabled={!exporting && (loading || loadingMore || (responses.length === 0 && form.responseCount === 0))} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40" aria-busy={exporting} title={exporting ? 'Cancelar a exportação sem gerar arquivo parcial' : 'Exportar todas as páginas a partir do início desta operação'}>{exporting ? <FaTimes /> : <FaFileCsv />} {exporting ? 'Cancelar exportação' : 'Exportar todas em CSV'}</button>
-            <button type="button" onClick={() => void loadFirstPage()} disabled={loading || loadingMore || exporting} className="rounded-full border border-slate-200 p-2.5 text-slate-500 hover:bg-slate-50 disabled:opacity-40" aria-label="Atualizar respostas"><FaSyncAlt className={loading ? 'animate-spin' : ''} /></button>
-            <button type="button" onClick={onClose} className="rounded-full p-2.5 text-slate-400 hover:bg-slate-100" aria-label="Fechar"><FaTimes /></button>
-          </div>
-        </div>
-        {exporting ? <p className="mt-3 text-xs font-medium text-emerald-700" role="status" aria-live="polite">Páginas lidas: {exportProgress.pages.toLocaleString('pt-BR')} · {exportProgress.responses.toLocaleString('pt-BR')} respostas únicas reunidas</p> : null}
-        <div className="mt-4 max-w-lg">
-          <div className="relative">
-            <FaSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} className={`${CONTROL_CLASS} pl-9`} placeholder="Buscar nas respostas carregadas" aria-label="Buscar nas respostas carregadas" aria-describedby="loaded-responses-search-hint" />
-          </div>
-          <p id="loaded-responses-search-hint" className="mt-1.5 text-xs text-slate-500">A busca considera somente as {responses.length.toLocaleString('pt-BR')} respostas já carregadas.{nextCursor ? ' Carregue mais para ampliar os resultados.' : ''}</p>
-        </div>
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-t-3xl border-b border-slate-200 bg-white px-4 py-2 sm:px-6">
+        <h2 className="min-w-0 text-lg font-semibold text-slate-900">Respostas</h2>
+        <button type="button" onClick={onClose} className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-slate-100`} aria-label="Fechar respostas">
+          <FaTimes aria-hidden="true" />
+        </button>
       </div>
-      <div className="p-5 sm:p-7">
+      <div className="space-y-4 p-4 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 basis-44">
+            <h3 className="break-words text-base font-semibold text-slate-900">{form.title}</h3>
+            {!loading && !loadError ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {responses.length.toLocaleString('pt-BR')} {responses.length === 1 ? 'resposta' : 'respostas'}{nextCursor ? ' carregadas' : ''}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => exporting ? cancelExport() : void exportAllResponses()}
+              disabled={!exporting && (loading || loadingMore || (responses.length === 0 && form.responseCount === 0))}
+              className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}
+              aria-busy={exporting}
+            >
+              {exporting ? <FaTimes aria-hidden="true" /> : <FaFileCsv aria-hidden="true" />}
+              {exporting ? 'Cancelar exportação' : 'Exportar CSV'}
+            </button>
+            <button type="button" onClick={() => void loadFirstPage()} disabled={loading || loadingMore || exporting} className={`${LIST_ICON_ACTION_CLASS} border border-slate-200 text-slate-500 hover:bg-slate-50`} aria-label="Atualizar respostas" title="Atualizar respostas">
+              <FaSyncAlt className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        {exporting ? <p className="text-xs font-medium text-emerald-700" role="status">{exportProgress.responses.toLocaleString('pt-BR')} respostas reunidas em {exportProgress.pages.toLocaleString('pt-BR')} páginas</p> : null}
+        {responses.length > 0 ? (
+          <div className="max-w-lg">
+            <div className="relative">
+              <FaSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} className={`${CONTROL_CLASS} pl-9`} placeholder="Buscar nas respostas" aria-label="Buscar nas respostas" aria-describedby={nextCursor ? 'loaded-responses-search-hint' : undefined} />
+            </div>
+            {nextCursor ? <p id="loaded-responses-search-hint" className="mt-1.5 text-xs text-slate-500">Carregue mais respostas para ampliar a busca.</p> : null}
+          </div>
+        ) : null}
         {loading ? (
-          <div className="flex min-h-[280px] items-center justify-center text-sm text-slate-500"><FaSyncAlt className="mr-2 animate-spin" /> Carregando respostas...</div>
+          <div className="flex min-h-40 items-center justify-center text-sm text-slate-500" role="status"><FaSyncAlt className="mr-2 animate-spin" aria-hidden="true" /> Carregando respostas...</div>
         ) : loadError && responses.length === 0 ? (
-          <div className="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 text-center" role="alert"><FaInbox className="h-8 w-8 text-rose-300" /><h3 className="mt-3 font-semibold text-rose-800">Não foi possível carregar as respostas</h3><p className="mt-1 max-w-md text-sm text-rose-700">{loadError}</p><button type="button" onClick={() => void loadFirstPage()} className="mt-4 rounded-full bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800">Tentar novamente</button></div>
+          <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 p-4 text-center" role="alert"><FaInbox className="h-6 w-6 text-rose-300" aria-hidden="true" /><h3 className="mt-3 font-semibold text-rose-800">Não foi possível carregar as respostas</h3><p className="mt-1 max-w-md text-sm text-rose-700">{loadError}</p><button type="button" onClick={() => void loadFirstPage()} className={`${LIST_ACTION_CLASS} mt-3 border-transparent bg-rose-700 text-white hover:bg-rose-800`}>Tentar novamente</button></div>
         ) : filtered.length === 0 ? (
-          <div className="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-5 text-center"><FaInbox className="h-8 w-8 text-slate-300" /><h3 className="mt-3 font-semibold text-slate-700">{search ? 'Nenhuma resposta encontrada' : 'Ainda não há respostas'}</h3><p className="mt-1 max-w-sm text-sm text-slate-500">{search ? `Tente outro termo${nextCursor ? ' ou carregue mais respostas' : ''}.` : 'Compartilhe o QR Code ou o link público para começar a coleta.'}</p></div>
+          <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-4 text-center">
+            <FaInbox className="h-6 w-6 text-slate-500" aria-hidden="true" />
+            <h3 className="mt-3 font-semibold text-slate-900">{hasSearch ? 'Nenhuma resposta encontrada' : 'Ainda não há respostas'}</h3>
+            {hasSearch ? (
+              <button type="button" onClick={() => setSearch('')} className={`${LIST_ACTION_CLASS} mt-3 border-slate-200 text-slate-700 hover:bg-slate-50`}>Limpar busca</button>
+            ) : (
+              <p className="mt-1 max-w-sm text-sm text-slate-500">Compartilhe o QR Code ou o link público para começar a coleta.</p>
+            )}
+          </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th scope="col" className="px-4 py-3">Enviada em</th>
-                    <th scope="col" className="px-4 py-3">Versão</th>
-                    <th scope="col" className="px-4 py-3">Respostas registradas na época</th>
-                    <th scope="col" className="px-4 py-3 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.map((response) => {
-                    const historicalAnswers = getResponseHistoricalAnswers(response, form);
-                    return (
-                      <tr key={response.id} className="hover:bg-slate-50/80">
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-500">{formatFormDate(response.submittedAt)}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-xs font-semibold text-slate-500">
-                          {response.schemaVersion ? `v${response.schemaVersion}` : 'Legada'}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="space-y-1.5">
-                            {historicalAnswers.slice(0, 3).map((answer, index) => (
-                              <p key={`${answer.fieldId}-${index}`} className="max-w-xl truncate text-xs text-slate-600">
-                                <span className="font-semibold text-slate-700">{answer.label}:</span>{' '}
-                                {renderAnswer(answer.value)}
-                              </p>
-                            ))}
-                            {historicalAnswers.length > 3 ? (
-                              <p className="text-[11px] font-semibold text-slate-400">+ {historicalAnswers.length - 3} resposta(s)</p>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button type="button" onClick={() => setSelected(response)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"><FaEye className="h-3 w-3" /> Ver detalhes</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <table className="admin-forms-response-table w-full table-fixed text-sm" role="table" aria-label="Respostas do formulário">
+              <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500" role="rowgroup">
+                <tr role="row">
+                  <th scope="col" role="columnheader" className="w-36">Enviada em</th>
+                  <th scope="col" role="columnheader" className="w-20">Versão</th>
+                  <th scope="col" role="columnheader">Respostas</th>
+                  <th scope="col" role="columnheader" className="w-36 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody role="rowgroup">
+                {filtered.map((response) => {
+                  const historicalAnswers = getResponseHistoricalAnswers(response, form);
+                  return (
+                    <tr key={response.id} role="row">
+                      <td role="cell" className="admin-forms-response-table__date text-xs font-medium text-slate-700">
+                        <span className="md:hidden" aria-hidden="true">Enviada em </span>{formatFormDate(response.submittedAt)}
+                      </td>
+                      <td role="cell" className="admin-forms-response-table__version text-xs font-medium text-slate-500">
+                        {response.schemaVersion ? `v${response.schemaVersion}` : 'Legada'}
+                      </td>
+                      <td role="cell" className="admin-forms-response-table__summary min-w-0">
+                        <div className="space-y-1.5 text-xs text-slate-600">
+                          {historicalAnswers.slice(0, 3).map((answer, index) => (
+                            <p key={`${answer.fieldId}-${index}`} className="truncate">
+                              <span className="font-semibold text-slate-700">{answer.label}:</span>{' '}
+                              {renderAnswer(answer.value)}
+                            </p>
+                          ))}
+                          {historicalAnswers.length > 3 ? <p className="text-slate-500">Mais {historicalAnswers.length - 3} no detalhe</p> : null}
+                        </div>
+                      </td>
+                      <td role="cell" className="admin-forms-response-table__action">
+                        <button type="button" onClick={() => setSelected(response)} className={`${LIST_ACTION_CLASS} whitespace-nowrap border-slate-200 text-slate-700 hover:bg-slate-50`}>
+                          <FaEye className="h-3.5 w-3.5" aria-hidden="true" /> Ver detalhes
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
         {!loading && loadError && responses.length > 0 ? <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">{loadError} Os dados exibidos são da última carga concluída.</p> : null}
@@ -893,8 +967,6 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
             <button type="button" onClick={() => void loadMore()} disabled={loadingMore || exporting} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" aria-busy={loadingMore}>{loadingMore ? <FaSyncAlt className="animate-spin" /> : <FaArrowDown />} {loadingMore ? 'Carregando mais...' : 'Carregar mais'}</button>
             {loadMoreError ? <p className="max-w-lg text-center text-xs text-rose-700" role="alert">{loadMoreError}</p> : null}
           </div>
-        ) : !loading && responses.length > 0 && !loadError && !loadMoreError ? (
-          <p className="mt-5 text-center text-xs text-slate-400">Todas as respostas disponíveis foram carregadas.</p>
         ) : null}
         {!loading && !nextCursor && loadMoreError ? <p className="mt-4 text-center text-xs text-rose-700" role="alert">{loadMoreError}</p> : null}
       </div>
@@ -902,9 +974,29 @@ function ResponsesDialog({ form, onClose, onNotice, onCountChanged }: { form: Ma
       {selected ? (
         <Modal onClose={closeSelectedResponse} label="Detalhes da resposta" nested>
           <div className="max-h-[85vh] overflow-y-auto rounded-3xl bg-white">
-            <div className="sticky top-0 flex items-start justify-between border-b border-slate-100 bg-white px-5 py-4"><div><h3 className="font-semibold text-slate-900">Resposta completa</h3><p className="mt-1 text-xs text-slate-500">Enviada em {formatFormDate(selected.submittedAt)} · {selected.schemaVersion ? `versão ${selected.schemaVersion}` : 'versão legada'}</p></div><button type="button" onClick={closeSelectedResponse} disabled={deletingResponseId !== null} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-40" aria-label="Fechar detalhes da resposta"><FaTimes /></button></div>
-            <div className="space-y-4 p-5">{getResponseHistoricalAnswers(selected, form).map((answer, index) => <div key={`${answer.fieldId}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{answer.label}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{renderAnswer(answer.value)}</p></div>)}</div>
-            <div className="flex justify-between border-t border-slate-100 px-5 py-4"><button type="button" onClick={() => void removeResponse(selected)} disabled={deletingResponseId !== null} aria-busy={deletingResponseId === selected.id} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-wait disabled:opacity-50">{deletingResponseId === selected.id ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" /> : <FaTrash className="h-3.5 w-3.5" />} {deletingResponseId === selected.id ? 'Excluindo...' : 'Excluir resposta'}</button><button type="button" onClick={closeSelectedResponse} disabled={deletingResponseId !== null} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-50">Fechar</button></div>
+            <div className="sticky top-0 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2 sm:px-6">
+              <div>
+                <h2 className="font-semibold text-slate-900">Resposta completa</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Enviada em {formatFormDate(selected.submittedAt)} · {selected.schemaVersion ? `versão ${selected.schemaVersion}` : 'versão legada'}</p>
+              </div>
+              <button type="button" onClick={closeSelectedResponse} disabled={deletingResponseId !== null} className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-slate-100`} aria-label="Fechar detalhes da resposta">
+                <FaTimes aria-hidden="true" />
+              </button>
+            </div>
+            <dl className="space-y-2 p-4 sm:p-6">
+              {getResponseHistoricalAnswers(selected, form).map((answer, index) => (
+                <div key={`${answer.fieldId}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <dt className="break-words text-xs font-semibold text-slate-500">{answer.label}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{renderAnswer(answer.value)}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="flex justify-end border-t border-slate-200 px-4 py-3 sm:px-6">
+              <button type="button" onClick={() => void removeResponse(selected)} disabled={deletingResponseId !== null} aria-busy={deletingResponseId === selected.id} className={`${LIST_ACTION_CLASS} border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`}>
+                {deletingResponseId === selected.id ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <FaTrash className="h-3.5 w-3.5" aria-hidden="true" />}
+                {deletingResponseId === selected.id ? 'Excluindo...' : 'Excluir resposta'}
+              </button>
+            </div>
           </div>
         </Modal>
       ) : null}
@@ -947,16 +1039,22 @@ export function AdminForms() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const metrics = useMemo(() => ({
-    total: forms.length,
-    published: forms.filter((form) => form.status === 'published').length,
-    responses: forms.reduce((total, form) => total + form.responseCount, 0),
-    closed: forms.filter((form) => form.status === 'closed').length,
-  }), [forms]);
+  const metrics = useMemo(() => [
+    { label: 'Formulários', value: forms.length },
+    { label: 'Ativos', value: forms.filter((form) => form.status === 'published').length },
+    { label: 'Pausados', value: forms.filter((form) => form.status === 'closed').length },
+    { label: 'Respostas', value: forms.reduce((total, form) => total + form.responseCount, 0) },
+  ], [forms]);
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
     return forms.filter((form) => (statusFilter === 'all' || form.status === statusFilter) && (!term || `${form.title} ${form.description}`.toLocaleLowerCase('pt-BR').includes(term)));
   }, [forms, search, statusFilter]);
+  const filtersActive = Boolean(search.trim()) || statusFilter !== 'all';
+
+  const clearFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+  };
 
   const persist = async (draft: FormDraft, status: FormStatus) => {
     setSaving(true);
@@ -1046,38 +1144,68 @@ export function AdminForms() {
   };
 
   return (
-    <section className="admin-tab-content space-y-6">
+    <section className="admin-forms admin-tab-content space-y-5">
       {notice ? <div role={notice.type === 'error' ? 'alert' : 'status'} aria-live="polite" className={`fixed right-5 top-5 z-[100] max-w-[calc(100vw-2.5rem)] rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-lg ${notice.type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>{notice.message}</div> : null}
 
-      <div className="admin-tab-hero-card">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="admin-tab-hero__icon"><FaClipboardList className="h-6 w-6" /></div>
-              <div><h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">Formulários</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 sm:text-[15px]">Crie formulários personalizados, compartilhe um QR Code permanente e acompanhe todas as respostas em um só lugar.</p></div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => void load()} disabled={loading} className="admin-tab-action admin-tab-action--secondary"><FaSyncAlt className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /><span>Atualizar</span></button>
-              <button type="button" onClick={() => setEditor(createEmptyForm())} className="admin-tab-action admin-tab-action--primary"><FaPlus className="h-4 w-4" /><span>Novo formulário</span></button>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              { label: 'Formulários', value: metrics.total, hint: 'Total criado', icon: FaClipboardList, tone: 'bg-slate-500/15 text-slate-600' },
-              { label: 'Ativos', value: metrics.published, hint: 'Recebendo respostas', icon: FaPlay, tone: 'bg-emerald-500/15 text-emerald-600' },
-              { label: 'Respostas', value: metrics.responses, hint: 'Coletadas no total', icon: FaClipboardCheck, tone: 'bg-sky-500/15 text-sky-600' },
-              { label: 'Pausados', value: metrics.closed, hint: 'QR preservado', icon: FaPause, tone: 'bg-amber-500/15 text-amber-600' },
-            ].map(({ label, value, hint, icon: Icon, tone }) => <div key={label} className="admin-tab-stat-card"><div className="admin-tab-stat-card__body flex items-start justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{label}</p><p className="mt-3 text-2xl font-semibold text-slate-900">{value.toLocaleString('pt-BR')}</p><p className="mt-1 text-xs text-slate-500">{hint}</p></div><span className={`admin-tab-stat-card__icon ${tone}`}><Icon className="h-4 w-4" /></span></div></div>)}
-          </div>
-        </div>
-      </div>
+      <AdminSectionHeading
+        title="Formulários"
+        description="Compartilhe formulários por QR Code e acompanhe as respostas."
+        icon={FaClipboardList}
+        actions={
+          <button type="button" onClick={() => setEditor(createEmptyForm())} className="admin-tab-action admin-tab-action--primary">
+            <FaPlus className="h-4 w-4" aria-hidden="true" /> Novo formulário
+          </button>
+        }
+      />
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center">
-          <div className="relative flex-1"><FaSearch className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} className={`${CONTROL_CLASS} pl-10`} placeholder="Buscar por título ou descrição" aria-label="Buscar formulários por título ou descrição" /></div>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | FormStatus)} className={`${CONTROL_CLASS} md:w-56`} aria-label="Filtrar formulários por status"><option value="all">Todos os status</option><option value="published">Recebendo respostas</option><option value="draft">Rascunhos</option><option value="closed">Pausados</option></select>
+      {forms.length > 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <dl className="admin-forms-metrics" aria-label="Resumo de formulários">
+            {metrics.map(({ label, value }) => (
+              <div key={label} className="admin-forms-metrics__item">
+                <dt className="text-xs font-medium text-slate-500">{label}</dt>
+                <dd className="text-xl font-semibold tabular-nums text-slate-900">{value.toLocaleString('pt-BR')}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <div className="admin-forms-toolbar" role="search" aria-label="Buscar formulários">
+            <div className="admin-forms-toolbar__search relative">
+              <FaSearch className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className={`${CONTROL_CLASS} pl-10`}
+                placeholder="Buscar por título ou descrição"
+                aria-label="Título ou descrição do formulário"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as 'all' | FormStatus)}
+              className={CONTROL_CLASS}
+              aria-label="Filtrar formulários por status"
+            >
+              <option value="all">Todos os status</option>
+              <option value="published">Recebendo respostas</option>
+              <option value="draft">Rascunhos</option>
+              <option value="closed">Pausados</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              className="admin-tab-action admin-tab-action--secondary"
+              aria-label="Atualizar formulários"
+              title="Atualizar formulários"
+            >
+              <FaSyncAlt className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="admin-forms-toolbar__refresh-label">Atualizar</span>
+            </button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {listError && forms.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between" role="alert">
@@ -1089,27 +1217,125 @@ export function AdminForms() {
       ) : null}
 
       {loading && forms.length === 0 ? (
-        <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-sm text-slate-500"><FaSyncAlt className="mr-2 animate-spin" /> Carregando formulários...</div>
+        <div className="flex min-h-48 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-500" role="status">
+          <FaSyncAlt className="mr-2 animate-spin" aria-hidden="true" /> Carregando formulários...
+        </div>
       ) : listError && forms.length === 0 ? (
-        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 text-center" role="alert"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-100 text-rose-600"><FaExclamationTriangle className="h-6 w-6" /></span><h3 className="mt-4 text-lg font-semibold text-rose-900">Não foi possível carregar os formulários</h3><p className="mt-2 max-w-md text-sm leading-6 text-rose-700">{listError}</p><button type="button" onClick={() => void load()} disabled={loading} className="mt-5 inline-flex items-center gap-2 rounded-full bg-rose-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:cursor-wait disabled:opacity-50"><FaSyncAlt className={loading ? 'animate-spin' : ''} /> {loading ? 'Tentando...' : 'Tentar novamente'}</button></div>
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-center" role="alert">
+          <FaExclamationTriangle className="h-5 w-5 text-rose-600" aria-hidden="true" />
+          <h3 className="text-lg font-semibold text-rose-900">Não foi possível carregar os formulários</h3>
+          <p className="max-w-md text-sm leading-6 text-rose-700">{listError}</p>
+          <button type="button" onClick={() => void load()} className="admin-tab-action admin-tab-action--secondary">
+            <FaSyncAlt className="h-4 w-4" aria-hidden="true" /> Tentar novamente
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="flex min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-5 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><FaClipboardList className="h-6 w-6" /></span><h3 className="mt-4 text-lg font-semibold text-slate-800">{forms.length === 0 ? 'Crie seu primeiro formulário' : 'Nenhum formulário encontrado'}</h3><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">{forms.length === 0 ? 'Monte as perguntas, publique e compartilhe o QR Code com seus clientes.' : 'Ajuste os filtros ou tente outro termo de busca.'}</p>{forms.length === 0 ? <button type="button" onClick={() => setEditor(createEmptyForm())} className="mt-5 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"><FaPlus /> Novo formulário</button> : null}</div>
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-center">
+          <FaClipboardList className="h-5 w-5 text-emerald-600" aria-hidden="true" />
+          <h3 className="text-lg font-semibold text-slate-900">
+            {forms.length === 0 ? 'Nenhum formulário cadastrado' : 'Nenhum formulário encontrado'}
+          </h3>
+          {filtersActive ? (
+            <button type="button" onClick={clearFilters} className="admin-tab-action admin-tab-action--secondary">
+              Limpar filtros
+            </button>
+          ) : (
+            <button type="button" onClick={() => void load()} className="admin-tab-action admin-tab-action--secondary">
+              <FaSyncAlt className="h-4 w-4" aria-hidden="true" /> Atualizar
+            </button>
+          )}
+        </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           {filtered.map((form) => (
-            <article key={form.id} className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><StatusBadge status={form.status} /><span className="text-[11px] font-medium text-slate-400">Atualizado {formatFormDate(form.updatedAt)}</span></div><h3 className="mt-3 truncate text-lg font-semibold text-slate-900">{form.title}</h3><p className="mt-1 line-clamp-2 min-h-[40px] text-sm leading-5 text-slate-500">{form.description || 'Sem descrição.'}</p></div>
-                <button type="button" onClick={() => setQrForm(form)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100" aria-label="Abrir QR Code"><FaQrcode className="h-5 w-5" /></button>
+            <article key={form.id} className="flex min-w-0 flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="break-words text-lg font-semibold text-slate-900">{form.title}</h3>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                    <StatusBadge status={form.status} />
+                    <span className="text-xs text-slate-500">Atualizado {formatFormDate(form.updatedAt)}</span>
+                  </div>
+                  {form.description ? <p className="mt-2 line-clamp-2 break-words text-sm leading-5 text-slate-500">{form.description}</p> : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQrForm(form)}
+                  className={`${LIST_ICON_ACTION_CLASS} border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+                  aria-label={`Abrir QR Code de ${form.title}`}
+                  title="Abrir QR Code"
+                >
+                  <FaQrcode className="h-5 w-5" aria-hidden="true" />
+                </button>
               </div>
-              <div className="mt-5 grid grid-cols-3 divide-x divide-slate-100 rounded-xl border border-slate-100 bg-slate-50 py-3 text-center"><div><p className="text-lg font-semibold text-slate-800">{form.fields.length}</p><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Perguntas</p></div><div><p className="text-lg font-semibold text-slate-800">{form.responseCount}</p><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Respostas</p></div><div><p className="truncate px-1 text-sm font-semibold text-slate-700">{form.lastResponseAt ? formatFormDate(form.lastResponseAt).split(' ')[0] : '—'}</p><p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Última</p></div></div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => setEditor({ ...form, fields: form.fields.map((field) => ({ ...field, options: field.options ? [...field.options] : undefined })) })} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800"><FaEdit className="h-3.5 w-3.5" /> Editar</button>
-                <button type="button" onClick={() => setResponsesForm(form)} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"><FaInbox className="h-3.5 w-3.5" /> Respostas</button>
-                <button type="button" onClick={() => void changeStatus(form, form.status === 'published' ? 'closed' : 'published')} disabled={busyAction !== null} className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-semibold disabled:cursor-wait disabled:opacity-50 ${form.status === 'published' ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>{busyAction === `status:${form.id}` ? <FaSyncAlt className="animate-spin" /> : form.status === 'published' ? <FaPause /> : <FaPlay />} {form.status === 'published' ? 'Pausar' : 'Publicar'}</button>
-                <button type="button" onClick={() => void duplicate(form)} disabled={busyAction !== null} className="ml-auto rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-wait disabled:opacity-40" aria-label="Duplicar formulário" title="Duplicar">{busyAction === `duplicate:${form.id}` ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" /> : <FaClone className="h-3.5 w-3.5" />}</button>
-                <button type="button" onClick={() => void remove(form)} disabled={busyAction !== null} className="rounded-full p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-wait disabled:opacity-40" aria-label="Excluir formulário" title="Excluir">{busyAction === `delete:${form.id}` ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" /> : <FaTrash className="h-3.5 w-3.5" />}</button>
-              </div>
+
+              <dl className="mt-auto flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
+                <div className="flex items-baseline gap-1.5">
+                  <dt>Perguntas</dt> <dd className="font-semibold tabular-nums text-slate-800">{form.fields.length}</dd>
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <dt>Respostas</dt> <dd className="font-semibold tabular-nums text-slate-800">{form.responseCount}</dd>
+                </div>
+                {form.lastResponseAt ? (
+                  <div className="flex flex-wrap items-baseline gap-x-1.5">
+                    <dt>Última resposta</dt>
+                    <dd className="font-semibold tabular-nums text-slate-800">{formatFormDate(form.lastResponseAt)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+
+              <footer className="admin-forms-card__actions">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setEditor({
+                      ...form,
+                      fields: form.fields.map((field) => ({ ...field, options: field.options ? [...field.options] : undefined })),
+                    })}
+                    className={`${LIST_ACTION_CLASS} border-transparent bg-slate-900 text-white hover:bg-slate-800`}
+                  >
+                    <FaEdit className="h-3.5 w-3.5" aria-hidden="true" /> Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResponsesForm(form)}
+                    className={`${LIST_ACTION_CLASS} border-slate-200 text-slate-700 hover:bg-slate-50`}
+                  >
+                    <FaInbox className="h-3.5 w-3.5" aria-hidden="true" /> Respostas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void changeStatus(form, form.status === 'published' ? 'closed' : 'published')}
+                    disabled={busyAction !== null}
+                    className={`${LIST_ACTION_CLASS} ${form.status === 'published' ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                  >
+                    {busyAction === `status:${form.id}` ? <FaSyncAlt className="animate-spin" aria-hidden="true" /> : form.status === 'published' ? <FaPause aria-hidden="true" /> : <FaPlay aria-hidden="true" />}
+                    {form.status === 'published' ? 'Pausar' : 'Publicar'}
+                  </button>
+                </div>
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void duplicate(form)}
+                    disabled={busyAction !== null}
+                    className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-slate-100 hover:text-slate-700`}
+                    aria-label={`Duplicar ${form.title}`}
+                    title="Duplicar"
+                  >
+                    {busyAction === `duplicate:${form.id}` ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <FaClone className="h-3.5 w-3.5" aria-hidden="true" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove(form)}
+                    disabled={busyAction !== null}
+                    className={`${LIST_ICON_ACTION_CLASS} text-slate-500 hover:bg-rose-50 hover:text-rose-600`}
+                    aria-label={`Excluir ${form.title}`}
+                    title="Excluir"
+                  >
+                    {busyAction === `delete:${form.id}` ? <FaSyncAlt className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <FaTrash className="h-3.5 w-3.5" aria-hidden="true" />}
+                  </button>
+                </div>
+              </footer>
             </article>
           ))}
         </div>

@@ -35,6 +35,19 @@ test('aplica somente IDs de categorias existentes e idades coerentes com a quant
   assert.deepEqual(knownBookingParticipants({ crianca: 1 }, { crianca: [1, 2] }, [{ id: 'crianca', perguntarIdade: true }]).ages, {});
 });
 
+test('mantém idades infantis válidas do link mesmo sem a opção antiga de pedir idade', () => {
+  const types = [
+    { id: 'crianca', nome: 'Criança', perguntarIdade: false, idadeMinima: 6, idadeMaxima: 10 },
+    { id: 'crianca_isenta', nome: 'Criança isenta' },
+  ];
+  const result = knownBookingParticipants({ crianca: 2, crianca_isenta: 1 },
+    { crianca: [5, 10], crianca_isenta: [0] }, types);
+  assert.deepEqual(result, {
+    quantities: { crianca: 2, crianca_isenta: 1 },
+    ages: { crianca: ['', '10'], crianca_isenta: ['0'] },
+  });
+});
+
 test('horários exigem pacote selecionado e opção oficial; trilha livre não recebe hora inventada', () => {
   const packages = [{ id: 'brunch', horarios: ['09:00', '11:00'] }, { id: 'trilha', modoHorario: 'intervalo' }, { id: 'outro', horarios: ['09:00'] }];
   assert.deepEqual(knownBookingTimes({ brunch: '09:00', trilha: '09:00', outro: '09:00' }, packages, ['brunch', 'trilha']), { brunch: '09:00' });

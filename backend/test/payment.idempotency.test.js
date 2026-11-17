@@ -1,9 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const firebaseAdmin = require("../dist/services/firebaseAdmin");
 
 const {
   PaymentIdempotencyKeyError,
   calcularHashRequisicaoPagamento,
+  iniciarTentativaPagamento,
   normalizarChaveIdempotenciaPagamento,
 } = require("../dist/services/paymentIdempotency");
 
@@ -76,4 +78,30 @@ test("detecta alteracoes nos dados comerciais da tentativa", () => {
     calcularHashRequisicaoPagamento(base),
     calcularHashRequisicaoPagamento({ ...base, valor: 151 })
   );
+});
+
+test("validação nova permite retomar um pagamento anterior sem abrir tentativa nova", async (t) => {
+  const payload = { participantesPorTipo: { crianca: 1 } };
+  const key = "previous-payment-1234";
+  let existing = null;
+  t.mock.method(firebaseAdmin, "obterFirestoreAdmin", () => ({
+    collection: () => ({ doc: () => ({}) }),
+    runTransaction: (callback) => callback({
+      get: async () => ({ exists: existing !== null, data: () => existing }),
+      create: () => assert.fail("Nenhuma tentativa nova pode ser criada"),
+    }),
+  }));
+  assert.deepEqual(await iniciarTentativaPagamento(key, payload, false), { type: "missing" });
+
+  existing = {
+    requestHash: calcularHashRequisicaoPagamento(payload),
+    status: "completed",
+    httpStatus: 200,
+    responseBody: { resultado: "anterior" },
+  };
+  assert.deepEqual(await iniciarTentativaPagamento(key, payload, false), {
+    type: "replay",
+    response: { httpStatus: 200, body: { resultado: "anterior" } },
+  });
+  assert.deepEqual(await iniciarTentativaPagamento(key, { ...payload, outro: true }, false), { type: "conflict" });
 });
