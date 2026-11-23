@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   nomeTipoParticipante, resumirParticipantesReserva, nomesAtividadesReserva, rotuloAtividadeReserva,
-  rotuloParticipanteComIdades,
+  rotuloParticipanteComIdades, contarParticipantesReserva,
 } from '../src/utils/reservaResumo.ts';
 
 const adultId = 'wo7n4CGFJYC6WO9Ez1wh';
@@ -52,6 +52,177 @@ test('reservas legadas incluem não pagantes e não alteram o objeto salvo', () 
     { label: 'Criança', inicial: 'C', quantidade: 1 }, { label: 'Não pagante', inicial: 'N', quantidade: 1 },
   ]);
   assert.deepEqual(reserva, original);
+});
+
+test('mantém A, I, C e N na composição da reserva e preserva a idade zero dos não pagantes', () => {
+  const catalog = [
+    { id: 'adulto', nome: 'Adulto' },
+    { id: 'idoso', nome: 'Idoso' },
+    { id: 'crianca', nome: 'Criança' },
+    { id: 'nao_pagante', nome: 'Não pagante' },
+  ];
+  const reserva = {
+    participantesPorTipo: { adulto: 2, idoso: 1, crianca: 1, nao_pagante: 2 },
+    idadesPorTipo: { crianca: [8], nao_pagante: [0, 4] },
+  };
+  const summary = resumirParticipantesReserva(reserva, catalog);
+  assert.deepEqual(summary.map(({ inicial, quantidade }) => [inicial, quantidade]), [
+    ['A', 2], ['C', 1], ['I', 1], ['N', 2],
+  ]);
+  assert.equal(
+    rotuloParticipanteComIdades(reserva, summary.find(({ inicial }) => inicial === 'N'), catalog),
+    '2 não pagantes · Idades: 0 e 4 anos',
+  );
+});
+
+test('identifica categorias explicitamente isentas com N sem confundir Idoso nem alterar os nomes cadastrados', () => {
+  const catalog = [
+    { id: 'idoso', nome: 'Idoso' },
+    { id: 'crianca', nome: 'Criança' },
+    { id: 'isento', nome: 'Isento' },
+    { id: 'crianca_isenta', nome: 'Criança isenta' },
+  ];
+  assert.deepEqual(counts({ participantesPorTipo: { idoso: 1, crianca: 1, isento: 1, crianca_isenta: 1 } }, catalog), [
+    { label: 'Criança', inicial: 'C', quantidade: 1 },
+    { label: 'Criança isenta', inicial: 'N', quantidade: 1 },
+    { label: 'Idoso', inicial: 'I', quantidade: 1 },
+    { label: 'Isento', inicial: 'N', quantidade: 1 },
+  ]);
+});
+
+test('o não pagante espelhado pelo checkout aparece uma vez no resumo e no total', () => {
+  const catalog = [
+    { id: 'a', nome: 'Adulto' },
+    { id: 'c', nome: 'Criança' },
+    { id: 'n', nome: 'Não pagante' },
+  ];
+  const reserva = { participantesPorTipo: { a: 2, c: 1, n: 1 }, participantes: 4, naoPagante: 1 };
+  for (const [adicional, total, naoPagantes] of [[false, 4, 1], [true, 5, 2]]) {
+    const opcoes = { naoPaganteLegadoAdicional: adicional };
+    const summary = resumirParticipantesReserva(reserva, catalog, opcoes);
+    assert.equal(contarParticipantesReserva(reserva, catalog, opcoes), total);
+    assert.equal(summary.reduce((sum, item) => sum + item.quantidade, 0), total);
+    assert.equal(summary.find(({ inicial }) => inicial === 'N').quantidade, naoPagantes);
+    assert.equal(summary.find(({ inicial }) => inicial === 'C').quantidade, 1);
+  }
+});
+
+test('catálogo completo mantém a categoria inativa no total, no badge N e nas idades históricas', () => {
+  const nonPayingId = 'nP8dKs4aX1bQe9rT6vWz';
+  const catalog = [
+    { id: 'a', nome: 'Adulto', ativo: true },
+    { id: nonPayingId, nome: 'Não pagante', ativo: false },
+  ];
+  const reserva = {
+    participantesPorTipo: { a: 2, [nonPayingId]: 1 }, naoPagante: 1,
+    idadesPorTipo: { [nonPayingId]: [0] },
+  };
+  const opcoes = { naoPaganteLegadoAdicional: false };
+  const summary = resumirParticipantesReserva(reserva, catalog, opcoes);
+  assert.equal(contarParticipantesReserva(reserva, catalog, opcoes), 3);
+  const nonPaying = summary.find(({ inicial }) => inicial === 'N');
+  assert.equal(nonPaying.quantidade, 1);
+  assert.equal(rotuloParticipanteComIdades(reserva, nonPaying, catalog, opcoes), '1 não pagante · Idade: 0 anos');
+});
+
+test('não pagantes fora do mapa continuam incluídos tanto no cadastro manual quanto no checkout', () => {
+  const reserva = { participantesPorTipo: { adulto: 2 }, naoPagante: 1 };
+  for (const adicional of [false, true]) {
+    const opcoes = { naoPaganteLegadoAdicional: adicional };
+    assert.equal(contarParticipantesReserva(reserva, [], opcoes), 3);
+    assert.equal(resumirParticipantesReserva(reserva, [], opcoes).find(({ inicial }) => inicial === 'N').quantidade, 1);
+  }
+});
+
+test('três não pagantes mantêm todas as idades e não absorvem a categoria Idoso', () => {
+  const catalog = [{ id: 'n', nome: 'Não pagante' }, { id: 'i', nome: 'Idoso' }];
+  const reserva = {
+    participantesPorTipo: { n: 3, i: 1 }, naoPagante: 3,
+    idadesPorTipo: { n: [0, 2, 4] },
+  };
+  const opcoes = { naoPaganteLegadoAdicional: false };
+  const summary = resumirParticipantesReserva(reserva, catalog, opcoes);
+  const nonPaying = summary.find(({ inicial }) => inicial === 'N');
+  assert.equal(contarParticipantesReserva(reserva, catalog, opcoes), 4);
+  assert.equal(nonPaying.quantidade, 3);
+  assert.equal(rotuloParticipanteComIdades(reserva, nonPaying, catalog), '3 não pagantes · Idades: 0, 2 e 4 anos');
+  assert.equal(summary.find(({ inicial }) => inicial === 'I').quantidade, 1);
+});
+
+test('o alias Bebê do writer online não duplica o legado e mantém o nome cadastrado', () => {
+  const catalog = [{ id: 'a', nome: 'Adulto' }, { id: 'b', nome: 'Bebê' }];
+  const reserva = { participantesPorTipo: { a: 2, b: 1 }, naoPagante: 1, idadesPorTipo: { b: [0] } };
+  const opcoes = { naoPaganteLegadoAdicional: false };
+  const summary = resumirParticipantesReserva(reserva, catalog, opcoes);
+  assert.equal(contarParticipantesReserva(reserva, catalog, opcoes), 3);
+  assert.equal(summary.find(({ key }) => key === 'b').label, 'Bebê');
+  assert.equal(rotuloParticipanteComIdades(reserva, summary.find(({ key }) => key === 'b'), catalog), '1 bebê · Idade: 0 anos');
+  assert.equal(summary.some(({ inicial }) => inicial === 'N'), false);
+});
+
+test('categoria desconhecida não é classificada como não pagante por quantidade ou total declarado', () => {
+  const unknownId = 'xYz9876543210AbCdEfGh';
+  const reserva = { participantesPorTipo: { [unknownId]: 3 }, participantes: 4 };
+  const opcoes = { naoPaganteLegadoAdicional: false };
+  assert.equal(contarParticipantesReserva(reserva, [], opcoes), 3);
+  assert.deepEqual(resumirParticipantesReserva(reserva, [], opcoes), [
+    { key: unknownId, label: 'Participante', inicial: 'P', quantidade: 3 },
+  ]);
+});
+
+test('idades adicionais manuais sob nao_pagante acompanham o N mesclado do catálogo sem repetir espelho online', () => {
+  const nonPayingId = 'nP8dKs4aX1bQe9rT6vWz';
+  const catalog = [{ id: nonPayingId, nome: 'Não pagante' }];
+  const reserva = {
+    participantesPorTipo: { [nonPayingId]: 1 }, naoPagante: 1,
+    idadesPorTipo: { [nonPayingId]: [3], nao_pagante: [0] },
+  };
+  for (const [adicional, esperado] of [
+    [true, '2 não pagantes · Idades: 3 e 0 anos'],
+    [false, '1 não pagante · Idade: 3 anos'],
+  ]) {
+    const opcoes = { naoPaganteLegadoAdicional: adicional };
+    const participante = resumirParticipantesReserva(reserva, catalog, opcoes)[0];
+    assert.equal(rotuloParticipanteComIdades(reserva, participante, catalog, opcoes), esperado);
+  }
+});
+
+test('catálogo com chave literal nao_pagante preserva idade zero e extra nao_pagante_legado', () => {
+  const catalog = [{ id: 'nao_pagante', nome: 'Não pagante' }];
+  const reserva = {
+    participantesPorTipo: { nao_pagante: 1 }, naoPagante: 1,
+    idadesPorTipo: { nao_pagante: [0], nao_pagante_legado: [2] },
+  };
+  const opcoes = { naoPaganteLegadoAdicional: true };
+  const participante = resumirParticipantesReserva(reserva, catalog, opcoes)[0];
+  assert.equal(rotuloParticipanteComIdades(reserva, participante, catalog, opcoes), '2 não pagantes · Idades: 0 e 2 anos');
+});
+
+test('idades manuais parciais indicam somente as faltantes e não repetem uma chave legada usada como principal', () => {
+  const catalog = [{ id: 'np', nome: 'Não pagante' }];
+  const opcoes = { naoPaganteLegadoAdicional: true };
+  const reserva = {
+    participantesPorTipo: { np: 2 }, naoPagante: 1,
+    idadesPorTipo: { np: [2, null], nao_pagante: [0] },
+  };
+  const participante = resumirParticipantesReserva(reserva, catalog, opcoes)[0];
+  assert.equal(rotuloParticipanteComIdades(reserva, participante, catalog, opcoes), '3 não pagantes · Idades: 2 e 0 anos · 1 sem idade informada');
+  assert.equal(
+    rotuloParticipanteComIdades({ ...reserva, idadesPorTipo: { nao_pagante: [0] } }, participante, catalog, opcoes),
+    '3 não pagantes · Idade: 0 anos · 2 sem idade informada',
+  );
+});
+
+test('idades de Isento e Não pagante permanecem separadas mesmo quando Isento usa chave nao_pagante', () => {
+  const catalog = [{ id: 'nao_pagante', nome: 'Isento' }, { id: 'n', nome: 'Não pagante' }];
+  const reserva = {
+    participantesPorTipo: { nao_pagante: 1, n: 1 }, naoPagante: 1,
+    idadesPorTipo: { nao_pagante: [4], n: [2], nao_pagante_legado: [0] },
+  };
+  const opcoes = { naoPaganteLegadoAdicional: true };
+  const summary = resumirParticipantesReserva(reserva, catalog, opcoes);
+  assert.equal(rotuloParticipanteComIdades(reserva, summary.find(({ label }) => label === 'Isento'), catalog, opcoes), '1 isento · Idade: 4 anos');
+  assert.equal(rotuloParticipanteComIdades(reserva, summary.find(({ label }) => label === 'Não pagante'), catalog, opcoes), '2 não pagantes · Idades: 2 e 0 anos');
 });
 
 const packages = [{ id: 'brunch', nome: 'Brunch' }, { id: 'trilha', nome: 'Trilha', iconeUrl: '' }];

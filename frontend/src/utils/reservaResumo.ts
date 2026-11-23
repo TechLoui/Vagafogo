@@ -1,6 +1,7 @@
 import { normalizarLimiteIdade, tipoEhInfantil } from './idadeParticipante.ts';
 
 export type TipoParticipanteResumo = { id?: string; nome: string };
+export type OpcoesParticipantesReserva = { naoPaganteLegadoAdicional?: boolean };
 export type ParticipanteReservaResumo = {
   key: string;
   label: string;
@@ -41,6 +42,7 @@ const quantidade = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;
 };
+const nomeNaoPagante = (nome: string) => /\b(?:nao pagantes?|isent[oa]s?)\b/.test(normalizar(nome));
 const identificadorOpaco = (value: string) => /^[A-Za-z0-9]{20}$/.test(value)
   || /^(?=.*\d)[A-Za-z0-9]{18,}$/.test(value)
   || /^[a-f\d]{8}-[a-f\d-]{27,}$/i.test(value)
@@ -76,6 +78,7 @@ export function nomeTipoParticipante(chave: string, tipos: readonly TipoParticip
 export function resumirParticipantesReserva(
   reserva: ReservaParaResumo,
   tipos: readonly TipoParticipanteResumo[] = [],
+  opcoes: OpcoesParticipantesReserva = {},
 ): ParticipanteReservaResumo[] {
   const entries = Object.entries(reserva.participantesPorTipo ?? {})
     .map(([key, value]) => ({ key, quantidade: quantidade(value), label: nomeTipoParticipante(key, tipos) }))
@@ -105,9 +108,27 @@ export function resumirParticipantesReserva(
   } else {
     legados.forEach((item) => add(`legado-${item.campo}`, item.label, quantidade(reserva[item.campo])));
   }
-  add('nao-pagante', 'Não pagante', quantidade(reserva.naoPagante));
-  return result.map((item) => ({ ...item, inicial: Array.from(item.label)[0]?.toLocaleUpperCase('pt-BR') || 'P' }))
+  const naoPaganteNoMapa = entries.some(({ label }) =>
+    nomeNaoPagante(label) || /\bbebes?\b/.test(normalizar(label)));
+  if (!naoPaganteNoMapa || opcoes.naoPaganteLegadoAdicional !== false) {
+    add('nao-pagante', 'Não pagante', quantidade(reserva.naoPagante));
+  }
+  return result.map((item) => ({
+    ...item,
+    inicial: nomeNaoPagante(item.label)
+      ? 'N'
+      : Array.from(item.label)[0]?.toLocaleUpperCase('pt-BR') || 'P',
+  }))
     .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base', numeric: true }));
+}
+
+export function contarParticipantesReserva(
+  reserva: ReservaParaResumo,
+  tipos: readonly TipoParticipanteResumo[] = [],
+  opcoes: OpcoesParticipantesReserva = {},
+): number {
+  return resumirParticipantesReserva(reserva, tipos, opcoes)
+    .reduce((total, participante) => total + participante.quantidade, 0);
 }
 
 const listarIdades = new Intl.ListFormat('pt-BR', { type: 'conjunction' });
@@ -116,11 +137,14 @@ export function rotuloParticipanteComIdades(
   reserva: ReservaParaResumo,
   participante: ParticipanteReservaResumo,
   tipos: readonly TipoParticipanteResumo[] = [],
+  opcoes: OpcoesParticipantesReserva = {},
 ): string | undefined {
   const { label, key, quantidade } = participante;
   if (!tipoEhInfantil({ id: key, nome: label })) return undefined;
 
   const categoria = normalizar(label);
+  const totalLegado = Number(reserva.naoPagante);
+  const quantidadeLegada = Number.isFinite(totalLegado) && totalLegado > 0 ? totalLegado : 0;
   const lerIdades = (mapa?: Record<string, unknown>) => {
     if (!mapa) return [];
     const entrada = Array.isArray(mapa[key])
@@ -128,8 +152,14 @@ export function rotuloParticipanteComIdades(
       : Object.entries(mapa).find(([id, idades]) =>
         Array.isArray(idades) && normalizar(nomeTipoParticipante(id, tipos)) === categoria);
     const principais = Array.isArray(entrada?.[1]) ? entrada[1] : [];
-    const adicionais = categoria === 'nao pagante' && entrada?.[0] !== 'nao_pagante_legado'
-      && Array.isArray(mapa.nao_pagante_legado) ? mapa.nao_pagante_legado : [];
+    const entradaAdicional = categoria === 'nao pagante' && opcoes.naoPaganteLegadoAdicional !== false
+      ? ['nao_pagante_legado', 'nao_pagante'].find((id) =>
+        id !== entrada?.[0] && Array.isArray(mapa[id])
+        && normalizar(nomeTipoParticipante(id, tipos)) === categoria)
+      : undefined;
+    const adicionais = entradaAdicional
+      ? (mapa[entradaAdicional] as unknown[]).slice(0, quantidadeLegada)
+      : [];
     return [...principais, ...adicionais].flatMap((valor) => {
       const idade = normalizarLimiteIdade(valor);
       return idade === undefined ? [] : [idade];

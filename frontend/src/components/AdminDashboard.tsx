@@ -27,6 +27,7 @@ import {
   obterVagasExtrasDisponibilidade,
 } from '../utils/disponibilidade';
 import {
+  contarParticipantesReserva,
   nomesAtividadesReserva,
   resumirParticipantesReserva,
   rotuloParticipanteComIdades,
@@ -1632,6 +1633,8 @@ const reservasVazias: Record<string, Reserva[]> = {};
 
 export default function AdminDashboard() {
 
+  const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
+
   const [aba, setAba] = useState<AdminAba>(() => {
     if (typeof window === 'undefined') return 'reservas';
     const requestedTab = new URLSearchParams(window.location.search).get('aba');
@@ -1912,7 +1915,7 @@ export default function AdminDashboard() {
 
      },
 
-     [tocarSomNotificacao]
+     [tocarSomNotificacao, tiposClientes]
 
    );
 
@@ -2041,8 +2044,6 @@ export default function AdminDashboard() {
   );
 
   // Tipos de clientes
-
-  const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
 
   const [editTipoCliente, setEditTipoCliente] = useState<TipoCliente>(criarTipoClienteVazio);
   const [editorTipoClienteAberto, setEditorTipoClienteAberto] = useState(false);
@@ -2282,7 +2283,7 @@ export default function AdminDashboard() {
 
     return editReserva ? calcularParticipantes(editReserva) : 0;
 
-  }, [editReserva]);
+  }, [editReserva, tiposClientes]);
 
 
 
@@ -2456,7 +2457,7 @@ export default function AdminDashboard() {
     });
 
     return mapa;
-  }, [inferirPacoteIdsReserva, reservasOcupandoVagasEmEdicao]);
+  }, [inferirPacoteIdsReserva, reservasOcupandoVagasEmEdicao, tiposClientes]);
 
   const reservasPorPacoteDiaEmEdicao = useMemo(() => {
     const mapa: Record<string, number> = {};
@@ -2474,7 +2475,7 @@ export default function AdminDashboard() {
     });
 
     return mapa;
-  }, [inferirPacoteIdsReserva, reservasOcupandoVagasEmEdicao]);
+  }, [inferirPacoteIdsReserva, reservasOcupandoVagasEmEdicao, tiposClientes]);
 
   const horariosDisponiveisPacotesEmEdicao = useMemo(() => {
     if (horariosCompativeisPacotesEmEdicao.length === 0) return [];
@@ -2737,7 +2738,7 @@ export default function AdminDashboard() {
         lista.reduce((subtotal, item) => subtotal + calcularParticipantes(item), 0),
       0
     );
-  }, [reservas]);
+  }, [reservas, tiposClientes]);
 
 
   const totalReservasDoDia = useMemo(() => {
@@ -3063,7 +3064,7 @@ export default function AdminDashboard() {
       porPacote,
       porCliente,
     };
-  }, [dashboardReservasFiltradasPorOrigem, dashboardInicio, dashboardFim]);
+  }, [dashboardReservasFiltradasPorOrigem, dashboardInicio, dashboardFim, tiposClientes]);
 
   const obterValorMetricaDashboard = useCallback(
     (
@@ -3997,7 +3998,7 @@ export default function AdminDashboard() {
       unsubscribeString();
       unsubscribeTimestamp();
     };
-  }, [aba, currentMonth, currentYear, reservaContaNoCalendario]);
+  }, [aba, currentMonth, currentYear, reservaContaNoCalendario, tiposClientes]);
 
 
 
@@ -4463,34 +4464,16 @@ export default function AdminDashboard() {
 
 
   function calcularParticipantes(reserva: Reserva) {
-
-    const mapa = reserva.participantesPorTipo ?? {};
-
-    const totalMapa = somarMapa(mapa);
-
-    if (totalMapa > 0) {
-
-      return totalMapa + (Number(reserva.naoPagante ?? 0) || 0);
-
-    }
-
-    return (
-
-      (reserva.adultos ?? 0) +
-
-      (reserva.criancas ?? 0) +
-
-      (reserva.naoPagante ?? 0) +
-
-      (reserva.bariatrica ?? 0)
-
-    );
-
+    return contarParticipantesReserva(reserva, tiposClientes, {
+      naoPaganteLegadoAdicional: reservaEhManual(reserva),
+    });
   }
 
   const montarResumoParticipantes = useCallback(
-    (reserva: Reserva) => resumirParticipantesReserva(reserva, tiposClientesAtivos),
-    [tiposClientesAtivos]
+    (reserva: Reserva) => resumirParticipantesReserva(reserva, tiposClientes, {
+      naoPaganteLegadoAdicional: reservaEhManual(reserva),
+    }),
+    [tiposClientes]
   );
 
 
@@ -4676,6 +4659,7 @@ export default function AdminDashboard() {
     };
   }, [
     reservas,
+    tiposClientes,
     filtroAtividadeNormalizado,
     filtroChegada,
     filtroStatusReserva,
@@ -10220,9 +10204,10 @@ export default function AdminDashboard() {
                         const participantes = calcularParticipantes(reserva);
                         const resumoParticipantes = montarResumoParticipantes(reserva).map((item) => ({
                           ...item,
-                          rotuloIdades: rotuloParticipanteComIdades(reserva, item, tiposClientesAtivos),
+                          rotuloIdades: rotuloParticipanteComIdades(reserva, item, tiposClientes, {
+                            naoPaganteLegadoAdicional: reservaEhManual(reserva),
+                          }),
                         }));
-                        const participantesAbreviados = resumoParticipantes.filter(({ rotuloIdades }) => !rotuloIdades);
                         const participantesComIdades = resumoParticipantes.filter(({ rotuloIdades }) => rotuloIdades);
                         const chegou = reserva.chegou === true;
                         const reservaToneClass = chegou
@@ -10329,9 +10314,9 @@ export default function AdminDashboard() {
                                 <strong>{participantes}</strong>
                                 <span>pessoa{participantes !== 1 ? 's' : ''}</span>
                               </div>
-                              {participantesAbreviados.length > 0 && (
+                              {resumoParticipantes.length > 0 && (
                                 <div className="admin-reservation-list__inline-tags admin-reservation-list__participant-tags">
-                                  {participantesAbreviados.map((item) => (
+                                  {resumoParticipantes.map((item) => (
                                     <span
                                       key={item.key}
                                       className="admin-reservation-list__participant-tag"
