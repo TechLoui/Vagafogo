@@ -1,3 +1,5 @@
+import { currentAffiliateContextToken, prepareAffiliateReferral } from '../affiliateReferral';
+
 export type AtribuicaoReserva = {
   sessionId: string;
   entryDomain: string;
@@ -184,21 +186,26 @@ export const registrarEventoJornadaReserva = (
 ) => {
   const atribuicao = obterAtribuicaoReserva();
   if (!atribuicao) return;
-  const body = JSON.stringify({
-    sessionId: atribuicao.sessionId,
-    atribuicao,
-    ...evento,
-    website: "",
-  });
   const url = `${API_BASE}/crm/jornadas/evento`;
-  if (options?.beacon && typeof navigator.sendBeacon === "function") {
-    navigator.sendBeacon(url, new Blob([body], { type: "text/plain" }));
-    return;
-  }
-  void fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-    keepalive: true,
-  }).catch(() => undefined);
+  const send = (affiliateContextToken?: string) => {
+    const body = JSON.stringify({
+      sessionId: atribuicao.sessionId,
+      atribuicao,
+      ...evento,
+      ...(affiliateContextToken ? { affiliateContextToken } : {}),
+      website: "",
+    });
+    if (options?.beacon && typeof navigator.sendBeacon === "function") {
+      navigator.sendBeacon(url, new Blob([body], { type: "text/plain" }));
+      return;
+    }
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => undefined);
+  };
+  if (options?.beacon) send(currentAffiliateContextToken());
+  else void prepareAffiliateReferral().then((referral) => send(referral?.contextToken)).catch(() => send());
 };

@@ -35,6 +35,10 @@ service firebase.storage {
     match /crm-campanhas/{ownerId}/{filename} {
       allow read, write: if isPrivileged();
     }
+    // Agency logos are uploaded/read only through the Admin SDK API. No direct bucket access.
+    match /affiliate-agency-logos/{agencyId}/{filename} {
+      allow read, write: if false;
+    }
     match /{path=**} {
       allow read, write: if false;
     }

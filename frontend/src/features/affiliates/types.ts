@@ -19,6 +19,9 @@ export type AffiliateEntity = {
   commissionRule?: CommissionRule | null;
   createdAt?: string;
   updatedAt?: string;
+  logoUrl?: string | null;
+  logoVersion?: string;
+  logoUpdatedAt?: string;
 };
 
 export type AffiliateProfile = {
@@ -63,6 +66,8 @@ export type AffiliateSale = {
   partnerId: string;
   partnerName: string;
   agencyId: string | null;
+  agencyName?: string | null;
+  agencyLogoUrl?: string | null;
   commission?: number | null;
   commissionRule?: CommissionRule | null;
 };

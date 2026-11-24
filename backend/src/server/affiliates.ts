@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { exigirAfiliado, obterIdentidadeAfiliado, exigirIdentidadeFirebase, obterIdentidadeFirebase } from "../middleware/affiliateAuth";
 import { AffiliateError, affiliateMe, affiliatesEnabled, createAffiliateActivation, getAffiliateProfile, listAffiliates, previewAffiliateActivation, redeemAffiliateActivation, saveAffiliate } from "../services/affiliates";
 import { affiliateSummary, listAffiliateLinks, listAffiliateSales, resolveAffiliateLink } from "../services/affiliatesReferral";
+import { deleteAffiliateAgencyLogo, readPublicAffiliateAgencyLogo, uploadAffiliateAgencyLogo } from "../services/affiliatesLogo";
 
 const router = Router();
 type Handler = (req: Request, res: Response) => Promise<unknown>;
@@ -18,14 +19,15 @@ const run = (handler: Handler) => async (req: Request, res: Response) => {
 const publicHits = new Map<string, { start: number; count: number }>();
 router.use((req, res, next) => {
   if (!req.path.startsWith("/public/") && !req.path.startsWith("/activation/")) { next(); return; }
-  const key = req.ip || "unknown";
+  const isLogo = req.method === "GET" && /^\/public\/agencies\/[A-Za-z0-9_-]+\/logo$/.test(req.path);
+  const key = `${isLogo ? "logo:" : "form:"}${req.ip || "unknown"}`;
   const now = Date.now();
   if (publicHits.size > 5_000) for (const [id, hit] of publicHits) if (now - hit.start > 60_000) publicHits.delete(id);
   if (!publicHits.has(key) && publicHits.size >= 5_000) { res.status(429).json({ code: "AFFILIATE_RATE_LIMIT" }); return; }
   const hit = publicHits.get(key);
   const nextHit = !hit || now - hit.start > 60_000 ? { start: now, count: 1 } : { ...hit, count: hit.count + 1 };
   publicHits.set(key, nextHit);
-  if (nextHit.count > 60) { res.set("Retry-After", "60"); res.status(429).json({ code: "AFFILIATE_RATE_LIMIT" }); return; }
+  if (nextHit.count > (isLogo ? 300 : 60)) { res.set("Retry-After", "60"); res.status(429).json({ code: "AFFILIATE_RATE_LIMIT" }); return; }
   next();
 });
 router.use((req, res, next) => {
@@ -33,6 +35,16 @@ router.use((req, res, next) => {
   res.status(503).json({ code: "AFFILIATES_NOT_ENABLED", error: "O portal de afiliados ainda nao esta disponivel." });
 });
 router.post("/public/resolve", run(async (req, res) => res.json(await resolveAffiliateLink(req.body?.referralToken))));
+router.get("/public/agencies/:id/logo", run(async (req, res) => {
+  const logo = await readPublicAffiliateAgencyLogo(req.params.id, req.query.v);
+  const etag = `"${logo.version}"`;
+  res.set("Cache-Control", req.query.v ? "public, max-age=31536000, immutable" : "public, no-cache, must-revalidate");
+  res.set("ETag", etag);
+  res.set("X-Content-Type-Options", "nosniff");
+  res.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  if (req.get("If-None-Match") === etag) { res.status(304).end(); return; }
+  res.type(logo.mimeType).set("Content-Disposition", `inline; filename="agency-logo.${logo.extension}"`).send(logo.buffer);
+}));
 router.get("/activation/:token", run(async (req, res) => res.json(await previewAffiliateActivation(req.params.token))));
 router.post("/activation/:token", exigirIdentidadeFirebase, run(async (req, res) => res.json(await redeemAffiliateActivation(req.params.token, obterIdentidadeFirebase(res)))));
 router.use(exigirAfiliado);
@@ -41,6 +53,8 @@ router.get("/me", run(async (_req, res) => {
   if (!affiliatesEnabled() && identity.role !== "admin") throw new AffiliateError("AFFILIATES_NOT_ENABLED", 503);
   res.json(await affiliateMe(identity));
 }));
+router.post("/agencies/:id/logo", run(async (req, res) => res.json({ item: await uploadAffiliateAgencyLogo(req.params.id, req.body, obterIdentidadeAfiliado(res)) })));
+router.delete("/agencies/:id/logo", run(async (req, res) => res.json({ item: await deleteAffiliateAgencyLogo(req.params.id, obterIdentidadeAfiliado(res)) })));
 for (const [path, kind] of [["agencies", "agency"], ["partners", "partner"]] as const) {
   router.get(`/${path}`, run(async (req, res) => res.json(await listAffiliates(kind, obterIdentidadeAfiliado(res), req.query.limit, req.query.cursor, req.query.agencyId))));
   router.post(`/${path}`, run(async (req, res) => res.status(201).json({ item: await saveAffiliate(kind, null, req.body, obterIdentidadeAfiliado(res)) })));

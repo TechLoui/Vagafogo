@@ -327,6 +327,7 @@
 
 .crm-latest-leads table { min-width: 660px; }
 .crm-table-wrap { overflow-x: auto; }
+.crm-reservation-payment{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}
 .crm-table-wrap::-webkit-scrollbar { height: 6px; }
 .crm-table-wrap::-webkit-scrollbar-track { border-radius: 999px; background: #edf3f6; }
 .crm-table-wrap::-webkit-scrollbar-thumb { border-radius: 999px; background: #9eb8c5; }
@@ -820,6 +821,10 @@
 @keyframes crm-toast-in { from { opacity: 0; transform: translate(-50%, -10px); } }
 .crm-sidebar-scrim { display: none; }
 
+@media(max-width:1080px){.crm-mobile-menu,.crm-sidebar__close{min-width:44px;min-height:44px}.crm-sidebar:not(.crm-sidebar--open){visibility:hidden;pointer-events:none}.crm-sidebar--open{visibility:visible}}
+@media(max-width:820px){.crm-page-head__tools>button,.crm-page-head__tools .crm-popover-anchor>button,.crm-filter-tabs button{min-height:44px!important}.crm-inline-search input,.crm-modal input,.crm-modal select{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.crm-app *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
 @media (max-width: 1380px) {
   .crm-sidebar { width: 220px; }
   .crm-shell { margin-left: 220px; }
@@ -958,3 +963,28 @@
   .crm-period-menu { position: fixed; top: 155px; left: 14px; right: 14px; width: auto; }
 }
 
+@media(max-width:640px){
+  .crm-reservation-table-wrap{overflow:visible;padding:0 12px 12px}
+  .crm-reservation-table-wrap .crm-reservations-table,.crm-reservations-table tbody{display:block;min-width:0;width:100%}
+  .crm-reservations-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .crm-reservations-table tbody{display:grid;gap:12px}
+  .crm-reservation-table-wrap .crm-reservations-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 16px;padding:16px;border:1px solid #dce8ed;border-radius:14px;background:#fff}
+  .crm-reservation-table-wrap .crm-reservations-table td{display:flex;flex-direction:column;gap:4px;min-width:0;padding:0;border:0;font-size:.8125rem;white-space:normal;overflow-wrap:anywhere}
+  .crm-reservations-table td::before{content:attr(data-label);color:#687e8e;font-size:.6875rem;font-weight:600}
+  .crm-reservations-table td[data-label="Reserva"]{order:0;grid-column:1;justify-content:center}
+  .crm-reservations-table td[data-label="Status"]{order:0;grid-column:2;align-items:flex-end;justify-content:center}
+  .crm-reservations-table td:is([data-label="Reserva"],[data-label="Cliente"],[data-label="Status"])::before{display:none}
+  .crm-reservations-table td[data-label="Cliente"]{order:1;grid-column:1/-1;padding-bottom:12px;border-bottom:1px solid #edf2f4}
+  .crm-reservations-table .crm-person-cell{min-width:0;align-items:flex-start}
+  .crm-reservations-table .crm-person-cell>div{min-width:0}
+  .crm-reservations-table .crm-person-cell strong{font-size:.9375rem}
+  .crm-reservations-table .crm-person-cell small{font-size:.75rem;white-space:normal}
+  .crm-reservations-table td[data-label="Experiência"]{order:2;grid-column:1/-1}
+  .crm-reservations-table td:is([data-label="Visita"],[data-label="Valor"]){order:3}
+  .crm-reservations-table td:is([data-label="Criada em"],[data-label="Domínio"]){order:5}
+  .crm-reservations-table td[data-label="Origem"]{order:4;grid-column:1/-1}
+  .crm-reservations-table .crm-status{font-size:.75rem;padding:.35rem .6rem}
+  .crm-reservations-table .crm-cell-subtitle{font-size:.75rem;margin:0;white-space:normal}
+  .crm-reservations-table .crm-origin-badge{align-self:flex-start;font-size:.75rem}
+  .crm-reservations-table .admin-reserva-identificacao{font-size:.75rem}
+}

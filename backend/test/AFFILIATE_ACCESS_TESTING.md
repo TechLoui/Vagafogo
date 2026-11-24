@@ -92,6 +92,10 @@ The emulator tests assert:
 - Storage checks the same Firestore approval document as Firestore Rules; the
   current owner/backend can access approved paths while expired/disabled users
   cannot.
+- The `affiliate-agency-logos` prefix rejects direct reads, uploads and deletes
+  for public, agency, partner, browser-admin and backend-Web-SDK identities.
+  Logo operations use the authorized API's Admin SDK, outside these Rules;
+  publicly displaying a logo does not expose the bucket path or grant access.
 
 ## Coordinated rollout
 

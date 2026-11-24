@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
+import { affiliateHash, assertAffiliatesEnabled, type CommercialAttribution } from "./affiliates";
+import { validateAffiliateContext } from "./affiliatesReferral";
 
 const COLLECTION = "crm_jornadas";
 const SESSION_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
@@ -24,7 +26,13 @@ type JourneyEventInput = {
   contato?: unknown;
   consentimentoRecuperacao?: unknown;
   website?: unknown;
+  affiliateContextToken?: unknown;
 };
+
+const affiliateJourneyIdentity = (source: Pick<CommercialAttribution, 'agencyId' | 'agencyName' | 'partnerId' | 'partnerName' | 'linkId' | 'contextId'>) => ({
+  version: 1, agencyId: source.agencyId, agencyName: source.agencyName,
+  partnerId: source.partnerId, partnerName: source.partnerName, linkId: source.linkId, contextId: source.contextId,
+});
 
 const clean = (value: unknown, maximum: number) =>
   typeof value === "string" ? value.trim().slice(0, maximum) : "";
@@ -117,6 +125,14 @@ export const registrarEventoJornada = async (input: JourneyEventInput) => {
   const phone = consent ? normalizePhone(rawContact.telefone) : "";
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
+  let affiliateAttribution: ReturnType<typeof affiliateJourneyIdentity> | undefined;
+  if (input.affiliateContextToken !== undefined && input.affiliateContextToken !== '') {
+    assertAffiliatesEnabled();
+    const { context, agency, partner } = await validateAffiliateContext(input.affiliateContextToken);
+    affiliateAttribution = affiliateJourneyIdentity({ agencyId: context.agencyId ?? null, agencyName: agency?.name ?? null,
+      partnerId: context.partnerId, partnerName: partner.name, linkId: context.linkId,
+      contextId: affiliateHash(String(input.affiliateContextToken)) });
+  }
   const ref = db.collection(COLLECTION).doc(journeyId(sessionId));
 
   await db.runTransaction(async (transaction) => {
@@ -134,6 +150,7 @@ export const registrarEventoJornada = async (input: JourneyEventInput) => {
       ...(subEtapa ? { ultimaSubEtapa: subEtapa } : {}),
       ...attribution,
       ...context,
+      ...(!current.affiliateAttribution && affiliateAttribution ? { affiliateAttribution } : {}),
       eventosContagem: FieldValue.increment(1),
       ultimoEventoEm: FieldValue.serverTimestamp(),
       atualizadoEm: FieldValue.serverTimestamp(),
@@ -188,6 +205,7 @@ export const registrarEventoJornada = async (input: JourneyEventInput) => {
 export const registrarConclusaoJornadaReserva = async (
   sessionId: unknown,
   reservaId: string,
+  commercialAttribution?: CommercialAttribution,
 ) => {
   const normalizedSessionId = clean(sessionId, 100);
   if (!SESSION_PATTERN.test(normalizedSessionId)) return false;
@@ -202,6 +220,7 @@ export const registrarConclusaoJornadaReserva = async (
     concluidoEm: FieldValue.serverTimestamp(),
     ultimoEventoEm: FieldValue.serverTimestamp(),
     atualizadoEm: FieldValue.serverTimestamp(),
+    ...(commercialAttribution ? { affiliateAttribution: affiliateJourneyIdentity(commercialAttribution) } : {}),
   }, { merge: true });
   return true;
 };

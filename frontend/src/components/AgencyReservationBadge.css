@@ -1,0 +1,6 @@
+.agency-reservation-badge{display:inline-flex;align-items:center;gap:.4rem;max-width:100%;min-width:0;padding:.2rem .55rem .2rem .2rem;border:1px solid #d5e4dc;border-radius:999px;background:#f1f7f3;color:#28543e;font-size:.75rem;font-weight:600;line-height:1.3;vertical-align:middle}
+.agency-reservation-badge__logo{display:grid;place-items:center;flex:none;width:1.6rem;height:1.6rem;overflow:hidden;border:1px solid #e2e9e3;border-radius:50%;background:#fff;color:#38664e;font-size:.625rem;font-weight:700}
+.agency-reservation-badge__logo img{width:100%;height:100%;object-fit:contain;padding:2px}
+.agency-reservation-badge__name{min-width:0;max-width:12rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.admin-dashboard-theme--dark .agency-reservation-badge{border-color:#385747;background:#20392d;color:#c1e3d0}
+@media(max-width:480px){.agency-reservation-badge__name{max-width:10rem}}

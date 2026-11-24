@@ -215,6 +215,21 @@ app.post('/crm/campanhas/midia', express.raw({ type: ['image/jpeg', 'image/png',
   }
 });
 
+// A 2 MB agency logo is transported as base64. Authenticate before accepting
+// its larger JSON body; other API requests keep the existing 1 MB limit.
+const parseAgencyLogo = express.json({ limit: '3mb' });
+app.post('/api/affiliates/agencies/:id/logo', exigirAdminCrm, (req, res, next) => {
+  parseAgencyLogo(req, res, (error?: unknown) => {
+    if (error) {
+      const tooLarge = (error as { type?: string }).type === 'entity.too.large';
+      res.status(tooLarge ? 413 : 400).json({ code: tooLarge ? 'AFFILIATE_LOGO_TOO_LARGE' : 'AFFILIATE_LOGO_INVALID',
+        error: tooLarge ? 'Use uma imagem de até 2 MB.' : 'Não foi possível ler a imagem enviada.' });
+      return;
+    }
+    next();
+  });
+});
+
 // Formularios extensos podem ultrapassar o default de 100 KB do body-parser.
 // A validacao de dominio ainda limita o documento normalizado antes do Firestore.
 app.use(express.json({ limit: "1mb" }));

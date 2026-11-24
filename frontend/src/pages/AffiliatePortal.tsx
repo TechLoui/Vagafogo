@@ -6,6 +6,7 @@ import logo from '../assets/logo.jpg';
 import { useAffiliateProfile } from '../features/affiliates/AffiliateAccess';
 import { AffiliateEntityManager } from '../features/affiliates/AffiliateManagement';
 import { AffiliateReport } from '../features/affiliates/AffiliateReport';
+import { AgencyLogo } from '../features/affiliates/AgencyLogo';
 import { getAffiliateLinks } from '../features/affiliates/affiliateService';
 import type { AffiliateLink } from '../features/affiliates/types';
 import '../features/affiliates/Affiliate.css';
@@ -49,7 +50,7 @@ export function AffiliatePortal() {
         <button type="button" className="aff-button aff-button--secondary" onClick={() => void signOut(auth)}><FaSignOutAlt /> Sair</button>
       </header>
       <main className="aff-portal-main" id="conteudo-principal" tabIndex={-1}>
-        <div className="aff-portal-heading"><div><span className="aff-eyebrow"><FaLeaf />{agency ? 'Agência' : 'Parceiro'}</span><h1>{entity?.name || 'Suas indicações'}</h1><p>{entity?.email || profile.identity.email}</p></div></div>
+        <div className="aff-portal-heading">{agency && <AgencyLogo url={profile.agency?.logoUrl} name={entity?.name || 'Agência'} className="aff-agency-logo--large" />}<div><span className="aff-eyebrow"><FaLeaf aria-hidden="true" />{agency ? 'Agência' : 'Parceiro'}</span><h1>{entity?.name || 'Suas indicações'}</h1><p>{entity?.email || profile.identity.email}</p>{!agency && profile.agency && <div className="aff-network-brand"><AgencyLogo url={profile.agency.logoUrl} name={profile.agency.name} /><span>{profile.agency.name}</span></div>}</div></div>
         {agency && <nav className="aff-tabs" aria-label="Portal da agência"><button type="button" aria-current={tab === 'summary' ? 'page' : undefined} onClick={() => setTab('summary')}>Resumo e reservas</button><button type="button" aria-current={tab === 'partners' ? 'page' : undefined} onClick={() => setTab('partners')}>Parceiros</button></nav>}
         {agency && tab === 'partners' ? <AffiliateEntityManager kind="partners" agencyId={profile.identity.agencyId ?? undefined} /> : (
           <div className="aff-module">{!agency && <PartnerLink />}<AffiliateReport showPartner={agency} /></div>

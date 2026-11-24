@@ -54,9 +54,21 @@ export const affiliateIso = (value: any): string | null => {
   const date = value?.toDate?.() ?? (value instanceof Date ? value : typeof value === "string" ? new Date(value) : null);
   return date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
 };
+export const affiliateApiBaseUrl = () => {
+  const parsed = new URL(process.env.PUBLIC_API_BASE_URL?.trim() || "https://vagafogo-production.up.railway.app");
+  const local = ["test", "development"].includes(process.env.NODE_ENV ?? "") && ["localhost", "127.0.0.1"].includes(parsed.hostname);
+  if ((parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) || parsed.username || parsed.password
+    || parsed.search || parsed.hash || parsed.pathname.replace(/\/+$/, "")) throw new AffiliateError("AFFILIATE_API_BASE_URL_INVALID", 503);
+  return parsed.origin;
+};
+export const affiliateAgencyLogoUrl = (id: string, raw: Record<string, any>): string | undefined => {
+  if (!/^[a-f0-9]{24}$/.test(raw.logoVersion ?? "") || !["image/png", "image/jpeg", "image/webp"].includes(raw.logoMimeType)) return undefined;
+  return `${affiliateApiBaseUrl()}/api/affiliates/public/agencies/${encodeURIComponent(affiliateId(id))}/logo?v=${raw.logoVersion}`;
+};
 const serialize = (id: string, raw: Record<string, any>, identity: AffiliateIdentity) => ({
   id, name: raw.name, email: raw.email, status: raw.status, agencyId: raw.agencyId ?? null,
   activated: Boolean(raw.memberUid), createdAt: affiliateIso(raw.createdAt), updatedAt: affiliateIso(raw.updatedAt),
+  ...(affiliateAgencyLogoUrl(id, raw) ? { logoUrl: affiliateAgencyLogoUrl(id, raw), logoVersion: raw.logoVersion, logoUpdatedAt: affiliateIso(raw.logoUpdatedAt) } : {}),
   ...(identity.role === "admin" ? { commissionRule: raw.commissionRule ?? null } : {}),
 });
 export const readAffiliate = async (kind: "agency" | "partner", idValue: unknown, identity: AffiliateIdentity) => {

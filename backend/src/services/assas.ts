@@ -1316,7 +1316,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       console.error(`[crm][campanha] Falha ao atribuir reserva ${reservaId}:`, error);
     });
 
-    void registrarConclusaoJornadaReserva(atribuicao?.sessionId, reservaId).catch((error) => {
+    void registrarConclusaoJornadaReserva(atribuicao?.sessionId, reservaId, commercialAttribution).catch((error) => {
       console.error(`[crm][jornada] Falha ao concluir jornada ${reservaId}:`, error);
     });
 

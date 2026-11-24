@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { FaLeaf } from 'react-icons/fa';
+import { FaArrowRight, FaEye, FaEyeSlash, FaLeaf } from 'react-icons/fa';
 import { auth } from '../../firebase';
 import logo from '../assets/logo.jpg';
+import heroImage from '../assets/hero/hero-1-800.webp';
 import { useAffiliateSession } from '../features/affiliates/AffiliateAccess';
 import { affiliateHome } from '../features/affiliates/affiliateUtils';
 import '../features/affiliates/Affiliate.css';
@@ -15,20 +16,28 @@ export function AffiliateLogin() {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const submission = useRef(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
   if (profile && !loading) return <Navigate to={affiliateHome(profile.identity.role)} replace />;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
+    if (submission.current) return;
+    submission.current = true;
     setError(''); setBusy(true);
     try { await signInWithEmailAndPassword(auth, email.trim(), password); }
-    catch { setError('Confira o e-mail e a senha e tente novamente.'); }
-    finally { setBusy(false); }
+    catch { setError('Confira o e-mail e a senha e tente novamente.'); passwordRef.current?.focus(); }
+    finally { submission.current = false; setBusy(false); }
   };
   return (
-    <main className="aff-auth-page" id="conteudo-principal" tabIndex={-1}>
-      <section className="aff-auth-card">
+    <main className="aff-auth-page aff-auth-page--login" id="conteudo-principal" tabIndex={-1}>
+      <div className="aff-auth-shell">
+      <aside className="aff-auth-story" style={{ backgroundImage: `linear-gradient(180deg, #163d2422, #103d2be8), url(${heroImage})` }}>
+        <span className="aff-eyebrow"><FaLeaf aria-hidden="true" /> Parcerias Vagafogo</span>
+        <div><h2>Mais pessoas perto da natureza.</h2><p>Suas indicações e reservas reunidas em um só lugar.</p></div>
+      </aside>
+      <section className="aff-auth-card" aria-labelledby="affiliate-login-title">
         <a href="/" className="aff-brand"><img src={logo} alt="Vagafogo" /><span>Vagafogo<small><FaLeaf /> Agências e parceiros</small></span></a>
-        <h1>Entre no seu painel</h1>
+        <h1 id="affiliate-login-title">Entre no seu painel</h1>
         <p>Acompanhe as reservas indicadas por você ou pela sua agência.</p>
         {loading ? <p role="status" className="aff-empty">Verificando acesso…</p> : user ? (
           <div className="aff-form"><p className="aff-alert aff-alert--error" role="alert">{profileError?.message || 'Sua conta ainda não possui um acesso habilitado.'}</p>
@@ -37,15 +46,15 @@ export function AffiliateLogin() {
           </div>
         ) : (
           <form className="aff-form" onSubmit={(event) => void submit(event)}>
-            {error && <p className="aff-alert aff-alert--error" role="alert">{error}</p>}
-            <label>E-mail<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-            <label>Senha<input type={visible ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-            <label className="aff-checkbox"><input type="checkbox" checked={visible} onChange={(event) => setVisible(event.target.checked)} /> Mostrar senha</label>
-            <button type="submit" className="aff-button" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</button>
+            {error && <p id="affiliate-login-error" className="aff-alert aff-alert--error" role="alert">{error}</p>}
+            <label>E-mail<input type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} aria-invalid={Boolean(error)} aria-describedby={error ? 'affiliate-login-error' : undefined} required /></label>
+            <div className="aff-field"><label htmlFor="affiliate-password">Senha</label><div className="aff-password-field"><input id="affiliate-password" ref={passwordRef} type={visible ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} aria-invalid={Boolean(error)} aria-describedby={error ? 'affiliate-login-error' : undefined} required /><button type="button" aria-label={visible ? 'Ocultar senha' : 'Mostrar senha'} aria-pressed={visible} onClick={() => setVisible((value) => !value)}>{visible ? <FaEyeSlash aria-hidden="true" /> : <FaEye aria-hidden="true" />}</button></div></div>
+            <button type="submit" className="aff-button" disabled={busy}>{busy ? 'Entrando…' : <>Entrar <FaArrowRight aria-hidden="true" /></>}</button>
           </form>
         )}
         <p className="aff-help">Primeiro acesso? Abra o link de ativação recebido do responsável pelo seu cadastro.</p>
       </section>
+      </div>
     </main>
   );
 }

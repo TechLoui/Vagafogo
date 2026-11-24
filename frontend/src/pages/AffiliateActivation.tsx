@@ -19,12 +19,13 @@ export function AffiliateActivation() {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [resume, setResume] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const submission = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError('');
-    void getAffiliateInvitation(token, controller.signal).then(setInvitation)
+    setLoading(true); setError(''); setInvitation(null); setPassword(''); setConfirmation(''); setVisible(false);
+    void getAffiliateInvitation(token, controller.signal).then((value) => { if (!controller.signal.aborted) setInvitation(value); })
       .catch((caught) => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : 'Não foi possível abrir a ativação.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -63,12 +64,14 @@ export function AffiliateActivation() {
           <>
             {error && <p className="aff-alert aff-alert--error" role="alert">{error}</p>}
             {invitation ? (
-              <form className="aff-form" onSubmit={(event) => void submit(event)}>
+              <form className="aff-form" onSubmit={(event) => void submit(event)} aria-busy={busy}>
                 <div className="aff-invitation"><strong>{invitation.name}</strong><span>{invitation.email}</span></div>
                 {user && !matchingUser ? <button type="button" className="aff-button aff-button--secondary" onClick={() => void signOut(auth)}>Sair da conta atual</button> : (
                   <>
-                    {!user && <><label>{resume ? 'Senha definida anteriormente' : 'Defina sua senha'}<input type="password" autoComplete={resume ? 'current-password' : 'new-password'} minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-                      {!resume && <label>Confirme a senha<input type="password" autoComplete="new-password" minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label>}
+                    {!user && <><label>{resume ? 'Senha definida anteriormente' : 'Defina sua senha'}<input type={visible ? 'text' : 'password'} autoComplete={resume ? 'current-password' : 'new-password'} minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby="activation-password-help" required /></label>
+                      {!resume && <label>Confirme a senha<input type={visible ? 'text' : 'password'} autoComplete="new-password" minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required /></label>}
+                      <p id="activation-password-help" className="aff-help">Use pelo menos 6 caracteres.</p>
+                      <label className="aff-checkbox"><input type="checkbox" checked={visible} onChange={(event) => setVisible(event.target.checked)} />Mostrar senhas</label>
                     </>}
                     <button className="aff-button" type="submit" disabled={busy}>{busy ? 'Ativando…' : user ? 'Concluir ativação' : resume ? 'Retomar ativação' : 'Criar senha e ativar'}</button>
                     {!user && <button type="button" className="aff-text-button" onClick={() => { setResume((value) => !value); setError(''); }}>{resume ? 'Definir uma nova conta' : 'Já comecei esta ativação'}</button>}

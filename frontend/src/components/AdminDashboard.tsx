@@ -44,6 +44,7 @@ import AdminSectionHeading from './AdminSectionHeading';
 import AdminSectionOptions from './AdminSectionOptions';
 import { idadeParticipanteValida, limitesIdade, normalizarLimiteIdade, tipoEhInfantil, tipoExigeIdades } from '../utils/idadeParticipante';
 import { ReservaIdentificacaoBadges } from './ReservaIdentificacaoBadges';
+import { AgencyReservationBadge } from './AgencyReservationBadge';
 import './AdminCatalog.css';
 import './AdminDashboardTheme.css';
 
@@ -546,6 +547,8 @@ interface TipoCliente {
 }
 
 interface Reserva {
+
+  commercialAttribution?: unknown;
 
   id?: string;
 
@@ -9238,6 +9241,7 @@ export default function AdminDashboard() {
                                               <div className="admin-reservas-identity-card">
                                                 <div className="admin-reservas-identity-card__title-row">
                                                   <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
+                                                  <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                                   {reservaManual && (
                                                     <span className="admin-reservas-origin-badge">
                                                       <FaClipboardList className="h-3 w-3" />
@@ -9599,6 +9603,7 @@ export default function AdminDashboard() {
                                         <div className="flex items-center gap-2">
 
                                           <span className="font-medium text-slate-900">{reserva.nome || '---'}</span>
+                                          <AgencyReservationBadge attribution={reserva.commercialAttribution} />
 
                                           <span
 
@@ -10012,6 +10017,7 @@ export default function AdminDashboard() {
                                       <div className="admin-reservas-identity-card">
                                         <div className="admin-reservas-identity-card__title-row">
                                           <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
+                                          <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                           {reservaManual && (
                                             <span className="admin-reservas-origin-badge">
                                               <FaClipboardList className="h-3 w-3" />
@@ -10299,6 +10305,7 @@ export default function AdminDashboard() {
                                   formaPagamento={reserva.formaPagamento}
                                   criadaManualmente={reservaEhManual(reserva)}
                                 />
+                                <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                 {chegou && (
                                   <span className="admin-reservation-list__arrival-label">
                                     <FaCheck aria-hidden="true" />
@@ -10612,6 +10619,7 @@ export default function AdminDashboard() {
                                         <div className="admin-reservas-identity-card">
                                           <div className="admin-reservas-identity-card__title-row">
                                             <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
+                                            <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                             <div className="admin-reservas-identity-card__badges">
                                               {reservaManual && (
                                                 <span className="admin-reservas-origin-badge">
@@ -10940,6 +10948,7 @@ export default function AdminDashboard() {
                                               formaPagamento={r.formaPagamento}
                                               criadaManualmente={reservaEhManual(r)}
                                             />
+                                            <AgencyReservationBadge attribution={r.commercialAttribution} />
                                           </div>
                                           {tipos.length > 0 && (
                                             <p className="mt-0.5 text-[10px] font-medium text-slate-400">{tipos.join(' · ')}</p>
@@ -15260,6 +15269,7 @@ export default function AdminDashboard() {
                           formaPagamento={resultado.formaPagamento}
                           criadaManualmente={reservaEhManual(resultado)}
                         />
+                        <AgencyReservationBadge attribution={resultado.commercialAttribution} />
                       </div>
                       <dl>
                         <div><dt>CPF</dt><dd>{resultado.cpf || '—'}</dd></div>

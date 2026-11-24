@@ -55,6 +55,8 @@ import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import heroImage from "../assets/Carrossel-1.jpg";
 import { AffiliateAdminSection } from "../features/affiliates/AffiliateAdminSection";
+import { AgencyReservationBadge } from "../components/AgencyReservationBadge";
+import { ReservaIdentificacaoBadges } from "../components/ReservaIdentificacaoBadges";
 import {
   apurarComissaoCheckout,
   hojeEmSaoPaulo,
@@ -98,6 +100,7 @@ type ReservationFlow =
   | "unknown";
 
 type RawReservation = Record<string, unknown> & {
+  commercialAttribution?: unknown;
   nome?: unknown;
   Nome?: unknown;
   email?: unknown;
@@ -153,6 +156,7 @@ type RawReservation = Record<string, unknown> & {
 };
 
 type CRMReservation = {
+  commercialAttribution?: unknown;
   id: string;
   name: string;
   email?: string;
@@ -270,6 +274,7 @@ type CampaignRecipient = {
 };
 
 type JourneyRecord = {
+  affiliateAttribution?: unknown;
   id: string;
   sessionId: string;
   status: string;
@@ -773,6 +778,28 @@ export function CRM() {
   const [journeyClock, setJourneyClock] = useState(() => Date.now());
   const navigate = useNavigate();
   const searchRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const trigger = sidebarTriggerRef.current;
+    const controls = () => Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href]') ?? [])
+      .filter((element) => element.getClientRects().length > 0);
+    controls()[0]?.focus({ preventScroll: true });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setSidebarOpen(false); return; }
+      if (event.key !== 'Tab') return;
+      const items = controls(), first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      trigger?.focus({ preventScroll: true });
+    };
+  }, [sidebarOpen]);
 
   useEffect(
     () =>
@@ -886,6 +913,7 @@ export function CRM() {
               return {
                 id: document.id,
                 name: String(rawValue(raw, "nome", "Nome") ?? "").trim(),
+                commercialAttribution: raw.commercialAttribution,
                 email:
                   String(rawValue(raw, "email", "Email") ?? "").trim() ||
                   undefined,
@@ -962,6 +990,7 @@ export function CRM() {
             return {
               id: document.id,
               sessionId: String(raw.sessionId ?? document.id),
+              affiliateAttribution: raw.affiliateAttribution,
               status: String(raw.status ?? "em_andamento"),
               stage: Math.min(
                 4,
@@ -1679,6 +1708,8 @@ export function CRM() {
         />
       ) : null}
       <aside
+        id="crm-sidebar-navigation"
+        ref={sidebarRef}
         className={`crm-sidebar ${sidebarOpen ? "crm-sidebar--open" : ""}`}
       >
         <div className="crm-sidebar__brand">
@@ -1735,9 +1766,12 @@ export function CRM() {
         >
           <div className="crm-topbar__identity">
             <button
+              ref={sidebarTriggerRef}
               className="crm-mobile-menu"
               onClick={() => setSidebarOpen(true)}
               aria-label="Abrir menu"
+              aria-controls="crm-sidebar-navigation"
+              aria-expanded={sidebarOpen}
             >
               <FaBars />
             </button>
@@ -2828,8 +2862,8 @@ function ReservationsSection({
           </div>
         ) : pageItems.length ? (
           <>
-            <div className="crm-table-wrap">
-              <table className="crm-data-table">
+            <div className="crm-table-wrap crm-reservation-table-wrap">
+              <table className="crm-data-table crm-reservations-table" role="table">
                 <thead>
                   <tr>
                     <th>Reserva</th>
@@ -2846,16 +2880,17 @@ function ReservationsSection({
                 <tbody>
                   {pageItems.map((item) => (
                     <tr key={item.id}>
-                      <td>
+                      <td data-label="Reserva">
                         <span className="crm-code">
                           #{item.id.slice(-6).toUpperCase()}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Cliente">
                         <div className="crm-person-cell">
                           <span>{initials(item.name)}</span>
                           <div>
                             <strong>{item.name}</strong>
+                            <AgencyReservationBadge attribution={item.commercialAttribution} />
                             <small>
                               {formatPhone(item.phone) ||
                                 "Telefone não informado"}
@@ -2863,8 +2898,8 @@ function ReservationsSection({
                           </div>
                         </div>
                       </td>
-                      <td>{item.activity}</td>
-                      <td>
+                      <td data-label="Experiência">{item.activity}</td>
+                      <td data-label="Criada em">
                         <strong>
                           {reservationCreatedReference(item)
                             ? dayjs(reservationCreatedReference(item)).format("DD/MM/YYYY")
@@ -2876,26 +2911,22 @@ function ReservationsSection({
                           </small>
                         ) : null}
                       </td>
-                      <td>
+                      <td data-label="Visita">
                         <strong>{dayjs(item.date).format("DD/MM/YYYY")}</strong>
                         <small className="crm-cell-subtitle">{item.time}</small>
                       </td>
-                      <td>
+                      <td data-label="Valor">
                         <strong className={!valuesVisible ? "is-private" : ""}>
                           {valuesVisible ? currency.format(item.value) : "R$ •••••"}
                         </strong>
                       </td>
-                      <td>
+                      <td data-label="Origem">
                         <span className="crm-origin-badge">
                           {reservationFlowLabel(item.flow)}
                         </span>
-                        {item.paymentMethod ? (
-                          <small className="crm-cell-subtitle">
-                            {humanizeCrmLabel(item.paymentMethod)}
-                          </small>
-                        ) : null}
+                        <div className="crm-reservation-payment"><ReservaIdentificacaoBadges formaPagamento={item.paymentMethod} criadaManualmente={item.origin === 'manual'} /></div>
                       </td>
-                      <td>
+                      <td data-label="Domínio">
                         <strong>{item.sourceDomain ?? "—"}</strong>
                         {item.sourceAttribution === "historical_inference" ? (
                           <small className="crm-cell-subtitle">
@@ -2903,7 +2934,7 @@ function ReservationsSection({
                           </small>
                         ) : null}
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <span
                           className={`crm-status crm-status--${isCancelled(item.status) ? "cancelled" : isPending(item.status) ? "pending" : "confirmed"}`}
                         >
@@ -3022,7 +3053,7 @@ function JourneysSection({
             <FaCheckCircle />
           </span>
           <div>
-            <small>Convertidas em reserva</small>
+            <small>Reservas criadas</small>
             <strong>{converted.length}</strong>
           </div>
         </article>
@@ -3064,7 +3095,8 @@ function JourneysSection({
             <p>
               Domínio de origem, canal, UTMs, etapa alcançada, interesses,
               tentativa de pagamento, conversão e abandono após{" "}
-              {ABANDONMENT_MINUTES} minutos.
+              {ABANDONMENT_MINUTES} minutos. A reserva pode aguardar pagamento;
+              as vendas pagas são conferidas no relatório de reservas.
             </p>
           </div>
         </article>
@@ -3322,6 +3354,7 @@ function JourneysSection({
                               ? "WhatsApp"
                               : (item.sourceDomain ?? "Site não identificado")}
                           </strong>
+                          <AgencyReservationBadge attribution={item.affiliateAttribution} />
                         </td>
                         <td>
                           <span className="crm-pill crm-pill--aguardando-decisao">
@@ -5298,6 +5331,7 @@ function FinanceSection({
                     <small>
                       {item.activity} · {dayjs(normalizarDiaFinanceiro(referenciaFinanceira(item))).format("DD/MM")}
                     </small>
+                    <AgencyReservationBadge attribution={item.commercialAttribution} />
                   </p>
                   <em className={!valuesVisible ? "is-private" : ""}>
                     {displayMoney(item.value)}

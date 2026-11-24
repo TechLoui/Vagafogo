@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { FaArrowRight, FaEnvelope, FaEye, FaEyeSlash, FaLeaf, FaLock } from "react-icons/fa";
 import { auth } from "../../firebase";
 import logo from "../assets/logo.jpg";
-import heroImage from "../assets/hero/hero-1.jpg";
+import heroImage from "../assets/hero/hero-1-800.webp";
 import "./CRMLogin.css";
 
 type LoginLocationState = {
@@ -18,6 +18,8 @@ export function CRMLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const submission = useRef(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [user, authLoading] = useAuthState(auth);
   const navigate = useNavigate();
   const location = useLocation();
@@ -29,6 +31,7 @@ export function CRMLogin() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submission.current) return;
     setError("");
 
     if (!email.trim() || !password) {
@@ -36,13 +39,16 @@ export function CRMLogin() {
       return;
     }
 
+    submission.current = true;
     setSubmitting(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
       navigate(destination.startsWith("/CRM") ? destination : "/CRM", { replace: true });
     } catch {
       setError("E-mail ou senha inválidos. Confira os dados e tente novamente.");
+      passwordRef.current?.focus();
     } finally {
+      submission.current = false;
       setSubmitting(false);
     }
   };
@@ -80,7 +86,7 @@ export function CRMLogin() {
           </div>
 
           <form onSubmit={handleSubmit} className="crm-login__form" noValidate>
-            {error ? <div className="crm-login__error" role="alert">{error}</div> : null}
+            {error ? <div id="crm-login-error" className="crm-login__error" role="alert">{error}</div> : null}
 
             <label htmlFor="crm-email">E-mail</label>
             <div className="crm-login__field">
@@ -89,10 +95,13 @@ export function CRMLogin() {
                 id="crm-email"
                 type="email"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => { setEmail(event.target.value); setError(''); }}
                 placeholder="administrador@vagafogo.com.br"
                 autoComplete="username"
-                autoFocus
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'crm-login-error' : undefined}
               />
             </div>
 
@@ -101,17 +110,21 @@ export function CRMLogin() {
               <FaLock aria-hidden="true" />
               <input
                 id="crm-password"
+                ref={passwordRef}
                 type={showPassword ? "text" : "password"}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => { setPassword(event.target.value); setError(''); }}
                 placeholder="Sua senha"
                 autoComplete="current-password"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? 'crm-login-error' : undefined}
               />
               <button
                 type="button"
                 className="crm-login__reveal"
                 onClick={() => setShowPassword((current) => !current)}
                 aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                aria-pressed={showPassword}
               >
                 {showPassword ? <FaEyeSlash /> : <FaEye />}
               </button>

@@ -2,7 +2,7 @@ import { randomBytes } from "crypto";
 import { FieldPath } from "firebase-admin/firestore";
 import {
   AffiliateError, AffiliateIdentity, CommercialAttribution, affiliateDb, affiliateHash, affiliateId, affiliateIso,
-  affiliatePage, affiliatePublicBase, affiliateText, commissionAmount, normalizeCommissionRule, assertAffiliatesEnabled,
+  affiliatePage, affiliatePublicBase, affiliateText, commissionAmount, normalizeCommissionRule, assertAffiliatesEnabled, affiliateAgencyLogoUrl,
 } from "./affiliates";
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -34,7 +34,8 @@ export const resolveAffiliateLink = async (tokenValue: unknown) => {
   const capturedAt = new Date();
   const expiresAt = new Date(capturedAt.getTime() + 7 * 86400000);
   await contextRef(contextToken).create({ linkId: link.linkId, partnerId: link.partnerId, agencyId: link.agencyId ?? null, capturedAt, expiresAt });
-  return { contextToken, expiresAt: expiresAt.toISOString(), partnerName: partner.name, agencyName: agency?.name ?? null };
+  return { contextToken, expiresAt: expiresAt.toISOString(), partnerName: partner.name, agencyName: agency?.name ?? null,
+    ...(agency && affiliateAgencyLogoUrl(link.agencyId, agency) ? { agencyLogoUrl: affiliateAgencyLogoUrl(link.agencyId, agency) } : {}) };
 };
 export const validateAffiliateContext = async (token: unknown) => {
   const snapshot = await contextRef(token).get();
@@ -159,7 +160,7 @@ export const revalidateAffiliateWebhook = async (reservationId: string, paymentI
   } finally { clearTimeout(timeout); }
 };
 
-export const affiliateSaleDto = (id: string, raw: Record<string, any>, evidence: Record<string, any> | undefined, identity: AffiliateIdentity) => {
+export const affiliateSaleDto = (id: string, raw: Record<string, any>, evidence: Record<string, any> | undefined, identity: AffiliateIdentity, agencyLogoUrl?: string) => {
   const source = raw.commercialAttribution as CommercialAttribution;
   const eligible = paid(raw.status) && !cancelled(raw.status) && evidence?.state === "paid"
     && evidence.paymentId === (raw.asaasPaymentId ?? raw.pagamentoId) && cents(evidence.value) === cents(raw.valor);
@@ -167,7 +168,8 @@ export const affiliateSaleDto = (id: string, raw: Record<string, any>, evidence:
   return { id, date: affiliateText(raw.data, 10), activity: affiliateText(raw.atividade, 300),
     status: isCancelled ? "cancelled" : eligible ? "paid" : "pending", value: Math.max(0, Number(raw.valor) || 0),
     paidAt: eligible ? affiliateIso(evidence?.paidAt) : null,
-    partnerId: source.partnerId, partnerName: source.partnerName, agencyId: source.agencyId,
+    partnerId: source.partnerId, partnerName: source.partnerName, agencyId: source.agencyId, agencyName: source.agencyName ?? null,
+    ...(agencyLogoUrl ? { agencyLogoUrl } : {}),
     ...(identity.role === "admin" ? { commissionRule: source.commissionRule ?? null,
       commission: eligible ? commissionAmount(source.commissionRule, Number(raw.valor)) : null,
       commissionBeneficiary: source.commissionBeneficiary, commissionBeneficiaryId: source.commissionBeneficiaryId } : {}),
@@ -199,6 +201,13 @@ const reportPage = async (identity: AffiliateIdentity, filters: Record<string, u
   if (cursor) query = query.startAfter(cursor);
   const snapshot = await query.limit(limit + 1).get();
   const docs = snapshot.docs.slice(0, limit);
+  const branding = new Map<string, Promise<string | undefined>>();
+  const agencyLogo = (agencyId: string | null) => {
+    if (!agencyId) return Promise.resolve(undefined);
+    if (!branding.has(agencyId)) branding.set(agencyId, affiliateDb().collection("affiliate_agencies").doc(agencyId).get()
+      .then((snapshot) => snapshot.exists ? affiliateAgencyLogoUrl(agencyId, snapshot.data()!) : undefined));
+    return branding.get(agencyId)!;
+  };
   const items = (await Promise.all(docs.map(async (doc) => {
     const raw = doc.data();
     const source = raw.commercialAttribution;
@@ -206,7 +215,7 @@ const reportPage = async (identity: AffiliateIdentity, filters: Record<string, u
       || (identity.role === "agency" && source.agencyId !== identity.agencyId)
       || (identity.role === "admin" && filters.agencyId === "null" && source.agencyId !== null)) return null;
     const evidence = await affiliateDb().collection("_affiliate_payment_evidence").doc(doc.id).get();
-    const dto = affiliateSaleDto(doc.id, raw, evidence.data(), identity);
+    const dto = affiliateSaleDto(doc.id, raw, evidence.data(), identity, await agencyLogo(source.agencyId));
     const financialDate = financialDay(dto.paidAt ?? affiliateIso(raw.criadoEm) ?? source.bookedAt ?? "");
     return (!from || financialDate >= from) && (!to || financialDate <= to) ? dto : null;
   }))).filter((item): item is NonNullable<typeof item> => item !== null);

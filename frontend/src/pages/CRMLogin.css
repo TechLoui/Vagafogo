@@ -281,3 +281,11 @@
   .crm-login__heading h2 { font-size: 2.15rem; }
 }
 
+.crm-login__reveal { min-width:44px; min-height:44px; margin-right:-10px; border-radius:9px; flex-shrink:0; }
+.crm-login__reveal:focus-visible,.crm-login__submit:focus-visible { outline:3px solid #079dd7; outline-offset:3px; }
+.crm-login__field:has(input[aria-invalid=true]) { border-color:#ce6673; }
+.crm-login__security { line-height:1.5; text-align:center; }
+@media(max-width:820px){.crm-login,.crm-login__form-panel{min-height:100svh}.crm-login__field input{font-size:16px}.crm-login__brand{margin-bottom:32px}}
+@media(max-width:360px){.crm-login__form-panel{padding:28px 18px}.crm-login__heading h2{font-size:1.9rem}.crm-login__brand{gap:10px}.crm-login__brand strong{font-size:1.45rem}.crm-login__brand span{font-size:.6rem;letter-spacing:.035em}.crm-login__heading p{font-size:.9rem}}
+@media(prefers-reduced-motion:reduce){.crm-login *{animation:none!important;transition:none!important}.crm-login__submit:hover:not(:disabled){transform:none}}
+

@@ -95,6 +95,10 @@ export const saveAffiliateEntity = (kind: 'agencies' | 'partners', input: Affili
     method: id ? 'PATCH' : 'POST', body: JSON.stringify(input),
   });
 
+export const saveAgencyLogo = (id: string, dataUrl: string | null) =>
+  request<{ item: AffiliateEntity }>(`/agencies/${encodeURIComponent(id)}/logo`, dataUrl === null
+    ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ dataUrl }) });
+
 export const createAffiliateActivation = (kind: 'agencies' | 'partners', id: string) =>
   request<AffiliateActivationLink>(`/${kind}/${encodeURIComponent(id)}/activation`, { method: 'POST' });
 

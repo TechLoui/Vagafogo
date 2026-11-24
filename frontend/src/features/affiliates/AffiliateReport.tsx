@@ -4,6 +4,7 @@ import { hojeEmSaoPaulo } from '../../utils/financeiro';
 import { affiliateDate, affiliateMoney, affiliateStatusLabel } from './affiliateUtils';
 import { AffiliateApiError, getAffiliateSales, getAffiliateSummary } from './affiliateService';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
+import { AgencyLogo } from './AgencyLogo';
 import type { AffiliateReportQuery, AffiliateSale, AffiliateSummary } from './types';
 
 export function AffiliateReport({ admin = false, agencyId, partnerId, showPartner = true }: { admin?: boolean; agencyId?: string; partnerId?: string; showPartner?: boolean }) {
@@ -79,12 +80,14 @@ export function AffiliateReport({ admin = false, agencyId, partnerId, showPartne
       )}
       <div className="aff-card aff-scroll" aria-busy={loading}>
         {sales.length === 0 ? <p className="aff-empty">{loading ? 'Carregando reservas…' : error ? 'Relatório não carregado. Tente atualizar.' : 'Nenhuma reserva atribuída neste período.'}</p> : (
-          <table className="aff-table"><thead><tr><th>Visita</th><th>Experiência</th>{showPartner && <th>Parceiro</th>}<th>Status</th><th>Valor</th>{admin && <th>Comissão</th>}</tr></thead><tbody>
+          <table className="aff-table aff-table--responsive"><thead><tr><th>Visita</th><th>Experiência</th>{admin && !agencyId && <th>Agência</th>}{showPartner && <th>Parceiro</th>}<th>Status</th><th>Valor</th>{admin && <th>Comissão</th>}</tr></thead><tbody>
             {sales.map((sale) => <tr key={sale.id}>
-              <td className="aff-date">{affiliateDate(sale.date)}</td><td>{sale.activity || '—'}</td>{showPartner && <td>{sale.partnerName || '—'}</td>}
-              <td><span className={`aff-status ${sale.paidAt ? 'is-active' : ''}`}>{affiliateStatusLabel(sale.status)}</span></td>
-              <td className="aff-money">{affiliateMoney(sale.value)}</td>
-              {admin && <td className="aff-money">{sale.commission == null ? '—' : affiliateMoney(sale.commission)}</td>}
+              <td className="aff-date" data-label="Visita">{affiliateDate(sale.date)}</td><td data-label="Experiência">{sale.activity || '—'}</td>
+              {admin && !agencyId && <td data-label="Agência">{sale.agencyId ? <div className="aff-report-agency"><AgencyLogo url={sale.agencyLogoUrl} name={sale.agencyName || 'Agência'} /><span>{sale.agencyName || 'Agência'}</span></div> : 'Independente'}</td>}
+              {showPartner && <td data-label="Parceiro">{sale.partnerName || '—'}</td>}
+              <td data-label="Status"><span className={`aff-status ${sale.paidAt ? 'is-active' : ''}`}>{affiliateStatusLabel(sale.status)}</span></td>
+              <td data-label="Valor" className="aff-money">{affiliateMoney(sale.value)}</td>
+              {admin && <td data-label="Comissão" className="aff-money">{sale.commission == null ? '—' : affiliateMoney(sale.commission)}</td>}
             </tr>)}
           </tbody></table>
         )}

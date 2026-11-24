@@ -11,6 +11,7 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const API_BASE = import.meta.env?.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 let pending: { token: string; promise: Promise<AffiliateReferral | null> } | null = null;
 let revision = 0;
+let memoryReferral: AffiliateReferral | null = null;
 
 export const validStoredAffiliateReferral = (value: unknown, now = Date.now()): AffiliateReferral | null => {
   if (!value || typeof value !== 'object') return null;
@@ -25,14 +26,24 @@ export const validStoredAffiliateReferral = (value: unknown, now = Date.now()): 
 };
 
 const readStored = () => {
+  const memory = validStoredAffiliateReferral(memoryReferral);
+  if (memory) return memory;
   try { return validStoredAffiliateReferral(JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) ?? 'null')); }
   catch { return null; }
+};
+
+export const currentAffiliateContextToken = () => {
+  if (typeof window === 'undefined') return undefined;
+  const stored = readStored();
+  const explicit = new URLSearchParams(window.location.search).get('ref');
+  return stored && (explicit === null || explicit.trim() === stored.referralToken) ? stored.contextToken : undefined;
 };
 
 export const clearAffiliateReferral = () => {
   if (typeof window === 'undefined') return;
   revision += 1;
   pending = null;
+  memoryReferral = null;
   try { window.sessionStorage.removeItem(STORAGE_KEY); } catch { /* storage is optional */ }
   const url = new URL(window.location.href);
   if (url.searchParams.has('ref')) {
@@ -70,6 +81,7 @@ export const prepareAffiliateReferral = async (): Promise<AffiliateReferral | nu
       const referral = validStoredAffiliateReferral({ ...body, referralToken: token });
       if (!response.ok || !referral) throw new Error('Não foi possível validar este link de indicação. Tente novamente ou peça um novo link ao parceiro.');
       if (requestRevision !== revision) return null;
+      memoryReferral = referral;
       try { window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(referral)); } catch { /* request still carries the context */ }
       return referral;
     } catch (error) {

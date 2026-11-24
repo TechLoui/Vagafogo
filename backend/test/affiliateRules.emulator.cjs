@@ -52,7 +52,7 @@ test.before(async () => {
       'affiliate_memberships/partner': { role: 'partner', partnerId: 'own', agencyId: 'agency-a', status: 'active' },
       'affiliate_partners/own': { agencyId: 'agency-a', status: 'active' },
     })) await setDoc(doc(db, target), value);
-    for (const object of ['pacotes/icones/package/icon.png', 'combos/icones/combo/icon.png', 'crm-agente-galeria/gallery/private.jpg', 'crm-campanhas/owner/private.jpg', 'unknown/private.txt']) {
+    for (const object of ['pacotes/icones/package/icon.png', 'combos/icones/combo/icon.png', 'crm-agente-galeria/gallery/private.jpg', 'crm-campanhas/owner/private.jpg', 'affiliate-agency-logos/agency-a/private.png', 'unknown/private.txt']) {
       await uploadBytes(ref(context.storage(), object), new Uint8Array([1, 2, 3]), { contentType: 'image/png' });
     }
   });
@@ -111,10 +111,11 @@ test('Storage exposes only known public icon paths and rejects affiliate writes 
       await assertFails(uploadBytes(ref(bucket, object), new Uint8Array([4])));
       await assertFails(deleteObject(ref(bucket, object)));
     }
-    for (const object of ['crm-agente-galeria/gallery/private.jpg', 'crm-campanhas/owner/private.jpg', 'unknown/private.txt']) {
+    for (const object of ['crm-agente-galeria/gallery/private.jpg', 'crm-campanhas/owner/private.jpg', 'affiliate-agency-logos/agency-a/private.png', 'unknown/private.txt']) {
       await assertFails(getMetadata(ref(bucket, object)));
       await assertFails(uploadBytes(ref(bucket, object), new Uint8Array([4])));
     }
+    await assertFails(deleteObject(ref(bucket, 'affiliate-agency-logos/agency-a/private.png')));
     await assertFails(listAll(ref(bucket)));
   }
 });
@@ -124,6 +125,11 @@ test('Storage cross-service approval allows current admin/backend and denies exp
     const bucket = storage(uid, claims);
     await assertSucceeds(getMetadata(ref(bucket, 'crm-agente-galeria/gallery/private.jpg')));
     await assertSucceeds(uploadBytes(ref(bucket, 'pacotes/icones/package/approved.png'), new Uint8Array([5])));
+    // Branding is served only through the API's Admin SDK, which bypasses Rules.
+    // Browser admin approval and the backend Web SDK claim do not open this prefix.
+    await assertFails(getMetadata(ref(bucket, 'affiliate-agency-logos/agency-a/private.png')));
+    await assertFails(uploadBytes(ref(bucket, 'affiliate-agency-logos/agency-a/private.png'), new Uint8Array([5])));
+    await assertFails(deleteObject(ref(bucket, 'affiliate-agency-logos/agency-a/private.png')));
   }
   for (const [uid, claims] of [['expired', {}], ['disabled', {}], ['partner', { admin: true }], ['partner', { serverBackend: true }]]) {
     await assertFails(uploadBytes(ref(storage(uid, claims), 'pacotes/icones/package/denied.png'), new Uint8Array([5])));
