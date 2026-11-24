@@ -19,6 +19,7 @@ import {
 } from "../services/reservaRetention";
 import formulariosPublicosRouter from "./formulariosPublicos";
 import formulariosAdminRouter from "./formulariosAdmin";
+import { exigirAdminCrm } from "../middleware/crmAdminAuth";
 
 const router = Router();
 router.use(cors());
@@ -30,7 +31,7 @@ const pacotesRef = collection(db, "pacotes");
 router.use("/formularios/publico", formulariosPublicosRouter);
 router.use("/formularios/admin", formulariosAdminRouter);
 
-router.get("/reservas", async (_req, res) => {
+router.get("/reservas", exigirAdminCrm, async (_req, res) => {
   try {
     const statusVisiveis = [
       "pago",
@@ -66,7 +67,7 @@ router.get("/pacotes", async (_req, res) => {
   }
 });
 
-router.post("/reservas", async (req, res) => {
+router.post("/reservas", exigirAdminCrm, async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, any>;
     const status = typeof body.status === "string" ? body.status : "pre_reserva";
@@ -111,7 +112,7 @@ router.post("/reservas", async (req, res) => {
   }
 });
 
-router.post("/pacotes", async (req, res) => {
+router.post("/pacotes", exigirAdminCrm, async (req, res) => {
   try {
     const novo = await addDoc(pacotesRef, req.body);
     res.json({ id: novo.id, ...req.body });
@@ -120,7 +121,7 @@ router.post("/pacotes", async (req, res) => {
   }
 });
 
-router.put("/reservas/:id", async (req, res) => {
+router.put("/reservas/:id", exigirAdminCrm, async (req, res) => {
   try {
     const ref = doc(reservasRef, req.params.id);
     const snapshot = await getDoc(ref);
@@ -148,7 +149,7 @@ router.put("/reservas/:id", async (req, res) => {
   }
 });
 
-router.delete("/reservas/:id", async (req, res) => {
+router.delete("/reservas/:id", exigirAdminCrm, async (req, res) => {
   try {
     const ref = doc(reservasRef, req.params.id);
     await deleteDoc(ref);

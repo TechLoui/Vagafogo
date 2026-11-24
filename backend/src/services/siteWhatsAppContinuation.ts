@@ -10,10 +10,21 @@ import {
 } from "./siteChatConversations";
 import { isSiteNamePrompt, isSitePhonePrompt } from "./siteChatIdentity";
 import { contatoUiraParaLigacaoNaoAtendida, telefoneDoUira } from "./siteOwnerEscalation";
+import { obterContextoAfiliadoSessao, vincularContextoAfiliadoSessao } from "./affiliatesReferral";
 
 const locks = new Map<string, Promise<unknown>>();
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 const validPhone = (value: string) => /^55[1-9]\d{9,10}$/.test(value);
+export const transferirIndicacaoContinuacaoSite = async (
+  sessionId: string,
+  phone: string,
+  dependencies = { read: obterContextoAfiliadoSessao, bind: vincularContextoAfiliadoSessao },
+  enabled = process.env.AFFILIATES_ENABLED === 'true',
+) => {
+  if (!enabled || !validPhone(phone)) return;
+  const contextToken = await dependencies.read(sessionId);
+  if (contextToken) await dependencies.bind(contextToken, `whatsapp_${phone}`);
+};
 const ORIENTACAO_LIGACAO_SITE = "Para tratar seu pedido com a equipe, abra https://wa.me/5562992225471 e toque no botão de chamada. O atendimento por chamada é das 08h às 17h.";
 
 export const solicitouContinuacaoWhatsapp = (text: string): boolean => {
@@ -235,6 +246,7 @@ export const processarContinuacaoWhatsappSite = async (input: {
       if (!continuation.sentAt) {
         try {
           const outboundText = continuation.outboundText!;
+          await transferirIndicacaoContinuacaoSite(input.sessionId, conversation.phone);
           const result = await (dependencies.send || enviarMensagemTransacionalPeloAgente)(
             conversation.phone,
             outboundText,

@@ -7,6 +7,7 @@ import { buildWhatsAppLink } from "../config/whatsapp";
 import { SiteBookingForm } from "./SiteBookingForm";
 import type { BookingProgress, BookingUi, SiteBookingSelection } from "./SiteBookingForm";
 import { normalizarLimiteIdade } from "../utils/idadeParticipante";
+import { prepareAffiliateReferral } from "../features/affiliateReferral";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "https://vagafogo-production.up.railway.app").replace(/\/+$/, "");
 const STORAGE_KEY = "vagafogo_jatoba_site_chat_v1";
@@ -424,7 +425,7 @@ export function SiteChatWidget() {
   const location = useLocation();
   const navigate = useNavigate();
   const isBookingPage = /^\/reservar\/?$/i.test(location.pathname);
-  const hidden = /^\/(admin|CRM|agente|login|formulario)(\/|$)/i.test(location.pathname)
+  const hidden = /^\/(admin|CRM|agente|login|formulario|afiliados|agencia|parceiro)(\/|$)/i.test(location.pathname)
     || new URLSearchParams(location.search).get("checkout_modal") === "1";
   const [redirectedPhone] = useState(() => {
     const params = new URLSearchParams(location.search);
@@ -808,10 +809,11 @@ export function SiteChatWidget() {
     setLoading(true);
     setError("");
     try {
+      const affiliateReferral = await prepareAffiliateReferral();
       const request = () => fetch(`${API_BASE}/atendimento/site/mensagem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history, ...(selection ? { respostaInterativa: selection } : {}) }),
+        body: JSON.stringify({ mensagem: content, nome: answerName || name.trim(), telefone: requestPhone, sessionId, messageId: userMessage.id, historico: history, ...(selection ? { respostaInterativa: selection } : {}), ...(affiliateReferral ? { affiliateContextToken: affiliateReferral.contextToken } : {}) }),
       });
       let response: Response;
       try {

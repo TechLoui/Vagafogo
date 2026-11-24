@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { normalizarStatusReserva, reservaContaParaOcupacao, reservaEstaConfirmada } from "./reservaStatus";
 import { classeInfantil, mapaIdadesInteiras, regraIdade, validarIdadesPorTipo } from "./reservaIdades";
+import { validateAffiliateContext } from "./affiliatesReferral";
 
 type AgentAvailabilityInput = {
   tipoOferta?: unknown;
@@ -32,6 +33,7 @@ type AgentAvailabilityInput = {
   campaignId?: unknown;
   recipientId?: unknown;
   sessionId?: unknown;
+  affiliateContextToken?: unknown;
 };
 
 type AgentReservationDraftInput = AgentAvailabilityInput & {
@@ -241,14 +243,17 @@ export const consultarReservaClienteAgente = async (input: {
   cpf?: unknown;
   canal?: unknown;
 }) => {
-  const codigo = clean(input.codigo, 100);
+  const codigo = typeof input.codigo === "string" ? input.codigo.trim() : "";
   const canal = clean(input.canal, 20);
   const phone = canonicalLeadPhone(input.telefone);
   const cpf = String(input.cpf ?? "").replace(/\D/g, "");
   if (canal === "site" && !cpfValidoParaReservaAgente(cpf)) {
     return { encontrada: false, motivo: "cpf_necessario" };
   }
-  if (canal !== "site" && !/^[A-Za-z0-9_-]{8,100}$/.test(codigo)) {
+  const codigoValido = canal === "site"
+    ? /^[A-Za-z0-9_-]{20,128}$/.test(codigo)
+    : /^[A-Za-z0-9_-]{8,100}$/.test(codigo);
+  if (!codigoValido) {
     return { encontrada: false, motivo: "codigo_invalido" };
   }
   if (canal !== "site" && !phone) return { encontrada: false, motivo: "telefone_indisponivel" };
@@ -269,36 +274,13 @@ export const consultarReservaClienteAgente = async (input: {
       participantes: Number.isFinite(Number(reserva.participantes)) ? Number(reserva.participantes) : null,
     };
   };
-  if (canal === "site") {
-    const cpfFormatado = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
-    const snapshots = await Promise.all(
-      [cpf, cpfFormatado].map((value) => db.collection("reservas").where("cpf", "==", value).limit(30).get()),
-    );
-    const encontradas = new Map<string, FirebaseFirestore.DocumentData>();
-    for (const snapshot of snapshots) {
-      for (const doc of snapshot.docs) {
-        const reserva = doc.data();
-        if (reservaClientePodeConsultar(reserva, { canal, cpf })) encontradas.set(doc.id, reserva);
-      }
-    }
-    const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
-    const reservas = [...encontradas.values()]
-      .map(resumir)
-      .sort((a, b) => {
-        const aFutura = a.data >= hoje;
-        const bFutura = b.data >= hoje;
-        if (aFutura !== bFutura) return aFutura ? -1 : 1;
-        return aFutura ? a.data.localeCompare(b.data) : b.data.localeCompare(a.data);
-      });
-    if (!reservas.length) return { encontrada: false, motivo: "nao_localizada" };
-    return { encontrada: true, reservas: reservas.slice(0, 3), maisReservas: reservas.length > 3 };
-  }
   const snapshot = await db.collection("reservas").doc(codigo).get();
   if (!snapshot.exists) return { encontrada: false, motivo: "nao_localizada" };
   const reserva = snapshot.data() ?? {};
-  if (!reservaClientePodeConsultar(reserva, { canal, telefone: phone })) {
+  if (!reservaClientePodeConsultar(reserva, { canal, cpf, telefone: phone })) {
     return { encontrada: false, motivo: "nao_localizada" };
   }
+  if (canal === "site") return { encontrada: true, reservas: [resumir(reserva)], maisReservas: false };
   return { encontrada: true, codigo, ...resumir(reserva) };
 };
 
@@ -1111,6 +1093,8 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
   const sessionId = requestedSessionId;
   const campaignId = clean(input.campaignId, 100);
   const recipientId = clean(input.recipientId, 100);
+  const affiliateContextToken = clean(input.affiliateContextToken, 90);
+  if (affiliateContextToken) await validateAffiliateContext(affiliateContextToken);
 
   const db = obterFirestoreAdmin();
   if (!db) throw new Error("FIREBASE_ADMIN_UNAVAILABLE");
@@ -1143,6 +1127,7 @@ export const criarLinkCartaoAgente = async (input: AgentAvailabilityInput) => {
     sessionId: sessionId || null,
     campaignId: campaignId || null,
     recipientId: recipientId || null,
+    ...(affiliateContextToken ? { affiliateContextToken } : {}),
     geradoEm: now.toISOString(),
     expiraEm: expiresAt.toISOString(),
   };
@@ -1331,6 +1316,18 @@ export const obterCheckoutAgente = async (tokenValue: unknown) => {
   } : payload;
 };
 
+export const obterCheckoutAgentePublico = async (tokenValue: unknown) => {
+  const internal = await obterCheckoutAgente(tokenValue);
+  const fields = [
+    "version", "tipo", "checkoutToken", "paymentIdempotencyKey", "tipoOferta", "ofertaId", "ofertaNome", "pacoteIds",
+    "data", "horario", "horariosPorPacote", "participantesPorTipo", "idadesPorTipo", "perguntasPersonalizadas",
+    "confirmouCarteirinhaBariatrica", "nome", "email", "cpf", "telefone", "temPet", "whatsappMarketingOptIn",
+    "formaPagamento", "valorValidado", "reservaId", "paymentId", "pixKey", "qrCodeImage", "pixExpirationDate",
+    "sessionId", "campaignId", "recipientId", "geradoEm", "expiraEm",
+  ];
+  return Object.fromEntries(fields.filter((key) => Object.prototype.hasOwnProperty.call(internal, key)).map((key) => [key, (internal as Record<string, unknown>)[key]]));
+};
+
 export const processarCheckoutsAgenteExpirados = async () => {
   const db = obterFirestoreAdmin();
   if (!db) return { excluidos: 0 };
@@ -1480,6 +1477,11 @@ export const salvarRascunhoReservaAgente = async (input: AgentReservationDraftIn
     Object.assign(previous, mergeReservationDraft(previous, existing.data()!.dados as Record<string, unknown>));
   }
   const patch = buildReservationDraftPatch(input);
+  if (input.affiliateContextToken !== undefined) {
+    await validateAffiliateContext(input.affiliateContextToken);
+    if (previous.affiliateContextToken && previous.affiliateContextToken !== input.affiliateContextToken) throw new Error("AFFILIATE_SESSION_ALREADY_BOUND");
+    patch.affiliateContextToken = clean(input.affiliateContextToken, 90);
+  }
   const dados = mergeReservationDraft(previous, patch);
   const composicaoAlterada = [
     "tipoOferta", "ofertaId", "data", "horario", "horariosPorPacote",

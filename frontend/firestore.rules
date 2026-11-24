@@ -2,8 +2,57 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
+    function isCrmAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/_crm_admin_access/$(request.auth.uid))
+        && get(/databases/$(database)/documents/_crm_admin_access/$(request.auth.uid)).data.status == 'active'
+        && get(/databases/$(database)/documents/_crm_admin_access/$(request.auth.uid)).data.approvedUntil > request.time;
+    }
+
+    function isBackendService() {
+      return request.auth != null
+        && request.auth.uid == 'vagafogo-server-backend'
+        && request.auth.token.serverBackend == true;
+    }
+
+    function isPrivileged() {
+      return isBackendService() || isCrmAdmin();
+    }
+
+    // Roles, membership and commissions are authorized exclusively by the API.
+    // Even the browser administrator cannot grant access by writing these records.
+    match /_crm_admin_access/{document=**} {
+      allow read, write: if false;
+    }
+    match /affiliate_memberships/{document=**} {
+      allow read, write: if false;
+    }
+    match /affiliate_agencies/{document=**} {
+      allow read, write: if false;
+    }
+    match /affiliate_partners/{document=**} {
+      allow read, write: if false;
+    }
+    match /affiliate_links/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_emails/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_link_tokens/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_contexts/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_session_contexts/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_activations/{document=**} {
+      allow read, write: if false;
+    }
+    match /_affiliate_payment_evidence/{document=**} {
+      allow read, write: if false;
     }
 
     // Dados da feature de formularios sao exclusivamente server-side.
@@ -32,99 +81,89 @@ service cloud.firestore {
 
     // Colecoes publicas consumidas diretamente pelo site atual.
     match /pacotes/{documentId} {
-      // O backend legado usa o Web SDK sem login para listar e criar pacotes.
-      allow read, create: if true;
-      allow update, delete: if isSignedIn();
+      allow read: if true;
+      allow create, update, delete: if isPrivileged();
     }
 
     match /tipos_clientes/{documentId} {
       allow read: if true;
-      allow create, update, delete: if isSignedIn();
+      allow create, update, delete: if isPrivileged();
     }
 
     match /combos/{documentId} {
       allow read: if true;
-      allow create, update, delete: if isSignedIn();
+      allow create, update, delete: if isPrivileged();
     }
 
     match /disponibilidade/{documentId} {
       allow read: if true;
-      allow create, update, delete: if isSignedIn();
+      allow create, update, delete: if isPrivileged();
     }
 
-    // Compatibilidade: site e backend legado usam o Web SDK sem login.
-    // Nao e possivel distinguir esse backend de outro cliente anonimo nas regras.
+    // Public availability and reservation lookup are exposed as limited API DTOs.
     match /reservas/{documentId} {
-      allow read, write: if true;
+      allow read, write: if isPrivileged();
     }
 
     // Campanhas e auditoria sao escritas somente pelo backend autenticado.
     match /crm_campanhas/{campaignId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
 
       match /destinatarios/{recipientId} {
-        allow read: if isSignedIn();
+        allow read: if isPrivileged();
         allow write: if false;
       }
     }
 
     // Resultado dos disparos unitarios de homologacao para o numero interno.
     match /crm_campanhas_testes/{testId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
     // Jornadas do checkout sao gravadas somente pelo backend. O painel
     // autenticado recebe leitura para funil, origem e recuperacao consentida.
     match /crm_jornadas/{journeyId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
     // Resumo comercial produzido pelo Agente. A conversa bruta nao e salva.
     match /crm_leads_agente/{leadId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
     match /crm_whatsapp_contatos/{documentId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
     match /crm_whatsapp_mensagens/{documentId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
     match /whatsapp_notificacoes_internas/{documentId} {
-      allow read: if isSignedIn();
+      allow read: if isPrivileged();
       allow write: if false;
     }
 
-    // O backend legado le configuracoes com o Web SDK sem login e atualiza a
-    // cota de e-mail. A listagem da colecao continua restrita ao painel.
+    // The public website only needs the site document. Email/WhatsApp stay private.
     match /configuracoes/{configId} {
-      allow get: if configId in [
-        'site',
-        'email',
-        'mensagens',
-        'whatsapp',
-        'emailQuota'
-      ] || isSignedIn();
-      allow list: if isSignedIn();
-      allow create, update: if configId == 'emailQuota' || isSignedIn();
-      allow delete: if isSignedIn();
+      allow get: if configId == 'site' || isPrivileged();
+      allow list: if isPrivileged();
+      allow create, update, delete: if isPrivileged();
     }
 
     // Colecoes usadas apenas dentro do painel/diagnostico legado.
     match /mesas/{documentId} {
-      allow read, create, update, delete: if isSignedIn();
+      allow read, create, update, delete: if isPrivileged();
     }
 
     match /teste_conexao/{documentId} {
-      allow read, create, update, delete: if isSignedIn();
+      allow read, create, update, delete: if isPrivileged();
     }
   }
 }

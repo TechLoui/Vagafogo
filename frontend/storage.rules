@@ -1,0 +1,42 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isCrmAdmin() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/_crm_admin_access/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/_crm_admin_access/$(request.auth.uid)).data.status == 'active'
+        && firestore.get(/databases/(default)/documents/_crm_admin_access/$(request.auth.uid)).data.approvedUntil > request.time;
+    }
+    function isBackendService() {
+      return request.auth != null
+        && request.auth.uid == 'vagafogo-server-backend'
+        && request.auth.token.serverBackend == true;
+    }
+    function isPrivileged() {
+      return isBackendService() || isCrmAdmin();
+    }
+
+    // Only the icon paths already used by the public catalog are public.
+    // Visitors can fetch a known icon, but cannot enumerate the bucket.
+    match /pacotes/icones/{packageId}/{filename} {
+      allow get: if true;
+      allow list: if isPrivileged();
+      allow write: if isPrivileged();
+    }
+    match /combos/icones/{comboId}/{filename} {
+      allow get: if true;
+      allow list: if isPrivileged();
+      allow write: if isPrivileged();
+    }
+    match /crm-agente-galeria/{galleryId}/{filename} {
+      allow read, write: if isPrivileged();
+    }
+    match /crm-campanhas/{ownerId}/{filename} {
+      allow read, write: if isPrivileged();
+    }
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

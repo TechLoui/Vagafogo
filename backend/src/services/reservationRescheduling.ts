@@ -113,10 +113,23 @@ export const obterContextoRemarcacao = async (input: { sessionId?: unknown; tele
   if (!snapshot.exists) return { pendente: false };
   const intake = snapshot.data()!;
   if ((intake.requesterPhone && intake.requesterPhone !== phone) || millis(intake.expiresAt) <= (deps.now || Date.now)()) return { pendente: false };
+  if (sessionId.startsWith("site_")) {
+    const code = typeof intake.codigo === "string" ? intake.codigo : "";
+    const pending = (field: string) => ({ pendente: true, contexto: {
+      status: "dados_pendentes", proximoCampo: field, resposta: missingPrompt(field),
+      novaData: intake.novaData || "", novoHorario: intake.novoHorario || "",
+    } });
+    // A legacy CPF-only intake must not restore a reservation or request summary.
+    if (!/^[A-Za-z0-9_-]{20,128}$/.test(code)) return pending("codigo");
+    if (!intake.cpfDigest) return pending("cpf");
+    const reservation = await db.collection("reservas").doc(code).get();
+    if (!reservation.exists || hash(clean(reservation.data()?.cpf).replace(/\D/g, "")) !== intake.cpfDigest) return pending("cpf");
+  }
   if (intake.requestId) {
     const stored = await db.collection(RESCHEDULE_REQUESTS).doc(intake.requestId).get();
     if (stored.exists) {
       const request = { ...stored.data(), id: stored.id } as Data;
+      if (sessionId.startsWith("site_") && request.reservaId !== intake.codigo) return { pendente: false };
       return { pendente: request.status === "awaiting_owner", contexto: requestResponse(request) };
     }
   }
@@ -151,7 +164,7 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
     await save();
     return response("dados_pendentes", text, { proximoCampo: field });
   };
-  const suppliedCode = clean(input.codigo, 100);
+  const suppliedCode = typeof input.codigo === "string" ? input.codigo.trim() : "";
   const suppliedCpf = clean(input.cpf, 20).replace(/\D/g, "");
   const suppliedCurrentDate = clean(input.dataAtual, 10);
   const changedReservation = Boolean(suppliedCode && (intake.reservaId || intake.codigo) && suppliedCode !== (intake.reservaId || intake.codigo))
@@ -165,7 +178,8 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
     }
   }
   if (suppliedCode) {
-    if (!/^[A-Za-z0-9_-]{8,100}$/.test(suppliedCode)) return missing(channel === "site" ? "reserva" : "codigo", "Confira o código da reserva informado.");
+    const validCode = channel === "site" ? /^[A-Za-z0-9_-]{20,128}$/.test(suppliedCode) : /^[A-Za-z0-9_-]{8,100}$/.test(suppliedCode);
+    if (!validCode) return missing("codigo", "Confira o código da reserva informado.");
     intake.codigo = suppliedCode;
   }
   if (suppliedCurrentDate) {
@@ -188,44 +202,30 @@ export const solicitarRemarcacaoReserva = async (input: IntakeInput, deps: Depen
     intake.horariosPorPacote = Object.fromEntries(times);
   }
   const suppliedTarget = input.novaData !== undefined || input.novoHorario !== undefined || input.horariosPorPacote !== undefined;
-  if (intake.requestId && !suppliedTarget) {
-    const request = await db.collection(RESCHEDULE_REQUESTS).doc(intake.requestId).get();
-    if (request.exists) return requestResponse({ ...request.data(), id: request.id });
-  }
-  let reservationId = clean(intake.codigo || intake.reservaId, 100);
+  let reservationId = clean(channel === "site" ? intake.codigo : intake.codigo || intake.reservaId, channel === "site" ? 128 : 100);
   if (channel === "site") {
-    const cpf = clean(input.cpf, 20).replace(/\D/g, "");
-    if (cpf) {
-      if (!cpfValidoParaReservaAgente(cpf)) return missing("cpf", "Informe um CPF válido do titular para eu localizar a reserva.");
-      const formatted = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
-      const found = await Promise.all([cpf, formatted].map((value) => db.collection(reservationsCollection).where("cpf", "==", value).limit(31).get()));
-      const matches = new Map(found.flatMap((snapshot) => snapshot.docs).filter((doc) => reservaClientePodeConsultar(doc.data(), { canal: "site", cpf })).map((doc) => [doc.id, doc.data()]));
-      if (matches.size > 30) return missing("reserva", "Informe o código da reserva que deseja alterar para eu localizar o pedido correto.");
-      intake.candidateIds = [...matches.keys()];
-      intake.cpfDigest = hash(cpf);
+    delete intake.candidateIds;
+    if (suppliedCpf) {
+      if (!cpfValidoParaReservaAgente(suppliedCpf)) return missing("cpf", "Informe um CPF válido do titular para eu localizar a reserva.");
+      intake.cpfDigest = hash(suppliedCpf);
     }
-    if (!intake.cpfDigest || !Array.isArray(intake.candidateIds)) return missing("cpf", "Para localizar a reserva que deseja remarcar, informe somente o CPF do titular.");
-    const candidateDocs = await Promise.all(intake.candidateIds.map((id: string) => db.collection(reservationsCollection).doc(id).get()));
-    const candidates = candidateDocs.filter((doc) => doc.exists && hash(clean(doc.data()?.cpf).replace(/\D/g, "")) === intake.cpfDigest)
-      .filter((doc) => !reservationId || doc.id === reservationId)
-      .filter((doc) => !intake.dataAtual || clean(doc.data()?.data, 10) === intake.dataAtual);
-    if (!candidates.length) return missing("cpf", "Não consegui localizar uma reserva correspondente. Confira o CPF ou o código informado.");
-    if (candidates.length > 1) {
-      const dates = [...new Set(candidates.slice(0, 3).map((doc) => dateLabel(clean(doc.data()?.data, 10))))];
-      return missing("reserva", `Encontrei mais de uma reserva. Qual é a data atual da reserva que deseja alterar${dates.length ? ` (${dates.join(", ")})` : ""}? Se houver duas na mesma data, informe o código.`);
-    }
-    reservationId = candidates[0].id;
+    if (!/^[A-Za-z0-9_-]{20,128}$/.test(reservationId)) return missing("codigo", "Para localizar a reserva que deseja remarcar, informe o código da reserva.");
+    if (!intake.cpfDigest) return missing("cpf", "Informe o CPF do titular junto ao código da reserva para eu localizar o pedido.");
   } else if (!/^[A-Za-z0-9_-]{8,100}$/.test(reservationId)) {
     return missing("codigo", "Para localizar a reserva que deseja remarcar, informe o código da reserva.");
   }
   const reservationDoc = await db.collection(reservationsCollection).doc(reservationId).get();
   const reservation = reservationDoc.data() || {};
-  const owns = channel === "site" ? intake.candidateIds.includes(reservationId)
-    && hash(clean(reservation.cpf).replace(/\D/g, "")) === intake.cpfDigest
+  const owns = channel === "site" ? hash(clean(reservation.cpf).replace(/\D/g, "")) === intake.cpfDigest
+    && (!intake.dataAtual || clean(reservation.data, 10) === intake.dataAtual)
     : reservaClientePodeConsultar(reservation, { canal: "whatsapp", telefone: requesterPhone });
   if (!reservationDoc.exists || !owns) return missing(channel === "site" ? "cpf" : "codigo", "Não consegui localizar uma reserva correspondente a este atendimento. Confira os dados informados.");
   intake.reservaId = reservationId;
   intake.reservaDataAtual = clean(reservation.data, 10);
+  if (intake.requestId && !suppliedTarget) {
+    const request = await db.collection(RESCHEDULE_REQUESTS).doc(intake.requestId).get();
+    if (request.exists && request.data()?.reservaId === reservationId) return requestResponse({ ...request.data(), id: request.id });
+  }
   if (!intake.novaData && !intake.novoHorario && !Object.keys(intake.horariosPorPacote || {}).length) {
     const wantsHour = /hor[aá]rio|hora\b/i.test(clean(input.mensagemCliente, 400)) && !/dia|data/i.test(clean(input.mensagemCliente, 400));
     return missing(wantsHour ? "novoHorario" : "novaData", wantsHour

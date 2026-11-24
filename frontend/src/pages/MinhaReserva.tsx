@@ -1,8 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { collection, getDocs, query, where } from "firebase/firestore";
-import { db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import {
   reservaEstaConfirmada,
@@ -33,6 +31,7 @@ type Reserva = {
 };
 
 const onlyNumbers = (value: string) => value.replace(/\D/g, "");
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
 
 const formatCpf = (value: string): string => {
   const digits = onlyNumbers(value).slice(0, 11);
@@ -120,6 +119,7 @@ const obterStatusVisual = (reserva: Reserva): StatusVisual => {
 
 export function MinhaReserva() {
   const [cpf, setCpf] = useState("");
+  const [codigo, setCodigo] = useState(() => new URLSearchParams(window.location.search).get('codigo') ?? '');
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [reservas, setReservas] = useState<Reserva[] | null>(null);
@@ -134,36 +134,28 @@ export function MinhaReserva() {
       setErro("Informe um CPF válido com 11 dígitos.");
       return;
     }
+    const bookingCode = codigo.trim();
+    if (!/^[A-Za-z0-9_-]{20,128}$/.test(bookingCode)) {
+      setErro('Informe o código completo recebido na reserva.');
+      return;
+    }
 
     setCarregando(true);
     setReservas(null);
     setPesquisaRealizada(false);
 
     try {
-      const formatado = formatCpf(digits);
-      const consultas = await Promise.all([
-        getDocs(query(collection(db, "reservas"), where("cpf", "==", formatado))),
-        getDocs(query(collection(db, "reservas"), where("cpf", "==", digits))),
-      ]);
-
-      const mapa = new Map<string, Reserva>();
-      consultas.forEach((snapshot) => {
-        snapshot.forEach((docSnap) => {
-          mapa.set(docSnap.id, { id: docSnap.id, ...(docSnap.data() as Omit<Reserva, "id">) });
-        });
+      const response = await fetch(`${API_BASE}/api/public/reservations/lookup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cpf: digits, codigo: bookingCode }),
       });
-
-      const lista = Array.from(mapa.values()).sort((a, b) => {
-        const da = a.data ?? "";
-        const db_ = b.data ?? "";
-        return db_.localeCompare(da);
-      });
-
-      setReservas(lista);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(result.reservas)) throw new Error(result.error || 'Não foi possível consultar agora.');
+      setReservas(result.reservas);
       setPesquisaRealizada(true);
     } catch (error) {
       console.error("Erro ao consultar reserva:", error);
-      setErro("Não foi possível consultar agora. Tente novamente em instantes.");
+      setErro(error instanceof Error ? error.message : "Não foi possível consultar agora. Tente novamente em instantes.");
     } finally {
       setCarregando(false);
     }
@@ -215,7 +207,7 @@ export function MinhaReserva() {
             Consulte sua reserva
           </h1>
           <p className="mt-3 text-gray-600 text-sm md:text-base max-w-md mx-auto">
-            Informe seu CPF para visualizar o status e os detalhes da sua reserva.
+            Informe seu CPF e o código da reserva para consultar o status com segurança.
           </p>
         </div>
 
@@ -226,7 +218,7 @@ export function MinhaReserva() {
           <label htmlFor="cpf-consulta" className="block text-xs font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">
             CPF do titular da reserva
           </label>
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex flex-col gap-3">
             <input
               id="cpf-consulta"
               type="text"
@@ -238,6 +230,11 @@ export function MinhaReserva() {
               maxLength={14}
               className="flex-1 px-4 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/30 focus:border-[#8B4F23] transition"
             />
+            <label htmlFor="codigo-consulta" className="mt-2 block text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Código da reserva</label>
+            <input id="codigo-consulta" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Cole o código completo da reserva" value={codigo}
+              onChange={(event) => setCodigo(event.target.value)} maxLength={128}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base focus:border-[#8B4F23] focus:outline-none focus:ring-2 focus:ring-[#8B4F23]/30" />
+            <p className="text-xs text-slate-500">O código aparece no comprovante e na confirmação enviada após o pagamento.</p>
             <button
               type="submit"
               disabled={carregando}
@@ -271,7 +268,7 @@ export function MinhaReserva() {
             </svg>
             <h3 className="text-base font-semibold text-amber-900">Nenhuma reserva encontrada</h3>
             <p className="text-sm text-amber-800 mt-1">
-              Não localizamos reservas com este CPF. Verifique se o número está correto ou{" "}
+              Não localizamos reservas com estes dados. Confira o CPF e o código informado, ou{" "}
               <Link to="/reservar" className="underline hover:text-amber-900">
                 faça uma nova reserva
               </Link>
@@ -282,7 +279,7 @@ export function MinhaReserva() {
               onClick={limparPesquisa}
               className="mt-4 text-sm text-amber-700 hover:text-amber-900 underline"
             >
-              Tentar outro CPF
+              Tentar novamente
             </button>
           </div>
         )}

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Timestamp } = require("firebase-admin/firestore");
+const { affiliateHash } = require("../dist/services/affiliates");
 const { reservationFlowFixture } = require("./helpers/reservationFlowFixture");
 
 let fixture = reservationFlowFixture({});
@@ -71,6 +72,10 @@ function setup(t, { paymentStatus = "PENDING", failAfterCreate = false, qrFailur
     if (url.pathname === "/v3/payments") {
       return json({ data: fixture.providerPayments.filter((payment) => payment.externalReference === url.searchParams.get("externalReference")) });
     }
+    if (/^\/v3\/payments\/pay_[A-Za-z0-9_]+$/.test(url.pathname)) {
+      const payment = fixture.providerPayments.find((item) => item.id === url.pathname.split('/').at(-1));
+      return payment ? json(payment) : json({ error: 'not_found' }, 404);
+    }
     if (url.pathname === "/v3/customers") return json({ data: [{ id: "cus_mock" }] });
     if (/\/pixQrCode$/.test(url.pathname)) {
       if (qrFailures-- > 0) return json({ error: "mock_qr_unavailable" }, 503);
@@ -104,6 +109,94 @@ const checkout = (overrides = {}) => ({
   billingType: "PIX",
   atribuicao: { sourceChannel: "whatsapp", agentSessionId: "whatsapp_" + PHONE, sessionId: "whatsapp_" + PHONE, utmMedium: "agente" },
   ...overrides,
+});
+
+function affiliateSeed(t, memory) {
+  const previous = process.env.AFFILIATES_ENABLED;
+  process.env.AFFILIATES_ENABLED = 'true';
+  t.after(() => { if (previous === undefined) delete process.env.AFFILIATES_ENABLED; else process.env.AFFILIATES_ENABLED = previous; });
+  const context = 'A'.repeat(43);
+  memory.rows.set('affiliate_agencies/agency-one', { name: 'Agency One', status: 'active', commissionRule: { mode: 'percent', value: 10 } });
+  memory.rows.set('affiliate_partners/partner-one', { name: 'Partner One', status: 'active', agencyId: 'agency-one' });
+  memory.rows.set('affiliate_links/partner-one', { status: 'active', partnerId: 'partner-one', agencyId: 'agency-one' });
+  memory.rows.set('_affiliate_contexts/' + affiliateHash(context), { linkId: 'partner-one', partnerId: 'partner-one', agencyId: 'agency-one',
+    capturedAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() + 86400000) });
+  return context;
+}
+
+test('indicação Pix congela regra e proprietário; body adulterado e retry não mudam origem', async (t) => {
+  const memory = setup(t);
+  const affiliateContextToken = affiliateSeed(t, memory);
+  const body = checkout({ affiliateContextToken, commercialAttribution: { agencyId: 'ATTACKER', commissionRule: { mode: 'percent', value: 100 } } });
+  const response = await charge(body);
+  assert.equal(response.statusCode, 200);
+  const raw = memory.value('reservas/' + response.body.reservaId);
+  assert.equal(raw.commercialAttribution.agencyId, 'agency-one');
+  assert.deepEqual(raw.commercialAttribution.commissionRule, { mode: 'percent', value: 10 });
+  memory.rows.get('affiliate_agencies/agency-one').commissionRule = { mode: 'fixed', value: 99 };
+  const retry = await charge(body);
+  assert.deepEqual(retry.body, response.body);
+  assert.equal(memory.providerPosts.length, 1);
+  assert.deepEqual(memory.value('reservas/' + response.body.reservaId).commercialAttribution, raw.commercialAttribution);
+});
+
+test('cartão conserva indicação server-side no handoff e rejeita troca pelo navegador', async (t) => {
+  const memory = setup(t, { paymentStatus: 'CONFIRMED' });
+  const affiliateContextToken = affiliateSeed(t, memory);
+  const link = await agent.criarLinkCartaoAgente(draft({ affiliateContextToken }));
+  const token = new URL(link.url).searchParams.get('agent_checkout');
+  assert.equal((await agent.obterCheckoutAgente(token)).affiliateContextToken, affiliateContextToken);
+  const publicPayload = await agent.obterCheckoutAgentePublico(token);
+  assert.ok(!('affiliateContextToken' in publicPayload));
+  assert.ok(!('commercialAttribution' in publicPayload));
+  assert.ok(!JSON.stringify(publicPayload).includes('commissionRule'));
+  const body = checkout({ agentCheckoutToken: token, billingType: 'CREDIT_CARD',
+    creditCard: { holderName: 'CLIENTE TESTE', number: '4111111111111111', expiryMonth: '12', expiryYear: '2099', ccv: '123' },
+    creditCardHolderInfo: { postalCode: '70000000', address: 'Rua de Teste', addressNumber: '1', province: 'Centro', city: 'Brasília', state: 'DF' } });
+  const rejected = await charge({ ...body, affiliateContextToken: 'B'.repeat(43) });
+  assert.equal(rejected.statusCode, 400); assert.equal(memory.providerPosts.length, 0);
+  const accepted = await charge(body);
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(memory.value('reservas/' + accepted.body.reservaId).commercialAttribution.partnerId, 'partner-one');
+  assert.equal(memory.value('_affiliate_payment_evidence/' + accepted.body.reservaId).state, 'paid');
+});
+
+test('reconciliação de Pix mantém snapshot original mesmo com contexto expirado e nova regra', async (t) => {
+  const memory = setup(t, { failAfterCreate: true });
+  const affiliateContextToken = affiliateSeed(t, memory);
+  const body = checkout({ affiliateContextToken });
+  const first = await charge(body);
+  assert.equal(first.statusCode, 500);
+  const attemptPath = [...memory.rows.keys()].find((path) => path.startsWith('_payment_idempotency/'));
+  const attempt = memory.rows.get(attemptPath);
+  memory.rows.set(attemptPath, { ...attempt, leaseExpiresAt: Timestamp.fromMillis(0) });
+  const original = memory.value('reservas/' + attempt.reservaId).commercialAttribution;
+  memory.rows.get('_affiliate_contexts/' + affiliateHash(affiliateContextToken)).expiresAt = Timestamp.fromMillis(0);
+  memory.rows.get('affiliate_agencies/agency-one').commissionRule = { mode: 'fixed', value: 99 };
+  const retry = await charge(body);
+  assert.equal(retry.statusCode, 200); assert.equal(memory.providerPosts.length, 1);
+  assert.deepEqual(memory.value('reservas/' + attempt.reservaId).commercialAttribution, original);
+});
+
+test('webhook afiliado não confia em pago forjado; confirma e estorna consultando provedor', async (t) => {
+  const memory = setup(t);
+  const affiliateContextToken = affiliateSeed(t, memory);
+  const response = await charge(checkout({ affiliateContextToken }));
+  const id = response.body.reservaId;
+  const payload = { event: 'PAYMENT_RECEIVED', payment: { id: response.body.cobranca.id, externalReference: id, billingType: 'PIX', status: 'RECEIVED' } };
+  await processarWebhookPagamento(payload);
+  assert.equal(memory.value('reservas/' + id).status, 'aguardando');
+  assert.equal(memory.value('_affiliate_payment_evidence/' + id), undefined);
+  memory.providerPayments[0].status = 'RECEIVED';
+  await processarWebhookPagamento(payload);
+  assert.equal(memory.value('reservas/' + id).status, 'pago');
+  assert.equal(memory.value('_affiliate_payment_evidence/' + id).state, 'paid');
+  memory.providerPayments[0].status = 'REFUNDED';
+  await processarWebhookPagamento({ ...payload, event: 'PAYMENT_REFUNDED' });
+  assert.equal(memory.value('reservas/' + id).status, 'estornado');
+  assert.equal(memory.value('_affiliate_payment_evidence/' + id).state, 'cancelled');
+  await processarWebhookPagamento(payload);
+  assert.equal(memory.value('reservas/' + id).status, 'estornado');
 });
 
 async function charge(body, key = "mock-payment-attempt-001") {

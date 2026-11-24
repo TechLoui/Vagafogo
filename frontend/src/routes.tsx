@@ -77,6 +77,37 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: "/afiliados/login",
+        lazy: async () => {
+          const { AffiliateLogin } = await import("./pages/AffiliateLogin");
+          return { Component: AffiliateLogin };
+        },
+      },
+      {
+        path: "/afiliados/ativar/:token",
+        lazy: async () => {
+          const { AffiliateActivation } = await import("./pages/AffiliateActivation");
+          return { Component: AffiliateActivation };
+        },
+      },
+      ...(["agency", "partner"] as const).map((role) => ({
+        path: role === "agency" ? "/agencia" : "/parceiro",
+        lazy: async () => {
+          const [{ AffiliatePortal }, { ProtectedRoute }] = await Promise.all([
+            import("./pages/AffiliatePortal"),
+            import("./components/ProtectedRoute"),
+          ]);
+          function ProtectedAffiliatePortal() {
+            return (
+              <ProtectedRoute redirectTo="/afiliados/login" allowedRoles={[role]}>
+                <AffiliatePortal />
+              </ProtectedRoute>
+            );
+          }
+          return { Component: ProtectedAffiliatePortal };
+        },
+      })),
+      {
         path: "/login",
         lazy: async () => {
           const { LoginAdmin } = await import("./pages/LoginAdmin");

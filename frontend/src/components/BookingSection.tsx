@@ -4,7 +4,7 @@ import { db } from '../../firebase';
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { ptBR } from "date-fns/locale";
-import { reservaContaParaOcupacao } from "../utils/reservaStatus";
+import { clearAffiliateReferral, prepareAffiliateReferral, type AffiliateReferral } from "../features/affiliateReferral";
 import {
   obterAtribuicaoReserva,
   registrarEventoJornadaReserva,
@@ -528,8 +528,33 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const [tiposClientes, setTiposClientes] = useState<TipoCliente[]>([]);
   const [loadingPacotes, setLoadingPacotes] = useState(true);
   const [reservasDia, setReservasDia] = useState<ReservaResumo[]>([]);
+  const [ocupacaoCarregando, setOcupacaoCarregando] = useState(false);
+  const [erroOcupacao, setErroOcupacao] = useState("");
+  const [ocupacaoRetry, setOcupacaoRetry] = useState(0);
+  const [affiliateReferral, setAffiliateReferral] = useState<AffiliateReferral | null>(null);
+  const [affiliateLoading, setAffiliateLoading] = useState(false);
+  const [affiliateError, setAffiliateError] = useState("");
+  const [affiliateRetry, setAffiliateRetry] = useState(0);
+  const referralKey = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('ref') ?? '';
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
   const [etapa, setEtapa] = useState<EtapaReserva>(0);
+  useEffect(() => {
+    let active = true;
+    if (initialAgentCheckout) {
+      setAffiliateReferral(null);
+      setAffiliateError('');
+      setAffiliateLoading(false);
+      return;
+    }
+    setAffiliateLoading(true);
+    setAffiliateError('');
+    void prepareAffiliateReferral().then((referral) => {
+      if (active) setAffiliateReferral(referral);
+    }).catch((error) => {
+      if (active) { setAffiliateReferral(null); setAffiliateError(error instanceof Error ? error.message : 'Não foi possível validar a indicação.'); }
+    }).finally(() => { if (active) setAffiliateLoading(false); });
+    return () => { active = false; };
+  }, [affiliateRetry, initialAgentCheckout, referralKey]);
   const initialSelectionAppliedRef = useRef<string | null>(null);
   const initialParticipantsAppliedRef = useRef<string | null>(null);
   const initialSelectionKey = JSON.stringify([initialPackageId, initialComboId, initialExperience, initialDate, initialTime,
@@ -566,6 +591,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   const journeyStartedRef = useRef(false);
   const journeyLatestPayloadRef = useRef<EventoJornadaReserva | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [codigoReservaConsulta, setCodigoReservaConsulta] = useState(initialAgentCheckout?.reservaId ?? "");
+  const consultaReservaHref = codigoReservaConsulta
+    ? `/minha-reserva?codigo=${encodeURIComponent(codigoReservaConsulta)}` : '/minha-reserva';
   const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>("PIX");
   const [modalReembolsoAberto, setModalReembolsoAberto] = useState<boolean>(false);
   const [confirmacaoJuntarMesa, setConfirmacaoJuntarMesa] = useState<{
@@ -701,6 +729,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
     setEtapa(0);
     setSelectedPackages([]);
     setNome("");
+    setCodigoReservaConsulta("");
     setEmail("");
     setTelefone("");
     setWhatsappMarketingOptIn(false);
@@ -1644,27 +1673,34 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
   useEffect(() => {
     if (!selectedDay) {
       setReservasDia([]);
+      setOcupacaoCarregando(false);
+      setErroOcupacao('');
       return;
     }
     const dataStr = selectedDay.toISOString().slice(0, 10);
-    const q = query(collection(db, "reservas"), where("data", "==", dataStr));
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const dados = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        })) as ReservaResumo[];
-        const reservasAtivas = dados.filter(reservaContaParaOcupacao);
-        setReservasDia(reservasAtivas);
-      },
-      (error) => {
-        console.error("Erro ao acompanhar reservas:", error);
-        setReservasDia([]);
+    let active = true;
+    let busy = false;
+    const controller = new AbortController();
+    setOcupacaoCarregando(true);
+    const load = async () => {
+      if (busy || !active) return;
+      busy = true;
+      try {
+        const response = await fetch(`${API_BASE}/api/public/occupancy?date=${encodeURIComponent(dataStr)}`, { signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok || !Array.isArray(body.ocupacao)) throw new Error('Ocupação indisponível');
+        if (active) { setReservasDia(body.ocupacao); setErroOcupacao(''); }
+      } catch {
+        if (active) setErroOcupacao('Não foi possível conferir as vagas agora. Tente novamente para continuar.');
+      } finally {
+        busy = false;
+        if (active) setOcupacaoCarregando(false);
       }
-    );
-    return () => unsubscribe();
-  }, [selectedDay]);
+    };
+    void load();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+  }, [selectedDay, ocupacaoRetry]);
 
   useEffect(() => {
     if (!selectedDay) {
@@ -2492,6 +2528,12 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
   const getErrorsAteEtapa = (ateEtapa: EtapaReserva) => {
     const errors: Record<string, string> = {};
+    if (ateEtapa >= 1 && selectedDay && (ocupacaoCarregando || erroOcupacao)) {
+      errors.data = erroOcupacao || 'Estamos conferindo as vagas. Aguarde um momento.';
+    }
+    if (ateEtapa >= 4 && (affiliateLoading || affiliateError)) {
+      errors.participantes = affiliateError || 'Estamos validando a indicação. Aguarde um momento.';
+    }
 
     // Etapa 0: Pacotes
     if (ateEtapa >= 0) {
@@ -2971,6 +3013,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
         pacoteIds: selectedPackages,
         comboId: grupoComboPrincipal?.refId || null,
         atribuicao: obterAtribuicaoReserva(),
+        ...(affiliateReferral ? { affiliateContextToken: affiliateReferral.contextToken } : {}),
         ...(initialAgentCheckout?.checkoutToken ? { agentCheckoutToken: initialAgentCheckout.checkoutToken } : {}),
         ...(!initialAgentCheckout ? { whatsappMarketingOptIn } : {}),
       };
@@ -3081,6 +3124,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
       }
 
       if (resposta?.status === 'ok') {
+        if (typeof resposta.reservaId === 'string') setCodigoReservaConsulta(resposta.reservaId);
         console.log('✅ Resposta OK recebida:', resposta);
         console.log('🔗 Invoice URL:', resposta.cobranca?.invoiceUrl);
         console.log('🔑 PIX Key:', resposta.cobranca?.pixKey);
@@ -3863,6 +3907,19 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
                 {/* Wrapper de conteúdo — flex-1 com scroll interno no mobile */}
                 <div ref={contentScrollRef} className="checkout-step-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-0.5 sm:pr-1">
+
+                {(affiliateReferral || affiliateLoading || affiliateError) && (
+                  <div className={`mb-3 rounded-xl border p-3 text-sm ${affiliateError ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-100 bg-emerald-50 text-emerald-900'}`} role="status">
+                    {affiliateError || (affiliateLoading ? 'Validando seu link de indicação…' : `Indicação de ${affiliateReferral?.partnerName}`)}
+                    {affiliateError && <div className="mt-2 flex flex-wrap gap-3">
+                      <button type="button" className="font-semibold underline" onClick={() => setAffiliateRetry((value) => value + 1)}>Tentar novamente</button>
+                      <button type="button" className="underline" onClick={() => { clearAffiliateReferral(); setAffiliateReferral(null); setAffiliateError(''); setAffiliateLoading(false); }}>Reservar sem indicação</button>
+                    </div>}
+                  </div>
+                )}
+                {erroOcupacao && <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+                  {erroOcupacao} <button type="button" className="font-semibold underline" onClick={() => setOcupacaoRetry((value) => value + 1)}>Conferir novamente</button>
+                </div>}
 
                 {/* ============ ETAPA 1 — DATA ============ */}
                 {etapa === 1 && (
@@ -5234,6 +5291,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                   <p className="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">
                     A confirmação foi enviada para <strong className="text-[#8B4F23]">{email}</strong>.
                   </p>
+                  {codigoReservaConsulta && <p className="mt-2 break-all text-[10px] text-slate-500">Código da reserva: <span className="select-all font-mono">{codigoReservaConsulta}</span></p>}
                 </div>
 
                 <div className="relative min-w-0">
@@ -5259,7 +5317,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                   )}
 
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <a href="/minha-reserva" className="inline-flex items-center justify-center rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-[#A05D2B]">
+                    <a href={consultaReservaHref} className="inline-flex items-center justify-center rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-[#A05D2B]">
                       Consultar reserva
                     </a>
                     <button type="button" onClick={resetFormulario} className="rounded-xl border border-[#8B4F23]/20 bg-white px-4 py-2.5 text-sm font-semibold text-[#8B4F23] transition hover:bg-[#8B4F23]/5">
@@ -5312,8 +5370,9 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                     </>
                   )}
                   {expirationDate && <p className="mt-2 text-center text-[10px] text-white/60">Válido até {new Date(expirationDate).toLocaleString("pt-BR")}</p>}
+                  {codigoReservaConsulta && <p className="mt-2 break-all text-[10px] text-white/75">Código da reserva: <span className="select-all font-mono">{codigoReservaConsulta}</span></p>}
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:mt-3">
-                    <a href="/minha-reserva" className="rounded-xl bg-[#E0B13C] px-2 py-2.5 text-center text-xs font-bold text-[#2D1E0F] transition hover:bg-[#efc859] sm:px-4 sm:text-sm">Consultar reserva</a>
+                    <a href={consultaReservaHref} className="rounded-xl bg-[#E0B13C] px-2 py-2.5 text-center text-xs font-bold text-[#2D1E0F] transition hover:bg-[#efc859] sm:px-4 sm:text-sm">Consultar reserva</a>
                     <button type="button" onClick={resetFormulario} className="rounded-xl border border-white/25 bg-white/10 px-2 py-2.5 text-xs font-semibold text-white transition hover:bg-white/15 sm:px-4 sm:text-sm">Nova reserva</button>
                   </div>
                 </div>
@@ -5333,9 +5392,10 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
                     {cartaoResultado.status === "processing" ? "Estamos processando" : cartaoResultado.solicitarNovoLink ? "Solicite um novo link" : cartaoResultado.status === "error" ? "Revise os dados do cartão" : "Confirmação em andamento"}
                   </h3>
                   <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">{cartaoResultado.message}</p>
+                  {codigoReservaConsulta && <p className="mt-2 break-all text-[10px] text-slate-500">Código da reserva: <span className="select-all font-mono">{codigoReservaConsulta}</span></p>}
                   <div className="mx-auto mt-4 grid max-w-sm gap-2 sm:grid-cols-2">
                     {["pending", "retry"].includes(cartaoResultado.status) && (
-                      <a href="/minha-reserva" className="rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B]">Consultar reserva</a>
+                      <a href={consultaReservaHref} className="rounded-xl bg-[#8B4F23] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#A05D2B]">Consultar reserva</a>
                     )}
                     {cartaoResultado.solicitarNovoLink ? (
                       <a

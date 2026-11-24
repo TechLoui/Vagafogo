@@ -107,6 +107,11 @@ const criarEmailUsoEscopo = (enviados = 0, limite = 0): EmailUsoEscopo => {
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://vagafogo-production.up.railway.app';
+const adminRequestHeaders = async (json = false): Promise<Record<string, string>> => {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error('Sua sessão expirou. Entre novamente para continuar.');
+  return { Authorization: `Bearer ${token}`, ...(json ? { 'Content-Type': 'application/json' } : {}) };
+};
 
 const emailTemplateConfirmacaoPadrao =
   'Olá {nome}!\n\nSeu pagamento foi confirmado automaticamente e sua reserva está garantida. Não é necessário enviar comprovante.\n\nAtividade: {atividade}\nData: {datareserva}\nHorário: {horario}\nParticipantes: {participantes}\nValor: {valor}\n\nAguardamos você na Vagafogo.';
@@ -5542,7 +5547,7 @@ export default function AdminDashboard() {
   const carregarFilaEmails = useCallback(async () => {
     try {
       setEmailFilaCarregando(true);
-      const response = await fetch(`${API_BASE}/emails/fila?limit=500`);
+      const response = await fetch(`${API_BASE}/emails/fila?limit=500`, { headers: await adminRequestHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data?.error || `Status ${response.status}`);
@@ -5582,7 +5587,7 @@ export default function AdminDashboard() {
   const tentarReenviarEmail = async (item: EmailFilaItem) => {
     try {
       setEmailAcaoCarregando({ id: item.id, acao: 'retry' });
-      const response = await fetch(`${API_BASE}/emails/${item.id}/retry`, { method: 'POST' });
+      const response = await fetch(`${API_BASE}/emails/${item.id}/retry`, { method: 'POST', headers: await adminRequestHeaders() });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok || data?.success === false) {
@@ -5615,7 +5620,7 @@ export default function AdminDashboard() {
 
     try {
       setEmailAcaoCarregando({ id: item.id, acao: 'excluir' });
-      const response = await fetch(`${API_BASE}/emails/${item.id}/excluir`, { method: 'POST' });
+      const response = await fetch(`${API_BASE}/emails/${item.id}/excluir`, { method: 'POST', headers: await adminRequestHeaders() });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok || data?.success === false) {
@@ -5643,7 +5648,7 @@ export default function AdminDashboard() {
     try {
       setProcessandoFila(true);
       const url = `${API_BASE}/process-emails?data_minima=${encodeURIComponent(dataMinima)}`;
-      const response = await fetch(url, { method: 'POST' });
+      const response = await fetch(url, { method: 'POST', headers: await adminRequestHeaders() });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok || data?.success === false) {
@@ -5679,7 +5684,7 @@ export default function AdminDashboard() {
       setExcluindoEmMassa(true);
       const response = await fetch(`${API_BASE}/emails/excluir-em-massa`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await adminRequestHeaders(true),
         body: JSON.stringify({ reservaIds: ids }),
       });
       const data = await response.json().catch(() => ({}));

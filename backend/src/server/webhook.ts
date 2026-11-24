@@ -12,6 +12,8 @@ import { requestAgentService } from "../services/agentGateway";
 import { concluirLeadAgenteComReserva } from "../services/agentReservationTools";
 import { classificarDataDisparo, normalizarDataDisparo } from "../services/whatsappDispatchDate";
 import { normalizarStatusReserva } from "../services/reservaStatus";
+import { revalidateAffiliateWebhook } from "../services/affiliatesReferral";
+import { timingSafeEqual } from "crypto";
 
 type WebhookPayment = {
   id?: string;
@@ -318,7 +320,18 @@ const router = Router();
 const taskQueue: Array<{ payload: WebhookPayload; attempt: number }> = [];
 let queueRunning = false;
 
+export const validarTokenWebhook = (provided: unknown, configured = process.env.ASAAS_WEBHOOK_AUTH_TOKEN) => {
+  if (!configured) return true; // Affiliate evidence is always independently revalidated with the provider below.
+  if (typeof provided !== "string") return false;
+  const expected = Buffer.from(configured);
+  const actual = Buffer.from(provided);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+};
 router.post("/", (req, res) => {
+  if (!validarTokenWebhook(req.get("asaas-access-token"))) {
+    res.status(401).json({ error: "WEBHOOK_UNAUTHORIZED" });
+    return;
+  }
   enqueueTask(req.body as WebhookPayload);
   res.status(200).send("OK");
 });
@@ -376,7 +389,15 @@ async function processTask(task: { payload: WebhookPayload; attempt: number }) {
 
 export async function processarWebhookPagamento(payload: WebhookPayload) {
   const event = payload?.event;
-  const payment = payload?.payment ?? undefined;
+  let payment = payload?.payment ?? undefined;
+
+  if (/REFUND|CHARGEBACK|DELETED|CANCEL/i.test(event ?? "") && payment?.externalReference && payment.id) {
+    const reservation = await getDoc(doc(db, "reservas", payment.externalReference));
+    if (reservation.exists() && reservation.data()?.commercialAttribution) {
+      await revalidateAffiliateWebhook(payment.externalReference, payment.id);
+    }
+    return;
+  }
 
   if (!shouldProcess(event, payment)) {
     console.log(
@@ -403,6 +424,12 @@ export async function processarWebhookPagamento(payload: WebhookPayload) {
   }
 
   const reservaExistente = reservaSnap.data() as Record<string, any>;
+  if (reservaExistente.commercialAttribution) {
+    // A forged paid payload must never produce commission evidence or confirmation.
+    const verified = await revalidateAffiliateWebhook(externalReference, String(payment?.id ?? ""));
+    if (!verified || !shouldProcess(event, verified)) return;
+    payment = verified;
+  }
   const pagamentoEsperado = String(reservaExistente.asaasPaymentId ?? reservaExistente.pagamentoId ?? "").trim();
   if (pagamentoEsperado && payment?.id !== pagamentoEsperado) {
     console.warn(`[webhook] Pagamento não corresponde à cobrança da reserva ${externalReference}.`);

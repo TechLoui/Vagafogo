@@ -54,6 +54,7 @@ import "dayjs/locale/pt-br";
 import { auth, db } from "../../firebase";
 import logo from "../assets/logo.jpg";
 import heroImage from "../assets/Carrossel-1.jpg";
+import { AffiliateAdminSection } from "../features/affiliates/AffiliateAdminSection";
 import {
   apurarComissaoCheckout,
   hojeEmSaoPaulo,
@@ -73,6 +74,7 @@ type SectionKey =
   | "campanhas"
   | "relatorios"
   | "financeiro"
+  | "afiliados"
   | "configuracoes";
 type PeriodKey = "today" | "7days" | "30days" | "month" | "lastMonth" | "custom";
 type FinanceOriginFilter = "all" | "manual" | "checkout" | "other";
@@ -346,6 +348,10 @@ const sectionMeta: Record<SectionKey, { title: string; subtitle: string }> = {
     title: "Visão financeira",
     subtitle: "Visão gerencial dos valores das reservas.",
   },
+  afiliados: {
+    title: "Afiliados",
+    subtitle: "Agências, parceiros independentes e conferência dos repasses.",
+  },
   configuracoes: {
     title: "Integrações e dados",
     subtitle:
@@ -361,6 +367,7 @@ const navigation: Array<{ key: SectionKey; label: string; icon: IconType }> = [
   { key: "campanhas", label: "Campanhas", icon: FaBullhorn },
   { key: "relatorios", label: "Relatórios", icon: FaChartBar },
   { key: "financeiro", label: "Financeiro", icon: FaDollarSign },
+  { key: "afiliados", label: "Afiliados", icon: FaUserFriends },
   { key: "configuracoes", label: "Fontes de dados", icon: FaCog },
 ];
 
@@ -1881,7 +1888,7 @@ export function CRM() {
               </h1>
               <p>{sectionMeta[activeSection].subtitle}</p>
             </div>
-            <div className="crm-page-head__tools">
+            {activeSection !== "afiliados" && <div className="crm-page-head__tools">
               {(["today", "7days", "30days", "month", "lastMonth"] as PeriodKey[]).map(
                 (key) => (
                   <button
@@ -1952,7 +1959,7 @@ export function CRM() {
                 <FaDownload />
                 <span>Exportar</span>
               </button>
-            </div>
+            </div>}
           </div>
 
           {reservationsError ? (
@@ -2014,6 +2021,8 @@ export function CRM() {
               allReservations={filteredReservations}
               customers={filteredCustomers}
             />
+          ) : activeSection === "afiliados" ? (
+            <AffiliateAdminSection />
           ) : activeSection === "financeiro" ? (
             <FinanceSection
               reservations={financialPeriodReservations}

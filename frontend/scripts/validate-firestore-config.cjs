@@ -117,6 +117,18 @@ for (const collectionName of [
   '_formularios_public_ids',
   '_formularios_admin_idempotency',
   'respostas',
+  '_payment_idempotency',
+  '_crm_admin_access',
+  'affiliate_memberships',
+  'affiliate_agencies',
+  'affiliate_partners',
+  'affiliate_links',
+  '_affiliate_emails',
+  '_affiliate_link_tokens',
+  '_affiliate_contexts',
+  '_affiliate_session_contexts',
+  '_affiliate_activations',
+  '_affiliate_payment_evidence',
 ]) {
   const body = matchBody(`/${collectionName}/{document=**}`);
   assert.match(
@@ -135,6 +147,18 @@ for (const collectionName of [
   '_formularios_public_ids',
   '_formularios_admin_idempotency',
   'respostas',
+  '_payment_idempotency',
+  '_crm_admin_access',
+  'affiliate_memberships',
+  'affiliate_agencies',
+  'affiliate_partners',
+  'affiliate_links',
+  '_affiliate_emails',
+  '_affiliate_link_tokens',
+  '_affiliate_contexts',
+  '_affiliate_session_contexts',
+  '_affiliate_activations',
+  '_affiliate_payment_evidence',
 ]) {
   assert.deepEqual(
     declaredMatchPaths.filter((matchPath) => matchPath.startsWith(`/${collectionName}/`)),
@@ -144,6 +168,7 @@ for (const collectionName of [
 }
 
 for (const collectionName of [
+  'pacotes',
   'tipos_clientes',
   'combos',
   'disponibilidade',
@@ -152,60 +177,60 @@ for (const collectionName of [
   assert.match(body, /allow\s+read\s*:\s*if\s+true\s*;/, `${collectionName} precisa manter leitura publica`);
   assert.match(
     body,
-    /allow\s+create\s*,\s*update\s*,\s*delete\s*:\s*if\s+isSignedIn\(\)\s*;/,
-    `${collectionName} precisa exigir login nas escritas`,
+    /allow\s+create\s*,\s*update\s*,\s*delete\s*:\s*if\s+isPrivileged\(\)\s*;/,
+    `${collectionName} precisa exigir privilegio administrativo nas escritas`,
   );
 }
-
-const packagesBody = matchBody('/pacotes/{documentId}');
-assert.match(
-  packagesBody,
-  /allow\s+read\s*,\s*create\s*:\s*if\s+true\s*;/,
-  'pacotes precisa manter leitura e criacao anonimas para o backend legado',
-);
-assert.match(
-  packagesBody,
-  /allow\s+update\s*,\s*delete\s*:\s*if\s+isSignedIn\(\)\s*;/,
-  'Atualizacao e exclusao de pacotes precisam exigir login',
-);
 
 const reservationsBody = matchBody('/reservas/{documentId}');
 assert.match(
   reservationsBody,
-  /allow\s+read\s*,\s*write\s*:\s*if\s+true\s*;/,
-  'reservas precisa preservar o backend legado anonimo ate sua migracao',
+  /allow\s+read\s*,\s*write\s*:\s*if\s+isPrivileged\(\)\s*;/,
+  'reservas precisa negar acesso publico e logins de agencias/parceiros',
 );
 
 for (const collectionName of ['mesas', 'teste_conexao']) {
   const body = matchBody(`/${collectionName}/{documentId}`);
   assert.match(
     body,
-    /allow\s+read\s*,\s*create\s*,\s*update\s*,\s*delete\s*:\s*if\s+isSignedIn\(\)\s*;/,
-    `${collectionName} precisa exigir login em toda operacao`,
+    /allow\s+read\s*,\s*create\s*,\s*update\s*,\s*delete\s*:\s*if\s+isPrivileged\(\)\s*;/,
+    `${collectionName} precisa exigir privilegio administrativo em toda operacao`,
   );
+}
+
+for (const collectionName of [
+  'crm_campanhas', 'crm_campanhas_testes', 'crm_jornadas', 'crm_leads_agente',
+  'crm_whatsapp_contatos', 'crm_whatsapp_mensagens', 'whatsapp_notificacoes_internas',
+]) {
+  const id = collectionName === 'crm_campanhas' ? 'campaignId'
+    : collectionName === 'crm_campanhas_testes' ? 'testId'
+    : collectionName === 'crm_jornadas' ? 'journeyId'
+    : collectionName === 'crm_leads_agente' ? 'leadId' : 'documentId';
+  const body = matchBody(`/${collectionName}/{${id}}`);
+  assert.match(body, /allow\s+read\s*:\s*if\s+isPrivileged\(\)\s*;/);
+  assert.match(body, /allow\s+write\s*:\s*if\s+false\s*;/);
 }
 
 const configurationsBody = matchBody('/configuracoes/{configId}');
 assert.match(
   configurationsBody,
-  /allow\s+get\s*:\s*if\s+configId\s+in\s*\[[\s\S]*?'site'[\s\S]*?'email'[\s\S]*?'mensagens'[\s\S]*?'whatsapp'[\s\S]*?'emailQuota'[\s\S]*?\]\s*\|\|\s*isSignedIn\(\)\s*;/,
-  'Leituras diretas de configuracao exigidas pelo backend legado precisam ser preservadas',
+  /allow\s+get\s*:\s*if\s+configId\s*==\s*'site'\s*\|\|\s*isPrivileged\(\)\s*;/,
+  'Somente site pode expor configuracao publica',
 );
 assert.match(
   configurationsBody,
-  /allow\s+list\s*:\s*if\s+isSignedIn\(\)\s*;/,
-  'Listagem de configuracoes precisa exigir login',
+  /allow\s+list\s*:\s*if\s+isPrivileged\(\)\s*;/,
+  'Listagem de configuracoes precisa exigir privilegio administrativo',
 );
 assert.match(
   configurationsBody,
-  /allow\s+create\s*,\s*update\s*:\s*if\s+configId\s*==\s*'emailQuota'\s*\|\|\s*isSignedIn\(\)\s*;/,
-  'Somente emailQuota pode preservar escrita anonima de configuracao',
+  /allow\s+create\s*,\s*update\s*,\s*delete\s*:\s*if\s+isPrivileged\(\)\s*;/,
+  'Toda escrita de configuracao precisa exigir privilegio administrativo',
 );
-assert.match(
-  configurationsBody,
-  /allow\s+delete\s*:\s*if\s+isSignedIn\(\)\s*;/,
-  'Exclusao de configuracoes precisa exigir login',
-);
+
+assert.match(rules, /function\s+isCrmAdmin\(\)[\s\S]*?_crm_admin_access\/\$\(request\.auth\.uid\)[\s\S]*?\.data\.status\s*==\s*'active'[\s\S]*?\.data\.approvedUntil\s*>\s*request\.time/);
+assert.match(rules, /function\s+isBackendService\(\)[\s\S]*?request\.auth\.uid\s*==\s*'vagafogo-server-backend'[\s\S]*?request\.auth\.token\.serverBackend\s*==\s*true/);
+assert.doesNotMatch(rules, /isSignedIn\s*\(/, 'Login isolado nao concede privilegios globais');
 
 assert.doesNotMatch(
   rules,
@@ -215,4 +240,17 @@ assert.doesNotMatch(
 
 console.log('Configuracao e invariantes de seguranca do Firestore validadas.');
 console.log('- formularios, respostas e registros internos: acesso cliente negado');
-console.log('- colecoes legadas: politica explicita, sem wildcard global');
+console.log('- colecoes privadas: somente aprovacao administrativa ou sessao backend autenticada');
+console.log('- agencias e parceiros: acesso exclusivamente por API com escopo do UID');
+
+assert.equal(firebaseConfig.storage?.rules, 'storage.rules', 'firebase.json precisa publicar storage.rules');
+const storageRules = readProjectFile(firebaseConfig.storage.rules);
+validateBalancedTokens(storageRules);
+assert.match(storageRules, /service\s+firebase\.storage\s*\{/);
+assert.match(storageRules, /firestore\.get\([\s\S]*?_crm_admin_access[\s\S]*?approvedUntil\s*>\s*request\.time/);
+assert.match(storageRules, /request\.auth\.uid\s*==\s*'vagafogo-server-backend'[\s\S]*?request\.auth\.token\.serverBackend\s*==\s*true/);
+assert.doesNotMatch(storageRules, /isSignedIn\s*\(/);
+const publicStoragePaths = [...storageRules.matchAll(/match\s+(\/[^\s]+)\s*\{\s*allow\s+get\s*:\s*if\s+true\s*;/g)].map((match) => match[1]);
+assert.deepEqual(publicStoragePaths, ['/pacotes/icones/{packageId}/{filename}', '/combos/icones/{comboId}/{filename}']);
+assert.doesNotMatch(storageRules, /allow\s+(?:write|create|update|delete)[^;]*:\s*if\s+true\s*;/);
+console.log('- Storage: somente icones de catalogo publicos; alteracoes exigem privilegio');

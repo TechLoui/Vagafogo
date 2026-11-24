@@ -5,6 +5,7 @@ import { PerguntaPersonalizadaResposta } from "../types/perguntasPersonalizadas"
 import { reservaEstaConfirmada } from "./reservaStatus";
 import { obterCamposRetencaoReservaNaCriacao } from "./reservaRetention";
 import { mapaIdadesInteiras } from "./reservaIdades";
+import type { CommercialAttribution } from "./affiliates";
 
 const normalizarNumero = (valor: unknown) => {
   const numero = Number(valor);
@@ -161,6 +162,7 @@ export type CriarReservaPayload = {
   perguntasPersonalizadas?: PerguntaPersonalizadaResposta[];
   atribuicao?: AtribuicaoReservaPayload;
   whatsappMarketingOptIn?: boolean;
+  commercialAttribution?: CommercialAttribution;
 };
 
 export async function criarReserva(payload: CriarReservaPayload): Promise<string> {
@@ -192,6 +194,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     perguntasPersonalizadas,
     atribuicao,
     whatsappMarketingOptIn,
+    commercialAttribution,
   } = payload;
 
   const participantesPorTipoNormalizado = normalizarMapa(participantesPorTipo);
@@ -262,6 +265,7 @@ export async function criarReserva(payload: CriarReservaPayload): Promise<string
     canalOrigem,
     ...(dominioOrigem ? { dominioOrigem } : {}),
     ...(atribuicaoNormalizada ? { atribuicao: atribuicaoNormalizada } : {}),
+    ...(commercialAttribution ? { commercialAttribution } : {}),
     ...(whatsappMarketingOptIn === true
       ? {
           whatsappMarketingOptIn: true,

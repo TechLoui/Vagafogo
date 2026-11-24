@@ -44,6 +44,10 @@ export function RouteSeo() {
   const { pathname } = useLocation();
   const normalizedPath = normalizePath(pathname);
 
+  if (/^\/(afiliados|agencia|parceiro)(\/|$)/i.test(normalizedPath)) {
+    return <Seo path={normalizedPath} title="Área de parceiros | Santuário Vagafogo" description="Acesso restrito aos parceiros do Santuário Vagafogo." noindex />;
+  }
+
   if (publicSeoPaths.includes(normalizedPath as SeoPath)) {
     return <Seo path={normalizedPath as SeoPath} />;
   }

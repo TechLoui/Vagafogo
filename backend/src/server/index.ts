@@ -9,6 +9,13 @@ import webhookRouter, {
   processarConfirmacaoReservaAgente,
 } from "./webhook";
 import apiRouter from "./api";
+import affiliatesRouter from "./affiliates";
+import { initializeBackendFirebaseAuth } from "../services/firebase";
+import {
+  consultarOcupacaoPublica, consultarReservasPublicasTitular, cpfConsultaValido,
+  codigoConsultaValido, publicBookingDateValid,
+} from "../services/publicBookingData";
+import { obterContextoAfiliadoSessao, vincularContextoAfiliadoSessao } from "../services/affiliatesReferral";
 import {
   iniciarLimpezaAutomaticaReservas,
   obterCamposRetencaoReservaNaAtualizacao,
@@ -131,6 +138,7 @@ import {
   iniciarFinalizadorLeadsAgente,
   listarCatalogoAgente,
   obterCheckoutAgente,
+  obterCheckoutAgentePublico,
   obterRascunhoReservaAgente,
   registrarInatividadeLeadAgente,
   registrarLeadAgente,
@@ -253,6 +261,48 @@ const consumeSiteChatRateLimit = (key: string, windowMs = SITE_CHAT_WINDOW_MS, m
   return true;
 };
 
+app.use('/api/affiliates', affiliatesRouter);
+
+app.get('/api/public/occupancy', async (req, res) => {
+  const date = String(req.query.date ?? '');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const maximum = new Date(`${today}T12:00:00Z`);
+  maximum.setUTCFullYear(maximum.getUTCFullYear() + 2);
+  if (!publicBookingDateValid(date) || date < today || date > maximum.toISOString().slice(0, 10)) {
+    res.status(400).json({ error: 'Informe uma data de visita válida.' });
+    return;
+  }
+  if (!consumeSiteChatRateLimit(`public-occupancy:${req.ip}`, 60 * 60 * 1000, 240)) {
+    res.status(429).json({ error: 'Aguarde um momento antes de consultar novamente.' });
+    return;
+  }
+  try {
+    res.set('Cache-Control', 'public, max-age=15');
+    res.json({ date, ocupacao: await consultarOcupacaoPublica(date) });
+  } catch {
+    res.status(503).json({ error: 'Não foi possível conferir as vagas agora.' });
+  }
+});
+
+app.post('/api/public/reservations/lookup', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const cpf = String(req.body?.cpf ?? '').replace(/\D/g, '');
+  const codigo = String(req.body?.codigo ?? '').trim();
+  if (!cpfConsultaValido(cpf) || !codigoConsultaValido(codigo)) {
+    res.status(400).json({ error: 'Confira o CPF e o código da reserva.' });
+    return;
+  }
+  if (!consumeSiteChatRateLimit(`public-reservation-lookup:${req.ip}`, 10 * 60 * 1000, 12)) {
+    res.status(429).json({ error: 'Aguarde alguns minutos antes de tentar novamente.' });
+    return;
+  }
+  try {
+    res.json({ reservas: await consultarReservasPublicasTitular(cpf, codigo) });
+  } catch {
+    res.status(503).json({ error: 'Não foi possível consultar a reserva agora.' });
+  }
+});
+
 // Canal publico do chat do site. O navegador nunca recebe o token interno do
 // Agente: o backend valida e limita a entrada antes de encaminhar ao mesmo
 // cerebro usado pelo atendimento assistido e pelo CRM.
@@ -336,6 +386,18 @@ app.post('/atendimento/site/mensagem', async (req, res) => {
   if (existingConversation && Date.now() - existingConversation.lastMessageAt >= SITE_CHAT_INACTIVITY_MS) {
     res.status(410).json({ error: "SITE_CHAT_SESSION_EXPIRED", mensagem: "Este atendimento expirou após 2 horas sem atividade. Inicie um novo chat para continuar." });
     return;
+  }
+  if (req.body?.affiliateContextToken !== undefined) {
+    if (process.env.AFFILIATES_ENABLED !== 'true') {
+      res.status(503).json({ code: 'AFFILIATES_NOT_ENABLED', mensagem: 'Este link de indicação ainda não está disponível.' });
+      return;
+    }
+    try {
+      await vincularContextoAfiliadoSessao(req.body.affiliateContextToken, sessionId);
+    } catch {
+      res.status(409).json({ code: 'AFFILIATE_REFERRAL_INVALID', mensagem: 'Não foi possível vincular esta indicação ao atendimento. Confira seu link ou inicie uma nova reserva.' });
+      return;
+    }
   }
   if (existingConversation?.mode === "blocked") {
     res.status(403).json({
@@ -774,7 +836,7 @@ app.get('/checkout-agente/:token', async (req, res) => {
   res.set("Cache-Control", "no-store, max-age=0");
   res.set("Pragma", "no-cache");
   try {
-    res.json(await obterCheckoutAgente(req.params.token));
+    res.json(await obterCheckoutAgentePublico(req.params.token));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = message === "AGENT_CHECKOUT_NOT_FOUND" ? 404
@@ -1371,7 +1433,9 @@ app.post('/internal/agente/ferramentas/preferencias-pos-reserva', exigirServicoA
 app.post('/internal/agente/ferramentas/link-cartao', exigirServicoAgente, async (req, res) => {
   try {
     const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
-    res.json(await criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution }));
+    const affiliateContextToken = process.env.AFFILIATES_ENABLED === 'true'
+      ? await obterContextoAfiliadoSessao(req.body?.sessionId) : undefined;
+    res.json(await criarLinkCartaoAgente({ ...(req.body ?? {}), ...campaignAttribution, affiliateContextToken }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(message === 'FIREBASE_ADMIN_UNAVAILABLE' ? 503 : 400).json({ error: message });
@@ -1520,9 +1584,12 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
     }
     const campaignAttribution = await obterAtribuicaoCampanhaPorTelefone(req.body?.telefone).catch(() => ({}));
     const categorias = disponibilidade.categoriasLegadas;
+    const affiliateContextToken = process.env.AFFILIATES_ENABLED === 'true'
+      ? await obterContextoAfiliadoSessao(requestedSessionId) : undefined;
     req.headers["idempotency-key"] = idempotencyKey;
     req.body = {
       ...(req.body ?? {}),
+      affiliateContextToken,
       valor: disponibilidade.valor,
       atividade: disponibilidade.oferta.nome,
       participantes: disponibilidade.participantes,
@@ -1567,7 +1634,7 @@ app.post('/internal/agente/ferramentas/criar-pix', exigirServicoAgente, async (r
   }
 });
 
-app.post('/webhook-test', (req, res) => {
+app.post('/webhook-test', exigirAdminCrm, (req, res) => {
   res.status(200).send('OK');
 });
 
@@ -1587,7 +1654,7 @@ app.use('/webhook', webhookRouter);
 app.use('/api', apiRouter);
 
 // Endpoint para testar atualização de status (apenas para debug)
-app.post('/test-update-status/:reservaId', async (req, res) => {
+app.post('/test-update-status/:reservaId', exigirAdminCrm, async (req, res) => {
   try {
     const { reservaId } = req.params;
     const { status } = req.body;
@@ -1624,7 +1691,7 @@ app.post('/test-update-status/:reservaId', async (req, res) => {
 //   ?incluir_antigas=true  -> processa reservas com data anterior a hoje (cuidado!)
 //   ?limite=N              -> limite de envios por execucao (default 50)
 //   ?data_minima=YYYY-MM-DD -> so envia para reservas com data >= esta data
-app.post('/process-emails', async (req, res) => {
+app.post('/process-emails', exigirAdminCrm, async (req, res) => {
   try {
     const incluirAntigas = req.query?.incluir_antigas === 'true';
     const limiteParam = Number(req.query?.limite ?? '');
@@ -1645,7 +1712,7 @@ app.post('/process-emails', async (req, res) => {
 
 // Excluir varios emails da fila de uma vez
 // Body: { reservaIds: string[] }
-app.post('/emails/excluir-em-massa', async (req, res) => {
+app.post('/emails/excluir-em-massa', exigirAdminCrm, async (req, res) => {
   try {
     const raw = (req.body as { reservaIds?: unknown })?.reservaIds;
     if (!Array.isArray(raw)) {
@@ -1667,7 +1734,7 @@ app.post('/emails/excluir-em-massa', async (req, res) => {
   }
 });
 
-app.get('/emails/fila', async (req, res) => {
+app.get('/emails/fila', exigirAdminCrm, async (req, res) => {
   try {
     const limit = Number(req.query.limit ?? 200);
     const resultado = await listarFilaEmailsConfirmacao(
@@ -1680,7 +1747,7 @@ app.get('/emails/fila', async (req, res) => {
   }
 });
 
-app.post('/emails/:reservaId/retry', async (req, res) => {
+app.post('/emails/:reservaId/retry', exigirAdminCrm, async (req, res) => {
   try {
     const { reservaId } = req.params;
     const resultado = await tentarReenviarEmailConfirmacaoReserva(reservaId);
@@ -1704,7 +1771,7 @@ app.post('/emails/:reservaId/retry', async (req, res) => {
   }
 });
 
-app.post('/emails/:reservaId/excluir', async (req, res) => {
+app.post('/emails/:reservaId/excluir', exigirAdminCrm, async (req, res) => {
   try {
     const { reservaId } = req.params;
     const resultado = await excluirEmailDaFila(reservaId);
@@ -1939,7 +2006,7 @@ app.post('/whatsapp/confirmacao/:reservaId', exigirAdminCrm, async (req, res) =>
   }
 });
 
-app.post('/send-email', async (req, res) => {
+app.post('/send-email', exigirAdminCrm, async (req, res) => {
   try {
     const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
     const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : '';
@@ -1973,7 +2040,7 @@ app.post('/send-email', async (req, res) => {
 });
 
 // Endpoint para testar webhook
-app.post('/test-webhook', (req, res) => {
+app.post('/test-webhook', exigirAdminCrm, (req, res) => {
   const mockWebhookData = {
     event: 'PAYMENT_CONFIRMED',
     payment: {
@@ -2018,7 +2085,11 @@ app.use(jsonBodyErrorHandler);
 
 const port = process.env.PORT || 3001;
 
-app.listen(port, async () => {
+const startServer = async () => {
+  if (process.env.AFFILIATES_ENABLED === 'true' || process.env.BACKEND_FIREBASE_AUTH_REQUIRED === 'true') {
+    await initializeBackendFirebaseAuth();
+  }
+  app.listen(port, async () => {
   console.log(`Servidor rodando na porta ${port}`);
   void limparConversasSiteExpiradas().catch((error) => console.error("[site-chat] Falha na limpeza inicial:", error));
   const siteChatCleanupTimer = setInterval(
@@ -2067,4 +2138,9 @@ app.listen(port, async () => {
     splitPercentual: splitPercentual || "N/A",
   });
 
+  });
+};
+void startServer().catch(() => {
+  console.error('[startup] Não foi possível autenticar o serviço de reservas.');
+  process.exitCode = 1;
 });

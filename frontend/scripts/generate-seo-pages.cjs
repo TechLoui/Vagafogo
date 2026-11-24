@@ -202,6 +202,13 @@ const pages = [
     canonicalPath: "/404",
     noindex: true,
   },
+  ...["afiliados", "afiliados/login", "agencia", "parceiro"].map((pagePath) => ({
+    outputPath: `${pagePath}/index.html`,
+    title: "Área de parceiros | Santuário Vagafogo",
+    description: "Acesso restrito aos parceiros do Santuário Vagafogo.",
+    canonicalPath: `/${pagePath}`,
+    noindex: true,
+  })),
 ];
 
 const readSiteUrl = async () => {

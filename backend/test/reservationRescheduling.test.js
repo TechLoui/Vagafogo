@@ -54,7 +54,7 @@ const memoryDb = () => {
 };
 
 const PHONE = "5562999000000";
-const RESERVATION = "reservation-0001";
+const RESERVATION = "9259ced3-89f0-4b09-b147-9127b2ae183a";
 const OWNER = "5562991150376";
 const base = { data: "2026-11-01", horario: "09:00", horariosPorPacote: { brunch: "09:00" },
   telefone: PHONE, nome: "Mara Teste", atividade: "Brunch + Trilha", participantes: 2,
@@ -291,17 +291,18 @@ test("outra reserva no mesmo atendimento não reutiliza alvo nem status anterior
 
 test("data atual e código recebidos antes do CPF são preservados na coleta do site", async () => {
   const fixture = scenario();
-  fixture.seed("reservas", "reservation-0002", { ...base, data: "2026-11-10" });
-  const input = fixture.input({ canal: "site", sessionId: "site_rescheduling_selection_123", codigo: "reservation-0002", dataAtual: "2026-11-10", cpf: undefined });
+  const code = "bcb1ee8d-a775-4c18-8143-26361cd93455";
+  fixture.seed("reservas", code, { ...base, data: "2026-11-10" });
+  const input = fixture.input({ canal: "site", sessionId: "site_rescheduling_selection_123", codigo: code, dataAtual: "2026-11-10", cpf: undefined });
   assert.equal((await solicitarRemarcacaoReserva(input, fixture.deps)).proximoCampo, "cpf");
   const result = await solicitarRemarcacaoReserva({ ...input, codigo: undefined, dataAtual: undefined, cpf: base.cpf, novaData: undefined, novoHorario: undefined }, fixture.deps);
   assert.equal(result.status, "aguardando_autorizacao");
-  assert.equal(fixture.value(RESCHEDULE_REQUESTS, result.solicitacaoId).reservaId, "reservation-0002");
+  assert.equal(fixture.value(RESCHEDULE_REQUESTS, result.solicitacaoId).reservaId, code);
 });
 
-test("site localiza por CPF e recebe resultado assíncrono sem expor CPF ao Uirá", async () => {
+test("site localiza por código e CPF e recebe resultado assíncrono sem expor CPF ao Uirá", async () => {
   const fixture = scenario();
-  const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId: "site_rescheduling_test_12345", codigo: undefined, cpf: base.cpf }), fixture.deps);
+  const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId: "site_rescheduling_test_12345", codigo: RESERVATION, cpf: base.cpf }), fixture.deps);
   assert.equal(request.status, "aguardando_autorizacao");
   assert.doesNotMatch(mensagemAutorizacaoRemarcacao(fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId)), /52998224725/);
   await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
@@ -336,7 +337,7 @@ test("pedido expirado não altera reserva nem é aprovado por resposta tardia", 
 test("negação de remarcação iniciada no site comunica WhatsApp do titular e mantém reserva", async () => {
   const fixture = scenario();
   const sessionId = "site_rescheduling_rejected_12345";
-  const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId, codigo: undefined, cpf: base.cpf }), fixture.deps);
+  const request = await solicitarRemarcacaoReserva(fixture.input({ canal: "site", sessionId, codigo: RESERVATION, cpf: base.cpf }), fixture.deps);
   await processarNotificacaoRemarcacao(request.solicitacaoId, fixture.deps);
   assert.equal(fixture.sent[0].phone, OWNER);
   assert.deepEqual(fixture.sent[0].options.siteSessionIds, [sessionId]);
@@ -352,22 +353,47 @@ test("negação de remarcação iniciada no site comunica WhatsApp do titular e 
   assert.match(fixture.site[0].text, /não foi autorizada/);
 });
 
-test("retomada legada pelo site preserva data e horário já pedidos antes de coletar CPF", async () => {
+test("retomada legada pelo site preserva alvo enquanto coleta código e CPF", async () => {
   const fixture = scenario();
   const input = { canal: "site", sessionId: "site_legacy_reschedule_intake_123", telefone: PHONE,
     ...alvoRemarcacaoLegadaSite("Quero alterar a data da minha reserva para 03/11/2026 às 11h") };
   const collecting = await solicitarRemarcacaoReserva(input, fixture.deps);
-  assert.equal(collecting.proximoCampo, "cpf");
+  assert.equal(collecting.proximoCampo, "codigo");
   const context = await obterContextoRemarcacao(input, fixture.deps);
   assert.equal(context.pendente, true);
-  assert.equal(context.contexto.proximoCampo, "cpf");
-  const request = await solicitarRemarcacaoReserva({ canal: "site", sessionId: input.sessionId, telefone: PHONE, cpf: base.cpf }, fixture.deps);
+  assert.equal(context.contexto.proximoCampo, "codigo");
+  const onlyCpf = await solicitarRemarcacaoReserva({ canal: "site", sessionId: input.sessionId, telefone: PHONE, cpf: base.cpf }, fixture.deps);
+  assert.equal(onlyCpf.proximoCampo, "codigo");
+  const request = await solicitarRemarcacaoReserva({ canal: "site", sessionId: input.sessionId, telefone: PHONE, codigo: RESERVATION }, fixture.deps);
   assert.equal(request.status, "aguardando_autorizacao");
   const saved = fixture.value(RESCHEDULE_REQUESTS, request.solicitacaoId);
   assert.equal(saved.depois.data, "2026-11-03");
   assert.equal(saved.depois.horario, "11:00");
   assert.deepEqual(saved.siteSessions, [input.sessionId]);
   assert.deepEqual(fixture.value("reservas", RESERVATION), base);
+});
+
+test("CPF e telefone conhecidos não consultam reservas nem restauram pedido legado sem código", async () => {
+  const fixture = scenario();
+  const sessionId = "site_private_rescheduling_legacy_123";
+  const intakeId = createHash("sha256").update(sessionId).digest("hex");
+  fixture.seed("crm_agent_reschedule_intakes", intakeId, {
+    sessionId, requesterPhone: PHONE, channel: "site", expiresAt: new Date("2099-01-01"),
+    cpfDigest: createHash("sha256").update(base.cpf).digest("hex"), candidateIds: [RESERVATION],
+    reservaId: RESERVATION, requestId: "legacy-private-request", novaData: "2026-11-03",
+  });
+  const originalCollection = fixture.deps.db.collection;
+  fixture.deps.db.collection = (name) => {
+    assert.ok(!["reservas", RESCHEDULE_REQUESTS].includes(name), "No reservation/history/request read is permitted without the actual code");
+    return originalCollection(name);
+  };
+  const input = { canal: "site", sessionId, telefone: PHONE, cpf: base.cpf };
+  assert.equal((await solicitarRemarcacaoReserva(input, fixture.deps)).proximoCampo, "codigo");
+  const context = await obterContextoRemarcacao(input, fixture.deps);
+  assert.equal(context.contexto.proximoCampo, "codigo");
+  assert.equal((await solicitarRemarcacaoReserva({ ...input, consultarPendente: true }, fixture.deps)).proximoCampo, "codigo");
+  assert.equal(fixture.sent.length, 0);
+  assert.equal(fixture.applications(), 0);
 });
 
 test("resultado assíncrono usa controle compartilhado atual e não sobrepõe operador ou bloqueio", async () => {

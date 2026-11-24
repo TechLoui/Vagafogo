@@ -32,6 +32,8 @@ import { registrarConclusaoJornadaReserva } from "./crmJourneys";
 import { registrarResultadoCampanhaReserva } from "./whatsappCampaigns";
 import { obterFirestoreAdmin } from "./firebaseAdmin";
 import { concluirLeadAgenteComReserva, obterCheckoutAgente } from "./agentReservationTools";
+import { AffiliateError, affiliateHash, type CommercialAttribution } from "./affiliates";
+import { snapshotAffiliateContext, recordAffiliatePaymentEvidence } from "./affiliatesReferral";
 
 const PREFIXO_VAGAS_EXTRAS_GERAIS = "geral::";
 
@@ -635,6 +637,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
 
   // Impedir reservas em horários que já passaram no dia atual (horário de São Paulo)
   let handoffIdempotencyKey: string | undefined;
+  let trustedAffiliateContextToken: unknown = req.body.affiliateContextToken;
   if (req.body.agentCheckoutToken !== undefined) {
     try {
       const handoff = await obterCheckoutAgente(req.body.agentCheckoutToken);
@@ -642,6 +645,11 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         throw new Error("AGENT_CHECKOUT_PAYMENT_TYPE_INVALID");
       }
       handoffIdempotencyKey = handoff.paymentIdempotencyKey;
+      // Ownership comes from the server handoff, never from editable browser attribution.
+      if (req.body.affiliateContextToken && req.body.affiliateContextToken !== handoff.affiliateContextToken) {
+        throw new Error("AGENT_CHECKOUT_AFFILIATE_CONTEXT_MISMATCH");
+      }
+      trustedAffiliateContextToken = handoff.affiliateContextToken;
     } catch (error) {
       const message = error instanceof Error ? error.message : "AGENT_CHECKOUT_TOKEN_INVALID";
       res.status(message === "AGENT_CHECKOUT_EXPIRED" ? 410 : 400).json({
@@ -1027,6 +1035,17 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
         return;
       }
     }
+    let commercialAttribution: CommercialAttribution | undefined;
+    if (trustedAffiliateContextToken) {
+      const existing = await getDoc(doc(db, "reservas", paymentAttempt.reservaId));
+      const frozen = existing.exists() ? existing.data()?.commercialAttribution as CommercialAttribution | undefined : undefined;
+      if (frozen) {
+        if (frozen.contextId !== affiliateHash(String(trustedAffiliateContextToken))) throw new AffiliateError("AFFILIATE_CONTEXT_MISMATCH", 409);
+        commercialAttribution = frozen;
+      } else {
+        commercialAttribution = await snapshotAffiliateContext(trustedAffiliateContextToken);
+      }
+    }
     const reservaId = idadesIncompletas ? paymentAttempt.reservaId : await criarReserva({
       reservaId: paymentAttempt.reservaId,
       nome,
@@ -1055,6 +1074,7 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       perguntasPersonalizadas,
       atribuicao,
       whatsappMarketingOptIn,
+      commercialAttribution,
     });
     provisionalReservationId = reservaId;
     console.log("✅ Reserva criada com ID:", reservaId);
@@ -1316,6 +1336,9 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
     });
 
     if (pagamentoConfirmado) {
+      if (commercialAttribution) {
+        await recordAffiliatePaymentEvidence(reservaId, cobrancaData);
+      }
       void registrarResultadoCampanhaReserva(atribuicao, reservaId, valor, true).catch((error) => {
         console.error(`[crm][campanha] Falha ao atribuir pagamento ${reservaId}:`, error);
       });
@@ -1469,6 +1492,10 @@ export async function criarCobrancaHandler(req: Request, res: Response): Promise
       } catch (releaseError) {
         console.error("[pagamento] Falha ao liberar tentativa:", releaseError);
       }
+    }
+    if (error instanceof AffiliateError) {
+      res.status(error.status).json({ status: "erro", code: error.code, error: "O link de indicação expirou ou está indisponível. Abra novamente o link do parceiro." });
+      return;
     }
     res.status(500).json({
       status: "erro",

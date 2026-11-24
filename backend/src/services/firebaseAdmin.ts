@@ -26,8 +26,8 @@ const lerServiceAccount = () => {
           ? parsed.private_key.replace(/\\n/g, "\n")
           : parsed.private_key,
     };
-  } catch (error) {
-    console.error("[firebase-admin] FIREBASE_SERVICE_ACCOUNT invalido:", error);
+  } catch {
+    console.error("[firebase-admin] FIREBASE_SERVICE_ACCOUNT invalido.");
     return null;
   }
 };
@@ -57,8 +57,8 @@ const inicializarAdminApp = () => {
         storageBucket: STORAGE_BUCKET,
       });
     return adminApp;
-  } catch (error) {
-    console.error("[firebase-admin] Nao foi possivel inicializar o Admin SDK:", error);
+  } catch {
+    console.error("[firebase-admin] Nao foi possivel inicializar o Admin SDK.");
     adminApp = null;
     return null;
   }
