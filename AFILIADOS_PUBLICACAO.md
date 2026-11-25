@@ -13,6 +13,8 @@
 
 O independente possui quatro áreas: **Visão geral**, **Reservas**, **Relatórios** e **Divulgação**. A visão geral mostra valores pagos, reservas pagas, pendentes e canceladas/estornadas, ticket médio pago e taxa de pagamento. Essa taxa usa a proporção de reservas pagas entre todas as reservas do período; não representa conversão de visitantes do formulário.
 
+O portal usa navegação lateral fixa no desktop e menu lateral recolhível no celular, com controle de foco, fechamento por Escape e bloqueio da rolagem de fundo. Fotos reais da mata e do brunch, tipografia da marca e animações discretas compõem a visão geral e a área de divulgação. A preferência por movimento reduzido é respeitada. A navegação retorna ao início da página; filtros, consultas e relatórios mantêm o escopo e as permissões existentes. A inspeção desta versão cobriu 320, 390 e 1440 px, sem rolagem horizontal, além da navegação por teclado e dos detalhes da reserva.
+
 A consulta apresenta o código original da reserva, visita, horário, quantidade de visitantes e método de pagamento conhecido (Pix, cartão ou manual), com uma janela de detalhes. Campos ausentes permanecem identificados como não informados. Busca, status, pagamento e período são filtrados no servidor, sempre após limitar a consulta ao parceiro ou agência autenticados.
 
 O CSV percorre todas as páginas dos filtros aplicados, preserva acentuação e protege células de texto contra fórmulas de planilha. A exportação pode ser cancelada; falhas ou mais de 10 mil reservas não produzem um arquivo parcial. A lista informa quantas reservas estão carregadas e permite continuar a consulta mesmo quando uma página bruta não contém correspondências.
@@ -41,7 +43,7 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-25-painel-parceiro.zip` contém os arquivos estáticos para a Hostinger, incluindo o painel completo do independente, a troca de conta, as logos e os cartões de reservas no celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-25-parceiro-moderno.zip` contém os arquivos estáticos para a Hostinger, incluindo o novo design do painel independente com navegação lateral, fotos e adaptação ao celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
 
 O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 

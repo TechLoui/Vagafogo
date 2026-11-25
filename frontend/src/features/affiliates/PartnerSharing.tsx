@@ -3,6 +3,7 @@ import { FaCheck, FaCopy, FaExternalLinkAlt, FaLink, FaSyncAlt, FaWhatsapp } fro
 import { AffiliateApiError, getAffiliateLinks } from './affiliateService';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
 import type { AffiliateLink } from './types';
+import sharingImage from '../../assets/hero/hero-1-800.webp';
 import './PartnerPortal.css';
 
 export function PartnerSharing({ compact = false }: { compact?: boolean }) {
@@ -39,7 +40,13 @@ export function PartnerSharing({ compact = false }: { compact?: boolean }) {
   if (prepared) return <AffiliatePreparedState />;
 
   return (
-    <section className="pp-sharing" aria-labelledby="partner-sharing-title">
+    <section className={`pp-sharing${compact ? '' : ' ps-studio'}`} aria-labelledby="partner-sharing-title">
+      {!compact && <div className="ps-visual">
+        <img src={sharingImage} alt="Mesa de brunch da Vagafogo com receitas artesanais e frutas" />
+        <div className="ps-visual-shade" />
+        <div className="ps-visual-copy"><span>COMPARTILHE O VAGAFOGO</span><h2>Experiências que<br />merecem ser<br />{' '}<em>compartilhadas.</em></h2><p>Sabores, encontros e natureza.<br />Sua indicação abre esse caminho.</p></div>
+      </div>}
+      <div className={compact ? undefined : 'ps-tools'}>
       <div className="pp-sharing-heading">
         <span className="pp-heading-icon" aria-hidden="true"><FaLink /></span>
         <div><h2 id="partner-sharing-title">Seu link de reserva</h2><p>Compartilhe seu endereço para que as reservas sejam identificadas como suas indicações.</p></div>
@@ -56,6 +63,7 @@ export function PartnerSharing({ compact = false }: { compact?: boolean }) {
           {activeLinks.map((link) => (
             <div className="pp-share-item" key={link.id}>
               {activeLinks.length > 1 && <h3>{link.label || 'Link de reserva'}</h3>}
+              {!compact && <span className="ps-link-label">Seu endereço exclusivo</span>}
               <input className="pp-link-input" readOnly value={link.url} aria-label="Seu link de reserva" onFocus={(event) => event.currentTarget.select()} />
               <div className="pp-share-actions">
                 <button type="button" className="aff-button" onClick={() => void copy(link)}>{copied === link.id ? <FaCheck aria-hidden="true" /> : <FaCopy aria-hidden="true" />}{copied === link.id ? 'Link copiado' : 'Copiar link'}</button>
@@ -73,6 +81,7 @@ export function PartnerSharing({ compact = false }: { compact?: boolean }) {
           <div><span>02</span><h3>Acompanhe no painel</h3><p>Consulte as reservas atribuídas ao seu link e acompanhe o pagamento nas abas Reservas e Relatórios.</p></div>
         </div>
       )}
+      </div>
     </section>
   );
 }

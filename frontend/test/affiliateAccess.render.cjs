@@ -20,6 +20,8 @@ assert.equal(rendererVersion, reactVersion, 'Install a react-test-renderer versi
 let runtime;
 let portalRuntime;
 const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+let mobileViewport = false;
 const initialHandles = new Set(process._getActiveHandles());
 
 async function buildRuntime(realPortal = false) {
@@ -81,11 +83,19 @@ async function buildRuntime(realPortal = false) {
 }
 test.before(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // The responsive shell reads matchMedia. Keep this fixture limited to the
+  // viewport contract; actual focus/layout belongs to the browser walkthrough.
+  Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: {
+    matchMedia: (media) => ({ media, matches: mobileViewport, addEventListener() {}, removeEventListener() {} }),
+    scrollTo() {},
+  } });
   runtime = await buildRuntime();
   portalRuntime = await buildRuntime(true);
 });
 test.after(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+  else delete globalThis.window;
   esbuild.stop();
   // Bundled React DOM scheduling creates a MessageChannel in Node. After all
   // roots are unmounted, it must not keep this opt-in test process alive.
@@ -107,6 +117,7 @@ const page = (view, name) => view.root.findAll((item) => item.props['data-page']
 const home = { admin: '/CRM', agency: '/agencia', partner: '/parceiro' };
 
 async function mount(t, location, initialSession, options = {}) {
+  mobileViewport = options.mobile === true;
   const engine = options.engine || runtime;
   const { React, create, act, SessionContext, createMemoryRouter, RouterProvider } = engine;
   let current = initialSession;
@@ -314,6 +325,14 @@ test('real independent portal navigates all four read-only sections without user
   for (const call of mounted.engine.getApiCalls().filter((call) => ['getAffiliateSummary', 'getAffiliateSales'].includes(call.method))) {
     assert.ok(!call.args[0]?.agencyId && !call.args[0]?.partnerId, 'External scope comes from the authenticated backend identity');
   }
+  const mobile = await mount(t, '/parceiro', portalSession('partner'), { engine: portalRuntime, api: portalApi(), mobile: true });
+  const trigger = mobile.view.root.findByProps({ 'aria-label': 'Abrir menu' });
+  const sidebar = mobile.view.root.findByProps({ id: trigger.props['aria-controls'] });
+  assert.equal(trigger.props['aria-expanded'], false);
+  assert.equal(sidebar.props.inert, true, 'The closed mobile menu must not expose focusable navigation');
+  assert.equal(sidebar.props['aria-hidden'], true, 'The closed mobile menu must stay out of the accessibility tree');
+  noBookingActions(mobile);
+  noPartnerManagement(mobile);
 });
 
 test('real linked partner retains its agency branding, link and reservation report without any user or booking management', async (t) => {
@@ -361,7 +380,7 @@ test('real partner portal keeps read-only navigation when an awaited logout fail
   const pending = deferred();
   let calls = 0;
   portalRuntime.setAuth({ signIn: async () => {}, signOut: async () => { calls++; return pending.promise; } });
-  await mounted.click('Sair');
+  await mounted.click('Sair da conta');
   assert.equal(calls, 1);
   assert.ok(button(mounted.view, 'Saindo…')?.props.disabled);
   await mounted.act(async () => pending.reject(new Error('local logout failed')));

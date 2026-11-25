@@ -1,16 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { FaArrowRight, FaCalendarAlt, FaChartBar, FaCheckCircle, FaClock, FaLeaf, FaLink, FaReceipt, FaSyncAlt, FaTimesCircle, FaWallet } from 'react-icons/fa';
+import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { FaArrowRight, FaArrowUp, FaCalendarAlt, FaCheckCircle, FaClock, FaLeaf, FaMapMarkerAlt, FaSyncAlt, FaTimesCircle, FaWallet } from 'react-icons/fa';
+import forestImage from '../../assets/trilhaecologica/trilhaecologica-2.jpg';
+import brunchImage from '../../assets/hero/hero-2-800.webp';
 import { hojeEmSaoPaulo } from '../../utils/financeiro';
-import { useAffiliateProfile } from './AffiliateAccess';
 import { AffiliateApiError, getAffiliateSummary } from './affiliateService';
 import { affiliateDate, affiliateMoney } from './affiliateUtils';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
 import { AffiliateReport } from './AffiliateReport';
 import { PartnerSharing } from './PartnerSharing';
 import type { AffiliateSummary } from './types';
-import './PartnerPortal.css';
+import './PartnerDashboard.css';
 
-type PartnerView = 'overview' | 'reservations' | 'reports' | 'sharing';
+export type PartnerView = 'overview' | 'reservations' | 'reports' | 'sharing';
 
 function PartnerOverview({ onNavigate }: { onNavigate: (view: PartnerView) => void }) {
   const today = hojeEmSaoPaulo();
@@ -44,74 +45,83 @@ function PartnerOverview({ onNavigate }: { onNavigate: (view: PartnerView) => vo
     setPeriodError(''); setPeriod({ from, to });
   };
   const total = summary ? summary.paidCount + summary.pendingCount + summary.cancelledCount : 0;
-  const paymentRate = summary && total > 0 ? new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(summary.paidCount / total) : '—';
+  const rate = summary && total > 0 ? summary.paidCount / total : 0;
+  const paymentRate = total > 0 ? new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(rate) : '—';
   const average = summary && summary.paidCount > 0 ? affiliateMoney(summary.revenue / summary.paidCount) : '—';
+  const segments = summary ? [
+    { label: 'Pagas', count: summary.paidCount, color: '#2f775c', icon: FaCheckCircle },
+    { label: 'Pendentes', count: summary.pendingCount, color: '#d4a565', icon: FaClock },
+    { label: 'Canceladas ou estornadas', count: summary.cancelledCount, color: '#c7d2cb', icon: FaTimesCircle },
+  ] : [];
+  let offset = 0;
+  const circumference = 2 * Math.PI * 51;
 
   if (prepared) return <AffiliatePreparedState />;
 
-  return (
-    <section className="pp-overview" aria-labelledby="partner-overview-title">
-      <div className="pp-section-heading"><div><h2 id="partner-overview-title">Suas indicações em números</h2><p>Um resumo das reservas atribuídas ao seu link.</p></div></div>
-      <form className="pp-period" onSubmit={applyPeriod}>
+  return <section className="pd-overview" aria-label="Visão geral da parceria">
+    <div className="pd-hero">
+      <img src={forestImage} alt="Riacho na mata preservada do Santuário Vagafogo" className="pd-hero-image" fetchPriority="high" />
+      <div className="pd-hero-shade" />
+      <div className="pd-hero-copy"><span className="pd-eyebrow"><FaLeaf aria-hidden="true" /> Conexões que fazem bem</span>
+        <h2>Sua parceria,<br /><em>em movimento.</em></h2>
+        <p>Mais pessoas perto da natureza.<br />Cada indicação começa com você.</p>
+        <button type="button" onClick={() => onNavigate('sharing')} className="pd-hero-cta">Compartilhar meu link <FaArrowRight aria-hidden="true" /></button>
+      </div>
+      <span className="pd-hero-location"><FaMapMarkerAlt aria-hidden="true" /> Vagafogo · Pirenópolis</span>
+    </div>
+
+    <div className="pd-results-heading">
+      <div><span className="pd-kicker">SEU DESEMPENHO</span><h2>Um olhar sobre seus resultados</h2><p>Reservas atribuídas ao seu link, em um só lugar.</p></div>
+      <form className="pd-period" onSubmit={applyPeriod}>
         <label>De<input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPeriodError(''); }} aria-invalid={Boolean(periodError)} aria-describedby={periodError ? 'partner-period-error' : undefined} required /></label>
         <label>Até<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setPeriodError(''); }} aria-invalid={Boolean(periodError)} aria-describedby={periodError ? 'partner-period-error' : undefined} required /></label>
-        <button type="submit" className="aff-button" disabled={loading}>Aplicar período</button>
-        <button type="button" className="aff-icon-button" aria-label="Atualizar resumo" title="Atualizar resumo" disabled={loading} onClick={() => setRefresh((value) => value + 1)}><FaSyncAlt className={loading ? 'aff-spin' : ''} aria-hidden="true" /></button>
+        <button type="submit" className="pd-period-apply" aria-label="Aplicar período" disabled={loading}><FaArrowRight aria-hidden="true" /><span>Aplicar</span></button>
+        <button type="button" className="pd-period-refresh" aria-label="Atualizar resumo" title="Atualizar resumo" disabled={loading} onClick={() => setRefresh((value) => value + 1)}><FaSyncAlt className={loading ? 'aff-spin' : ''} aria-hidden="true" /></button>
       </form>
-      {periodError && <p id="partner-period-error" className="aff-alert aff-alert--error" role="alert">{periodError}</p>}
-      <p className="pp-period-caption"><FaCalendarAlt aria-hidden="true" /> {affiliateDate(period.from)} a {affiliateDate(period.to)} · São Paulo</p>
-      {loading ? (
-        <div className="pp-metrics pp-metrics--loading" role="status"><span className="pp-sr-only">Carregando resumo das reservas…</span>{Array.from({ length: 6 }, (_, index) => <div className="pp-metric-skeleton" key={index} aria-hidden="true"><span /><span /></div>)}</div>
-      ) : error ? (
-        <div className="pp-feedback"><p className="aff-alert aff-alert--error" role="alert">{error}</p><button type="button" className="aff-button aff-button--secondary" onClick={() => setRefresh((value) => value + 1)}><FaSyncAlt aria-hidden="true" /> Tentar novamente</button></div>
-      ) : summary && (
-        <>
-          <div className="pp-metrics">
-            <div className="pp-metric pp-metric--featured"><FaWallet aria-hidden="true" /><span>Valor das reservas pagas</span><strong>{affiliateMoney(summary.revenue)}</strong><small>Total pago no período</small></div>
-            <div className="pp-metric"><FaCheckCircle aria-hidden="true" /><span>Reservas pagas</span><strong>{summary.paidCount}</strong><small>Pagamento confirmado</small></div>
-            <div className="pp-metric"><FaClock aria-hidden="true" /><span>Aguardando pagamento</span><strong>{summary.pendingCount}</strong><small>Reservas pendentes</small></div>
-            <div className="pp-metric"><FaTimesCircle aria-hidden="true" /><span>Canceladas ou estornadas</span><strong>{summary.cancelledCount}</strong><small>No período selecionado</small></div>
-            <div className="pp-metric"><FaReceipt aria-hidden="true" /><span>Ticket médio pago</span><strong>{average}</strong><small>Valor pago ÷ reservas pagas</small></div>
-            <div className="pp-metric"><FaChartBar aria-hidden="true" /><span>Taxa de pagamento</span><strong>{paymentRate}</strong><small>Pagas ÷ todas as {total} reservas</small></div>
+    </div>
+    {periodError && <p id="partner-period-error" className="aff-alert aff-alert--error" role="alert">{periodError}</p>}
+    <p className="pd-period-caption"><FaCalendarAlt aria-hidden="true" /> {affiliateDate(period.from)} a {affiliateDate(period.to)}</p>
+    {loading ? <div className="pd-stat-grid" role="status"><span className="pd-sr-only">Carregando resumo das reservas…</span>{[0, 1, 2, 3].map((item) => <div className="pd-stat pd-skeleton" key={item} aria-hidden="true"><i /><span /><strong /></div>)}</div>
+      : error ? <div className="pp-feedback"><p className="aff-alert aff-alert--error" role="alert">{error}</p><button type="button" className="aff-button aff-button--secondary" onClick={() => setRefresh((value) => value + 1)}>Tentar novamente</button></div>
+      : summary && <>
+        <div className="pd-stat-grid">
+          {[
+            { label: 'Valor das reservas pagas', value: affiliateMoney(summary.revenue), note: 'Pagamentos confirmados', icon: FaWallet, theme: 'revenue' },
+            { label: 'Reservas pagas', value: String(summary.paidCount), note: 'Experiências confirmadas', icon: FaCheckCircle, theme: 'paid' },
+            { label: 'Aguardando pagamento', value: String(summary.pendingCount), note: 'Reservas pendentes', icon: FaClock, theme: 'pending' },
+            { label: 'Canceladas ou estornadas', value: String(summary.cancelledCount), note: 'No período selecionado', icon: FaTimesCircle, theme: 'cancelled' },
+          ].map(({ label, value, note, icon: Icon, theme }, index) => <div className={`pd-stat pd-stat--${theme}`} style={{ '--pd-order': index } as CSSProperties} key={theme}><div className="pd-stat-top"><span>{label}</span><i><Icon aria-hidden="true" /></i></div><strong>{value}</strong><small><span />{note}</small></div>)}
+        </div>
+        <div className="pd-insight-grid">
+          <div className="pd-panel pd-performance">
+            <div className="pd-panel-heading"><div><span className="pd-kicker">PANORAMA DO PERÍODO</span><h3>Como estão suas indicações</h3></div><span className="pd-count-pill">{total} {total === 1 ? 'reserva' : 'reservas'}</span></div>
+            <div className="pd-performance-body">
+              <div className="pd-donut" role="img" aria-label={`${summary.paidCount} reservas pagas, ${summary.pendingCount} pendentes e ${summary.cancelledCount} canceladas ou estornadas`}>
+                <svg viewBox="0 0 128 128" aria-hidden="true"><circle cx="64" cy="64" r="51" fill="none" stroke="#edf1eb" strokeWidth="11" />
+                  {segments.map((item) => { const arc = total ? item.count / total * circumference : 0; const start = offset; offset += arc; return item.count > 0 && <circle className="pd-donut-segment" key={item.label} cx="64" cy="64" r="51" fill="none" stroke={item.color} strokeWidth="11" strokeDasharray={`${arc} ${circumference - arc}`} strokeDashoffset={-start} />; })}
+                </svg><div><strong>{paymentRate}</strong><span>taxa de pagamento</span></div>
+              </div>
+              <ul className="pd-status-legend">{segments.map((item) => <li key={item.label}><span><i style={{ background: item.color }} />{item.label}</span><strong>{item.count}</strong></li>)}</ul>
+            </div>
+            <div className="pd-secondary-stats"><div><span>Ticket médio pago</span><strong>{average}</strong></div><div><span>Reservas no período</span><strong>{total}</strong></div><button type="button" onClick={() => onNavigate('reservations')}>Consultar reservas <FaArrowRight aria-hidden="true" /></button></div>
+            <p className="pd-footnote">Taxa de pagamento: reservas pagas ÷ todas as reservas do período.</p>
           </div>
-          <p className="pp-calculation-note">A taxa compara reservas pagas, pendentes e canceladas do período. Ela considera reservas, não visitantes.</p>
-          {total === 0 && <div className="pp-empty-state"><span className="pp-heading-icon" aria-hidden="true"><FaLeaf /></span><h3>Nenhuma reserva neste período</h3><p>Escolha outro período ou compartilhe seu link para receber novas indicações.</p><button type="button" className="aff-button aff-button--secondary" onClick={() => onNavigate('sharing')}>Divulgar meu link <FaArrowRight aria-hidden="true" /></button></div>}
-        </>
-      )}
-      <div className="pp-quick-actions">
-        <button type="button" onClick={() => onNavigate('reservations')}><span className="pp-heading-icon"><FaReceipt aria-hidden="true" /></span><span><strong>Consultar reservas</strong><small>Veja o status e os detalhes das suas indicações.</small></span><FaArrowRight aria-hidden="true" /></button>
-        <button type="button" onClick={() => onNavigate('sharing')}><span className="pp-heading-icon"><FaLink aria-hidden="true" /></span><span><strong>Compartilhar meu link</strong><small>Leve mais pessoas para conhecer o Vagafogo.</small></span><FaArrowRight aria-hidden="true" /></button>
-      </div>
-      <p className="aff-help">O período considera a data do pagamento nas reservas pagas e a data de criação nas demais.</p>
-    </section>
-  );
+          <div className="pd-discover-card">
+            <img src={brunchImage} alt="Brunch artesanal servido na Vagafogo" loading="lazy" />
+            <div><span className="pd-kicker">BOAS EXPERIÊNCIAS SE COMPARTILHAM</span><h3>Sua próxima indicação<br />começa com um link.</h3><button type="button" onClick={() => onNavigate('sharing')}>Divulgar meu link <FaArrowUp aria-hidden="true" /></button></div>
+          </div>
+        </div>
+        {total === 0 && <div className="pd-empty-note"><FaLeaf aria-hidden="true" /><div><strong>Seu primeiro resultado está por vir.</strong><p>Compartilhe seu link ou escolha outro período para acompanhar suas indicações.</p></div><button type="button" onClick={() => onNavigate('sharing')}>Ver meu link <FaArrowRight aria-hidden="true" /></button></div>}
+      </>}
+    <p className="pd-footnote">O período considera a data do pagamento nas reservas pagas e a data de criação nas demais.</p>
+  </section>;
 }
 
-export function PartnerDashboard() {
-  const profile = useAffiliateProfile();
-  const [view, setView] = useState<PartnerView>('overview');
-  const navigation = [
-    { id: 'overview', label: 'Visão geral', icon: FaChartBar },
-    { id: 'reservations', label: 'Reservas', icon: FaReceipt },
-    { id: 'reports', label: 'Relatórios', icon: FaCalendarAlt },
-    { id: 'sharing', label: 'Divulgação', icon: FaLink },
-  ] as const;
-
-  return (
-    <div className="pp-dashboard">
-      <div className="pp-hero">
-        <div className="pp-identity"><span className="pp-eyebrow"><FaLeaf aria-hidden="true" /> Parceiro independente</span><h1>{profile.partner?.name || 'Suas indicações'}</h1><p>{profile.partner?.email || profile.identity.email}</p></div>
-        <div className="pp-hero-note"><span className="pp-hero-mark" aria-hidden="true"><FaLeaf /></span><p>Mais pessoas<br /><strong>perto da natureza.</strong></p></div>
-      </div>
-      <nav className="pp-navigation" aria-label="Painel do parceiro independente">
-        {navigation.map(({ id, label, icon: Icon }) => <button type="button" key={id} aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)}><Icon aria-hidden="true" /><span>{label}</span></button>)}
-      </nav>
-      <div className="pp-view">
-        {view === 'overview' && <PartnerOverview onNavigate={setView} />}
-        {view === 'reservations' && <AffiliateReport view="reservations" showPartner={false} />}
-        {view === 'reports' && <AffiliateReport view="reports" showPartner={false} />}
-        {view === 'sharing' && <PartnerSharing />}
-      </div>
-    </div>
-  );
+export function PartnerDashboard({ view, onNavigate }: { view: PartnerView; onNavigate: (view: PartnerView) => void }) {
+  return <div className="pd-dashboard"><div className="pd-page" key={view}>
+    {view === 'overview' && <PartnerOverview onNavigate={onNavigate} />}
+    {view === 'reservations' && <AffiliateReport view="reservations" showPartner={false} />}
+    {view === 'reports' && <AffiliateReport view="reports" showPartner={false} />}
+    {view === 'sharing' && <PartnerSharing />}
+  </div></div>;
 }
