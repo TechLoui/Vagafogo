@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { FaTimes } from 'react-icons/fa';
 
 export function AffiliateDialog({ title, children, onClose, busy = false }: {
@@ -35,12 +36,13 @@ export function AffiliateDialog({ title, children, onClose, busy = false }: {
     document.addEventListener('keydown', keydown);
     return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', keydown); previous?.focus(); };
   }, []);
-  return (
+  return createPortal(
     <div className="aff-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
       <div className="aff-dialog" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={dialogRef}>
         <header><h2>{title}</h2><button type="button" className="aff-icon-button" aria-label="Fechar" disabled={busy} onClick={onClose}><FaTimes /></button></header>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

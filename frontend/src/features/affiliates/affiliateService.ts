@@ -23,6 +23,7 @@ const errorMessages: Record<string, string> = {
   AFFILIATE_COMMISSION_INHERITED: 'A comissão deste parceiro segue a regra da agência.',
   AFFILIATE_SERVICE_UNAVAILABLE: 'O serviço está temporariamente indisponível. Tente novamente.',
   AFFILIATE_RATE_LIMIT: 'Aguarde um minuto antes de tentar novamente.',
+  AFFILIATE_FILTER_INVALID: 'Confira os filtros e use até 120 caracteres na busca.',
 };
 
 export class AffiliateApiError extends Error {
@@ -111,7 +112,7 @@ export const claimAffiliateInvitation = (token: string) =>
 export const getAffiliateSummary = (query: AffiliateReportQuery, signal?: AbortSignal) =>
   request<AffiliateSummary>(`/summary${queryString(query)}`, { signal });
 
-export const getAffiliateSales = (query: AffiliateReportQuery, cursor?: string, signal?: AbortSignal) =>
-  request<AffiliatePage<AffiliateSale>>(`/sales${queryString({ ...query, cursor, limit: 25 })}`, { signal });
+export const getAffiliateSales = (query: AffiliateReportQuery, cursor?: string, signal?: AbortSignal, limit = 25) =>
+  request<AffiliatePage<AffiliateSale>>(`/sales${queryString({ ...query, cursor, limit })}`, { signal });
 
 export const getAffiliateLinks = () => request<AffiliatePage<AffiliateLink>>('/links');

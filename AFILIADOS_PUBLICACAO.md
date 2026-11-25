@@ -1,4 +1,4 @@
-# Afiliados: entrega de 24/11/2026
+# Afiliados: entrega de 25/11/2026
 
 ## Funcionamento
 
@@ -8,6 +8,16 @@
 - Uirá configura comissão percentual ou fixa por reserva para a agência ou para o parceiro independente. A regra é preservada na reserva; alterar a configuração não recalcula reservas anteriores.
 - Taxas e valores de comissão aparecem somente para Uirá. O pagamento é manual, fora do sistema; não existe split automático nem repasse automático da agência aos parceiros.
 - A comissão exige pagamento confirmado pelo provedor. Cancelamento/estorno deixa de ser elegível. A regra de afiliados não altera a comissão geral legada do checkout.
+
+## Painel do parceiro independente
+
+O independente possui quatro áreas: **Visão geral**, **Reservas**, **Relatórios** e **Divulgação**. A visão geral mostra valores pagos, reservas pagas, pendentes e canceladas/estornadas, ticket médio pago e taxa de pagamento. Essa taxa usa a proporção de reservas pagas entre todas as reservas do período; não representa conversão de visitantes do formulário.
+
+A consulta apresenta o código original da reserva, visita, horário, quantidade de visitantes e método de pagamento conhecido (Pix, cartão ou manual), com uma janela de detalhes. Campos ausentes permanecem identificados como não informados. Busca, status, pagamento e período são filtrados no servidor, sempre após limitar a consulta ao parceiro ou agência autenticados.
+
+O CSV percorre todas as páginas dos filtros aplicados, preserva acentuação e protege células de texto contra fórmulas de planilha. A exportação pode ser cancelada; falhas ou mais de 10 mil reservas não produzem um arquivo parcial. A lista informa quantas reservas estão carregadas e permite continuar a consulta mesmo quando uma página bruta não contém correspondências.
+
+Agências, independentes e parceiros vinculados têm acesso **somente de consulta** às reservas. Nenhum desses perfis pode criar, editar, cancelar ou excluir reservas. O independente não cria usuários; a agência mantém o gerenciamento dos próprios parceiros. Comissão e regras de comissão continuam exclusivas do administrador geral.
 
 ## Acessos
 
@@ -31,8 +41,8 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-24-refinado-v2.zip` contém os arquivos estáticos para a Hostinger, incluindo as logos, a revisão visual e os cartões de reservas no celular. Extrair o conteúdo na raiz do site, preservando `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores do mesmo dia, inclusive o primeiro `refinado` intermediário.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-25-painel-parceiro.zip` contém os arquivos estáticos para a Hostinger, incluindo o painel completo do independente, a troca de conta, as logos e os cartões de reservas no celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores.
 
-O portal permanece desabilitado por padrão até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
+O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 
 As prévias locais usam dados fictícios para os três perfis; os testes de Pix e cartão simulam o provedor e não geram cobrança real.

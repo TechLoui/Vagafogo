@@ -102,6 +102,62 @@ export const listAffiliateLinks = async (identity: AffiliateIdentity, filters: R
 const paid = (value: unknown) => ["pago", "confirmado", "paid", "confirmed", "received", "recebido", "approved", "aprovado"].includes(affiliateText(value).toLowerCase());
 const cancelled = (value: unknown) => /cancel|estorn|reembol|refund|chargeback/.test(affiliateText(value).toLowerCase());
 const cents = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : -1;
+export type AffiliatePaymentMethod = "PIX" | "CREDIT_CARD" | "MANUAL";
+const normalizePaymentMethod = (value: unknown): AffiliatePaymentMethod | null => {
+  const text = affiliateText(value, 60).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (text === "PIX") return "PIX";
+  if (["CREDITCARD", "CARTAO", "CARTAOCREDITO", "CARTAODECREDITO"].includes(text)) return "CREDIT_CARD";
+  return text === "MANUAL" || text === "PAGAMENTOMANUAL" ? "MANUAL" : null;
+};
+export const affiliatePaymentMethod = (raw: Record<string, any>, evidence?: Record<string, any>): AffiliatePaymentMethod | null => {
+  // Booking origin/manual flags do not establish which payment method was used.
+  for (const value of [evidence?.paymentMethod, evidence?.billingType, raw.formaPagamento, raw.billingType, raw.paymentMethod, raw.metodoPagamento]) {
+    const method = normalizePaymentMethod(value);
+    if (method) return method;
+  }
+  return null;
+};
+const participantCount = (value: unknown): number | undefined => {
+  if (typeof value !== "number" && !(typeof value === "string" && /^\d+$/.test(value.trim()))) return undefined;
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+};
+const sumParticipantMap = (value: unknown): number | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Object.keys(value).length) return undefined;
+  const counts = Object.values(value).map(participantCount);
+  if (counts.some((count) => count === undefined)) return undefined;
+  const sum = (counts as number[]).reduce((total, count) => total + count, 0);
+  return Number.isSafeInteger(sum) ? sum : undefined;
+};
+export const affiliateGuestCount = (raw: Record<string, any>): number | null => {
+  const declared = participantCount(raw.participantes ?? raw.Participantes);
+  if (declared !== undefined && declared > 0) return declared;
+  const candidates: number[] = [];
+  const map = sumParticipantMap(raw.participantesPorTipo);
+  if (map !== undefined) candidates.push(map);
+  if (Array.isArray(raw.gruposParticipacao) && raw.gruposParticipacao.length) {
+    const counts = raw.gruposParticipacao.map((group: any) => {
+      const values = [participantCount(group?.participantes), sumParticipantMap(group?.participantesPorTipo)].filter((count): count is number => count !== undefined);
+      return values.length ? Math.max(...values) : undefined;
+    });
+    if (counts.every((count: unknown) => count !== undefined)) {
+      const sum = (counts as number[]).reduce((total, count) => total + count, 0);
+      if (Number.isSafeInteger(sum)) candidates.push(sum);
+    }
+  }
+  const fields = ["adultos", "criancas", "bariatrica", "naoPagante"].filter((key) => raw[key] !== undefined && raw[key] !== null);
+  const legacy = fields.map((key) => participantCount(raw[key]));
+  if (fields.length && legacy.every((count) => count !== undefined)) {
+    const sum = (legacy as number[]).reduce((total, count) => total + count, 0);
+    if (Number.isSafeInteger(sum)) candidates.push(sum);
+  }
+  // Maps/groups are complete totals: legacy non-paying fields can mirror them, so never add them again.
+  return candidates.length ? Math.max(...candidates, declared ?? 0) : declared ?? null;
+};
+const affiliateVisitTime = (value: unknown) => {
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(affiliateText(value, 40));
+  return match && Number(match[1]) < 24 ? `${match[1].padStart(2, "0")}:${match[2]}` : null;
+};
 const providerPaidAt = (payment: Record<string, any>) => {
   for (const value of [payment.confirmedDate, payment.paymentDate, payment.clientPaymentDate]) {
     if (typeof value !== "string") continue;
@@ -137,6 +193,7 @@ export const recordAffiliatePaymentEvidence = async (reservationId: string, paym
     if (!terminal && !isPaid) return false;
     if (evidence.data()?.state === "cancelled" && !terminal) return false;
     tx.set(evidenceRef, { paymentId: payment.id, state: terminal ? "cancelled" : "paid", providerStatus: status,
+      ...(normalizePaymentMethod(payment.billingType) ? { paymentMethod: normalizePaymentMethod(payment.billingType) } : {}),
       value: payment.value, verifiedAt: new Date(), paidAt: evidence.data()?.paidAt ?? (isPaid ? providerPaidAt(payment) : null) }, { merge: true });
     if (terminal) tx.update(reservationRef, { status: "estornado", confirmada: false });
     return isPaid && !terminal;
@@ -165,7 +222,9 @@ export const affiliateSaleDto = (id: string, raw: Record<string, any>, evidence:
   const eligible = paid(raw.status) && !cancelled(raw.status) && evidence?.state === "paid"
     && evidence.paymentId === (raw.asaasPaymentId ?? raw.pagamentoId) && cents(evidence.value) === cents(raw.valor);
   const isCancelled = cancelled(raw.status) || evidence?.state === "cancelled";
-  return { id, date: affiliateText(raw.data, 10), activity: affiliateText(raw.atividade, 300),
+  return { id, reservationCode: id, date: affiliateText(raw.data, 10), activity: affiliateText(raw.atividade, 300),
+    createdAt: affiliateIso(raw.criadoEm ?? raw.createdAt ?? raw.dataCriacao) ?? affiliateIso(source.bookedAt),
+    time: affiliateVisitTime(raw.horario), guestCount: affiliateGuestCount(raw), paymentMethod: affiliatePaymentMethod(raw, evidence),
     status: isCancelled ? "cancelled" : eligible ? "paid" : "pending", value: Math.max(0, Number(raw.valor) || 0),
     paidAt: eligible ? affiliateIso(evidence?.paidAt) : null,
     partnerId: source.partnerId, partnerName: source.partnerName, agencyId: source.agencyId, agencyName: source.agencyName ?? null,
@@ -186,6 +245,16 @@ const dateFilters = (filters: Record<string, unknown>) => {
   if (dates[0] && dates[1] && dates[0] > dates[1]) throw new AffiliateError("AFFILIATE_DATE_INVALID");
   return dates;
 };
+const normalizeSearch = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const reportFilters = (filters: Record<string, unknown>) => {
+  const q = filters.q === undefined ? "" : filters.q;
+  if (typeof q !== "string" || q.length > 120
+    || (filters.status !== undefined && filters.status !== "" && !["paid", "pending", "cancelled"].includes(filters.status as string))
+    || (filters.paymentMethod !== undefined && filters.paymentMethod !== "" && !["PIX", "CREDIT_CARD", "MANUAL"].includes(filters.paymentMethod as string))) {
+    throw new AffiliateError("AFFILIATE_FILTER_INVALID", 400, "Confira os filtros do relatório.");
+  }
+  return { q: normalizeSearch(q.trim()), status: filters.status || null, paymentMethod: filters.paymentMethod || null };
+};
 const salesQuery = (identity: AffiliateIdentity, filters: Record<string, unknown>) => {
   let query: FirebaseFirestore.Query = affiliateDb().collection("reservas");
   if (identity.role === "partner") query = query.where("commercialAttribution.partnerId", "==", identity.partnerId);
@@ -197,6 +266,7 @@ const salesQuery = (identity: AffiliateIdentity, filters: Record<string, unknown
 };
 const reportPage = async (identity: AffiliateIdentity, filters: Record<string, unknown>, limit: number, cursor?: string | null) => {
   const [from, to] = dateFilters(filters);
+  const selected = reportFilters(filters);
   let query = salesQuery(identity, filters);
   if (cursor) query = query.startAfter(cursor);
   const snapshot = await query.limit(limit + 1).get();
@@ -216,7 +286,10 @@ const reportPage = async (identity: AffiliateIdentity, filters: Record<string, u
       || (identity.role === "admin" && filters.agencyId === "null" && source.agencyId !== null)) return null;
     const evidence = await affiliateDb().collection("_affiliate_payment_evidence").doc(doc.id).get();
     const dto = affiliateSaleDto(doc.id, raw, evidence.data(), identity, await agencyLogo(source.agencyId));
-    const financialDate = financialDay(dto.paidAt ?? affiliateIso(raw.criadoEm) ?? source.bookedAt ?? "");
+    if ((selected.status && dto.status !== selected.status) || (selected.paymentMethod && dto.paymentMethod !== selected.paymentMethod)) return null;
+    const searchable = normalizeSearch([dto.reservationCode, dto.activity, dto.partnerName, dto.agencyName].filter(Boolean).join(" "));
+    if (selected.q && !searchable.includes(selected.q)) return null;
+    const financialDate = financialDay(dto.paidAt ?? dto.createdAt ?? "");
     return (!from || financialDate >= from) && (!to || financialDate <= to) ? dto : null;
   }))).filter((item): item is NonNullable<typeof item> => item !== null);
   return { items, nextCursor: snapshot.size > limit ? docs[docs.length - 1].id : null };

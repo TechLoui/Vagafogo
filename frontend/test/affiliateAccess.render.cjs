@@ -18,11 +18,11 @@ if (!rendererPath) {
 const rendererVersion = createRequire(rendererPath)('./package.json').version;
 assert.equal(rendererVersion, reactVersion, 'Install a react-test-renderer version matching frontend React');
 let runtime;
+let portalRuntime;
 const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 const initialHandles = new Set(process._getActiveHandles());
 
-test.before(async () => {
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+async function buildRuntime(realPortal = false) {
   const entry = `
     export * as React from 'react';
     export {act, create} from ${JSON.stringify(rendererPath)};
@@ -30,6 +30,7 @@ test.before(async () => {
     export {router as routeConfig} from ${JSON.stringify(path.join(frontend, 'src/routes.tsx'))};
     export {SessionContext} from ${JSON.stringify(path.join(frontend, 'src/features/affiliates/AffiliateAccess.ts'))};
     export {setAuth} from 'firebase/auth';
+    export {setApi,getApiCalls} from ${JSON.stringify(path.join(frontend, 'src/features/affiliates/affiliateService.ts'))};
   `;
   const build = await esbuild.build({
     stdin: { contents: entry, resolveDir: frontend, loader: 'tsx' },
@@ -42,20 +43,25 @@ test.before(async () => {
       builder.onResolve({ filter: /AffiliateAccess(?:\.ts)?$/ }, () => ({ path: 'session', namespace: 'qa' }));
       builder.onResolve({ filter: /^firebase\/auth$/ }, () => ({ path: 'auth', namespace: 'qa' }));
       builder.onResolve({ filter: /(?:^|\/)firebase(?:\.ts)?$/ }, () => ({ path: 'firebase', namespace: 'qa' }));
-      builder.onResolve({ filter: /(?:^|\/)affiliateService(?:\.ts)?$/ }, () => ({ path: 'api-error', namespace: 'qa' }));
+      builder.onResolve({ filter: /affiliateService(?:\.ts)?$/ }, () => ({ path: 'api-error', namespace: 'qa' }));
       builder.onResolve({ filter: /\.(?:css|jpg|jpeg|webp|png)$/ }, () => ({ path: 'asset', namespace: 'qa' }));
       builder.onResolve({ filter: /^\.\/components\/AppLayout$/ }, () => ({ path: 'layout', namespace: 'qa' }));
       builder.onResolve({ filter: /^\.\/pages\// }, (args) => {
-        if (args.path === './pages/AffiliateLogin') return;
+        if (args.path === './pages/AffiliateLogin' || realPortal && args.path === './pages/AffiliatePortal') return;
         return { path: 'page-' + path.basename(args.path), namespace: 'qa' };
       });
       builder.onLoad({ filter: /.*/, namespace: 'qa' }, (args) => {
         let contents;
         if (args.path === 'route-config') contents = 'export const createBrowserRouter = routes => routes;';
-        else if (args.path === 'session') contents = "import {createContext,useContext} from 'react'; export const SessionContext=createContext(null); export const AffiliateProfileContext=createContext(null); export const useAffiliateSession=()=>useContext(SessionContext);";
+        else if (args.path === 'session') contents = "import {createContext,useContext} from 'react'; export const SessionContext=createContext(null); export const AffiliateProfileContext=createContext(null); export const useAffiliateSession=()=>useContext(SessionContext); export const useAffiliateProfile=()=>useContext(AffiliateProfileContext);";
         else if (args.path === 'auth') contents = 'let implementation={}; export const setAuth=value=>{implementation=value;}; export const signOut=(...args)=>implementation.signOut(...args); export const signInWithEmailAndPassword=(...args)=>implementation.signIn(...args);';
         else if (args.path === 'firebase') contents = 'export const auth={};';
-        else if (args.path === 'api-error') contents = 'export class AffiliateApiError extends Error { constructor(message,status,code){super(message);this.status=status;this.code=code;} }';
+        else if (args.path === 'api-error') contents = `
+          export class AffiliateApiError extends Error { constructor(message,status,code){super(message);this.status=status;this.code=code;} }
+          let api={},calls=[]; export const setApi=value=>{api=value;calls=[];}; export const getApiCalls=()=>calls;
+          const invoke=(method,args)=>{calls.push({method,args}); if(!api[method])throw new Error('Unexpected API call: '+method); return api[method](...args);};
+          ${['getAffiliateProfile','listAffiliateEntities','saveAffiliateEntity','saveAgencyLogo','createAffiliateActivation','getAffiliateInvitation','claimAffiliateInvitation','getAffiliateSummary','getAffiliateSales','getAffiliateLinks'].map((name) => `export const ${name}=(...args)=>invoke('${name}',args);`).join('\n')}
+        `;
         else if (args.path === 'asset') contents = 'export default "fixture-asset";';
         else if (args.path === 'layout') contents = "import {Outlet} from 'react-router-dom'; export const AppLayout=()=> <Outlet/>; export const PageLoader=()=> <p role='status'>Loading route</p>;";
         else {
@@ -71,7 +77,12 @@ test.before(async () => {
   compiled.filename = path.join(__dirname, '.affiliate-access-memory.cjs');
   compiled.paths = Module._nodeModulePaths(frontend);
   compiled._compile(build.outputFiles[0].text, compiled.filename);
-  runtime = compiled.exports;
+  return compiled.exports;
+}
+test.before(async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  runtime = await buildRuntime();
+  portalRuntime = await buildRuntime(true);
 });
 test.after(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
@@ -91,12 +102,13 @@ const session = (role, uid = role) => ({
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const text = (node) => node == null ? '' : typeof node === 'string' || typeof node === 'number' ? String(node)
   : Array.isArray(node) ? node.map(text).join(' ') : text(node.children);
-const button = (view, label) => view.root.findAllByType('button').find((item) => text(item.toJSON ? item.toJSON() : { children: item.children }) === label);
+const button = (view, label) => view.root.findAllByType('button').find((item) => text(item.toJSON ? item.toJSON() : { children: item.children }).replace(/\s+/g, ' ').trim() === label);
 const page = (view, name) => view.root.findAll((item) => item.props['data-page'] === name).length > 0;
 const home = { admin: '/CRM', agency: '/agencia', partner: '/parceiro' };
 
-async function mount(t, location, initialSession) {
-  const { React, create, act, SessionContext, createMemoryRouter, RouterProvider } = runtime;
+async function mount(t, location, initialSession, options = {}) {
+  const engine = options.engine || runtime;
+  const { React, create, act, SessionContext, createMemoryRouter, RouterProvider } = engine;
   let current = initialSession;
   const originalError = console.error;
   t.mock.method(console, 'error', (...args) => {
@@ -104,15 +116,16 @@ async function mount(t, location, initialSession) {
     originalError(...args);
   });
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network forbidden in account access render tests'); });
-  runtime.setAuth({ signOut: async () => {}, signIn: async () => { throw new Error('Unexpected sign-in'); } });
-  const router = createMemoryRouter(runtime.routeConfig, { initialEntries: [location] });
+  engine.setAuth({ signOut: async () => {}, signIn: async () => { throw new Error('Unexpected sign-in'); } });
+  if (options.api) engine.setApi(options.api);
+  const router = createMemoryRouter(engine.routeConfig, { initialEntries: [location] });
   const tree = () => React.createElement(SessionContext.Provider, { value: current }, React.createElement(RouterProvider, { router }));
   let view;
   await act(async () => { view = create(tree()); await new Promise((resolve) => setImmediate(resolve)); });
   await act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
   t.after(async () => { await act(async () => view.unmount()); router.dispose(); });
   return {
-    view, router, act,
+    view, router, act, engine,
     update: async (value) => { current = value; await act(async () => view.update(tree())); },
     click: async (label) => { const target = button(view, label); assert.ok(target, 'Missing button: ' + label); await act(async () => target.props.onClick()); },
   };
@@ -239,4 +252,121 @@ test('successful account switch returns to the login form without reusing the pr
   await mounted.update(session('partner', 'another-persisted-user'));
   assert.equal(mounted.router.state.location.pathname, '/afiliados/login');
   assert.ok(button(mounted.view, 'Continuar no meu painel'));
+});
+
+const portalSession = (role, linked = false) => {
+  const state = session(role);
+  const agency = { id: 'agency-a', name: 'Synthetic Agency', email: 'agency@example.test', status: 'active' };
+  state.profile.identity.agencyId = role === 'agency' || linked ? agency.id : null;
+  if (role === 'agency' || linked) state.profile.agency = agency;
+  if (role === 'partner') state.profile.partner = {
+    id: 'partner-a', name: linked ? 'Linked Synthetic Partner' : 'Independent Synthetic Partner',
+    email: 'partner@example.test', status: 'active', agencyId: state.profile.identity.agencyId,
+  };
+  return state;
+};
+const publicLink = 'https://vagafogo.com.br/reservar?ref=' + 'a'.repeat(43);
+const portalApi = () => ({
+  getAffiliateSummary: async () => ({ paidCount: 2, pendingCount: 1, cancelledCount: 1, revenue: 320, currency: 'BRL', commission: 9876.54, commissionConfigured: true }),
+  getAffiliateSales: async () => ({ items: [{
+    id: 'f7317cbe-13e4-4575-afd2-f01bf1306b9f', reservationCode: 'f7317cbe-13e4-4575-afd2-f01bf1306b9f',
+    date: '2026-11-25', time: '10:00', activity: 'Synthetic Brunch', status: 'paid', value: 160,
+    createdAt: new Date().toISOString(), paidAt: new Date().toISOString(), paymentMethod: 'PIX', guestCount: 4,
+    partnerId: 'partner-a', partnerName: 'Synthetic Partner', agencyId: null,
+    customerName: 'DO_NOT_RENDER_CUSTOMER', cpf: 'DO_NOT_RENDER_CPF', commission: 9876.54,
+  }], nextCursor: null }),
+  getAffiliateLinks: async () => ({ items: [{ id: 'link-a', partnerId: 'partner-a', label: 'Seu link de reserva', status: 'active', url: publicLink }], nextCursor: null }),
+  listAffiliateEntities: async () => ({ items: [{ id: 'own-partner', name: 'Own Agency Partner', email: 'own-partner@example.test', status: 'active', agencyId: 'agency-a' }], nextCursor: null }),
+});
+const controlLabels = (view) => view.root.findAll((item) => item.type === 'button' || item.type === 'a')
+  .map((item) => `${text({ children: item.children })} ${item.props['aria-label'] || ''} ${item.props.title || ''}`).join(' | ');
+const noBookingActions = (mounted) => {
+  assert.doesNotMatch(controlLabels(mounted.view), /(?:criar|nova|novo|editar|alterar|cancelar|excluir|remarcar)\s+(?:uma\s+|a\s+)?reservas?/i);
+  assert.doesNotMatch(text(mounted.view.toJSON()), /DO_NOT_RENDER_CUSTOMER|DO_NOT_RENDER_CPF/);
+  assert.ok(mounted.engine.getApiCalls().every((call) => ['getAffiliateSummary', 'getAffiliateSales', 'getAffiliateLinks', 'listAffiliateEntities'].includes(call.method)), 'Navigation must issue read APIs only');
+};
+const noPartnerManagement = (mounted) => {
+  assert.doesNotMatch(controlLabels(mounted.view), /(?:criar|novo|nova|editar|gerar acesso|ativar)\s+(?:um\s+|uma\s+)?(?:parceiro|usu[aá]rio|ag[eê]ncia|cadastro)/i);
+  assert.equal(mounted.engine.getApiCalls().some((call) => call.method === 'listAffiliateEntities'), false);
+};
+
+test('real independent portal navigates all four read-only sections without user management or booking actions', async (t) => {
+  const mounted = await mount(t, '/parceiro', portalSession('partner'), { engine: portalRuntime, api: portalApi() });
+  const overview = text(mounted.view.toJSON());
+  assert.match(overview, /Ticket médio pago/);
+  assert.match(overview, /160,00/, 'Average ticket must use paid revenue divided by paid reservations');
+  assert.match(overview, /50\s*%/, 'Payment share must use paid/pending/cancelled reservations, not visitor counts');
+  assert.equal(mounted.engine.getApiCalls().filter((call) => call.method === 'getAffiliateSummary').length, 1);
+  assert.equal(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateSales'), false, 'Overview must not fetch reservation rows');
+  const tabs = ['Visão geral', 'Reservas', 'Relatórios', 'Divulgação'];
+  for (const label of tabs) assert.ok(button(mounted.view, label), 'Independent navigation must include ' + label);
+  for (const label of tabs) {
+    await mounted.click(label);
+    assert.equal(button(mounted.view, label).props['aria-current'], 'page');
+    assert.equal(mounted.router.state.location.pathname, '/parceiro');
+    noBookingActions(mounted);
+    noPartnerManagement(mounted);
+    assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|repasse manual|9\.876,54/);
+  }
+  const share = mounted.view.root.findAllByType('input').find((item) => item.props.value === publicLink);
+  assert.ok(share && share.props.readOnly, 'Sharing exposes the existing link without editing or creating one');
+  assert.ok(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateLinks'));
+  for (const call of mounted.engine.getApiCalls().filter((call) => ['getAffiliateSummary', 'getAffiliateSales'].includes(call.method))) {
+    assert.ok(!call.args[0]?.agencyId && !call.args[0]?.partnerId, 'External scope comes from the authenticated backend identity');
+  }
+});
+
+test('real linked partner retains its agency branding, link and reservation report without any user or booking management', async (t) => {
+  const mounted = await mount(t, '/parceiro', portalSession('partner', true), { engine: portalRuntime, api: portalApi() });
+  assert.match(text(mounted.view.toJSON()), /Synthetic Agency/);
+  assert.ok(mounted.view.root.findAllByType('input').some((item) => item.props.value === publicLink && item.props.readOnly));
+  assert.ok(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateSales'));
+  assert.equal(button(mounted.view, 'Parceiros'), undefined);
+  noBookingActions(mounted);
+  noPartnerManagement(mounted);
+  assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|repasse manual|9\.876,54/);
+});
+
+test('real agency keeps scoped partner administration while every reservation view remains read-only', async (t) => {
+  const mounted = await mount(t, '/agencia', portalSession('agency'), { engine: portalRuntime, api: portalApi() });
+  assert.ok(button(mounted.view, 'Resumo e reservas'));
+  assert.ok(button(mounted.view, 'Parceiros'));
+  noBookingActions(mounted);
+  await mounted.click('Parceiros');
+  const listing = mounted.engine.getApiCalls().find((call) => call.method === 'listAffiliateEntities');
+  assert.ok(listing);
+  assert.equal(listing.args[0], 'partners');
+  assert.equal(listing.args[1], 'agency-a');
+  assert.match(text(mounted.view.toJSON()), /Own Agency Partner/);
+  assert.match(controlLabels(mounted.view), /Criar parceiro|Novo parceiro/);
+  assert.match(controlLabels(mounted.view), /Editar/);
+  noBookingActions(mounted);
+  assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|repasse manual|9\.876,54/);
+  await mounted.click('Resumo e reservas');
+  noBookingActions(mounted);
+});
+
+test('real portal does not fetch reports or links for mismatched roles or the administrator account', async (t) => {
+  for (const [role, location] of [['agency', '/parceiro'], ['partner', '/agencia'], ['admin', '/parceiro']]) {
+    const mounted = await mount(t, location, portalSession(role), { engine: portalRuntime, api: portalApi() });
+    assert.equal(mounted.router.state.location.pathname, location);
+    assert.ok(button(mounted.view, 'Entrar com outra conta'));
+    assert.deepEqual(mounted.engine.getApiCalls(), []);
+    assert.equal(button(mounted.view, 'Visão geral'), undefined);
+  }
+});
+
+test('real partner portal keeps read-only navigation when an awaited logout fails', async (t) => {
+  const mounted = await mount(t, '/parceiro', portalSession('partner'), { engine: portalRuntime, api: portalApi() });
+  const pending = deferred();
+  let calls = 0;
+  portalRuntime.setAuth({ signIn: async () => {}, signOut: async () => { calls++; return pending.promise; } });
+  await mounted.click('Sair');
+  assert.equal(calls, 1);
+  assert.ok(button(mounted.view, 'Saindo…')?.props.disabled);
+  await mounted.act(async () => pending.reject(new Error('local logout failed')));
+  assert.match(text(mounted.view.toJSON()), /Não foi possível sair/);
+  assert.equal(mounted.router.state.location.pathname, '/parceiro');
+  assert.ok(button(mounted.view, 'Visão geral'));
+  noBookingActions(mounted);
 });

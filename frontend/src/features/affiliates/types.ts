@@ -58,6 +58,11 @@ export type AffiliateLink = {
 
 export type AffiliateSale = {
   id: string;
+  reservationCode?: string;
+  createdAt?: string | null;
+  paymentMethod?: 'PIX' | 'CREDIT_CARD' | 'MANUAL' | null;
+  guestCount?: number | null;
+  time?: string | null;
   date: string;
   activity: string;
   status: string;
@@ -82,4 +87,12 @@ export type AffiliateSummary = {
   currency: 'BRL';
 };
 
-export type AffiliateReportQuery = { from: string; to: string; agencyId?: string; partnerId?: string };
+export type AffiliateReportQuery = {
+  from: string;
+  to: string;
+  agencyId?: string;
+  partnerId?: string;
+  q?: string;
+  status?: 'paid' | 'pending' | 'cancelled';
+  paymentMethod?: 'PIX' | 'CREDIT_CARD' | 'MANUAL';
+};
