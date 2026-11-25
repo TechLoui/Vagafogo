@@ -1,11 +1,12 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { FaArrowRight, FaEye, FaEyeSlash, FaLeaf } from 'react-icons/fa';
 import { auth } from '../../firebase';
 import logo from '../assets/logo.jpg';
 import heroImage from '../assets/hero/hero-1-800.webp';
 import { useAffiliateSession } from '../features/affiliates/AffiliateAccess';
+import { AffiliateAccountChoice } from '../features/affiliates/AffiliateAccountChoice';
 import { affiliateHome } from '../features/affiliates/affiliateUtils';
 import '../features/affiliates/Affiliate.css';
 
@@ -16,15 +17,22 @@ export function AffiliateLogin() {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [submittedUid, setSubmittedUid] = useState<string | null>(null);
   const submission = useRef(false);
   const passwordRef = useRef<HTMLInputElement>(null);
-  if (profile && !loading) return <Navigate to={affiliateHome(profile.identity.role)} replace />;
+  if (!loading && !busy && profile && user?.uid === submittedUid && profile.identity.uid === submittedUid && profile.identity.role !== 'admin') {
+    return <Navigate to={affiliateHome(profile.identity.role)} replace />;
+  }
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (submission.current) return;
     submission.current = true;
-    setError(''); setBusy(true);
-    try { await signInWithEmailAndPassword(auth, email.trim(), password); }
+    setError(''); setBusy(true); setSubmittedUid(null);
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      setSubmittedUid(credential.user.uid);
+      setPassword('');
+    }
     catch { setError('Confira o e-mail e a senha e tente novamente.'); passwordRef.current?.focus(); }
     finally { submission.current = false; setBusy(false); }
   };
@@ -40,10 +48,10 @@ export function AffiliateLogin() {
         <h1 id="affiliate-login-title">Entre no seu painel</h1>
         <p>Acompanhe as reservas indicadas por você ou pela sua agência.</p>
         {loading ? <p role="status" className="aff-empty">Verificando acesso…</p> : user ? (
-          <div className="aff-form"><p className="aff-alert aff-alert--error" role="alert">{profileError?.message || 'Sua conta ainda não possui um acesso habilitado.'}</p>
-            <button type="button" className="aff-button" onClick={retry}>Verificar novamente</button>
-            <button type="button" className="aff-button aff-button--secondary" onClick={() => void signOut(auth)}>Entrar com outra conta</button>
-          </div>
+          <>
+            {!profile && <p className="aff-alert aff-alert--error" role="alert">{profileError?.message || 'Sua conta ainda não possui um acesso habilitado.'}</p>}
+            <AffiliateAccountChoice identity={profile?.identity} email={user.email} onRetry={profile ? undefined : retry} onSignedOut={() => { setSubmittedUid(null); setPassword(''); setError(''); }} />
+          </>
         ) : (
           <form className="aff-form" onSubmit={(event) => void submit(event)}>
             {error && <p id="affiliate-login-error" className="aff-alert aff-alert--error" role="alert">{error}</p>}

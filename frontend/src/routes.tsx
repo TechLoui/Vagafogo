@@ -99,7 +99,7 @@ export const router = createBrowserRouter([
           ]);
           function ProtectedAffiliatePortal() {
             return (
-              <ProtectedRoute redirectTo="/afiliados/login" allowedRoles={[role]}>
+              <ProtectedRoute redirectTo="/afiliados/login" allowedRoles={[role]} onRoleMismatch="switch-account">
                 <AffiliatePortal />
               </ProtectedRoute>
             );
