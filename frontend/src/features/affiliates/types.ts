@@ -24,6 +24,8 @@ export type AffiliateEntity = {
   logoVersion?: string;
   logoUpdatedAt?: string;
   branding?: AgencyBranding | null;
+  publicSlug?: string;
+  linkUpdatedAt?: string;
 };
 
 export type AffiliateProfile = {
@@ -51,11 +53,15 @@ export type AffiliateInvitation = {
 
 export type AffiliateLink = {
   id: string;
-  partnerId: string;
+  partnerId: string | null;
+  agencyId?: string | null;
+  kind?: 'agency' | 'partner';
+  slug?: string;
   label: string;
   status: AffiliateStatus;
   url: string;
   createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AffiliateSale = {
@@ -70,8 +76,8 @@ export type AffiliateSale = {
   status: string;
   value: number;
   paidAt: string | null;
-  partnerId: string;
-  partnerName: string;
+  partnerId: string | null;
+  partnerName: string | null;
   agencyId: string | null;
   agencyName?: string | null;
   agencyLogoUrl?: string | null;

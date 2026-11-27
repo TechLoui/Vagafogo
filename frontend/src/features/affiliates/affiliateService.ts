@@ -22,6 +22,9 @@ const errorMessages: Record<string, string> = {
   AFFILIATE_COMMISSION_INVALID: 'Confira a comissão e use no máximo duas casas decimais.',
   AFFILIATE_COMMISSION_INHERITED: 'A comissão deste parceiro segue a regra da agência.',
   AFFILIATE_BRANDING_INVALID: 'Não foi possível reconhecer as cores da marca. Escolha a imagem novamente e salve.',
+  AFFILIATE_SLUG_INVALID: 'Use de 3 a 60 letras minúsculas, números e hífens entre as palavras.',
+  AFFILIATE_SLUG_RESERVED: 'Esse endereço é usado pelo site. Escolha outro nome para sua agência.',
+  AFFILIATE_SLUG_IN_USE: 'Esse endereço já está reservado. Escolha outra combinação para sua agência.',
   AFFILIATE_SERVICE_UNAVAILABLE: 'O serviço está temporariamente indisponível. Tente novamente.',
   AFFILIATE_RATE_LIMIT: 'Aguarde um minuto antes de tentar novamente.',
   AFFILIATE_FILTER_INVALID: 'Confira os filtros e use até 120 caracteres na busca.',
@@ -117,3 +120,8 @@ export const getAffiliateSales = (query: AffiliateReportQuery, cursor?: string, 
   request<AffiliatePage<AffiliateSale>>(`/sales${queryString({ ...query, cursor, limit })}`, { signal });
 
 export const getAffiliateLinks = () => request<AffiliatePage<AffiliateLink>>('/links');
+
+export const saveAgencyOfficialLink = (agencyId: string, slug: string) =>
+  request<{ item: AffiliateLink }>(`/agencies/${encodeURIComponent(agencyId)}/link`, {
+    method: 'POST', body: JSON.stringify({ slug }),
+  });

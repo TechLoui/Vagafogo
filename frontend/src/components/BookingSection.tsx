@@ -3910,7 +3910,7 @@ export function BookingSection({ initialExperience, initialPackageId, initialCom
 
                 {(affiliateReferral || affiliateLoading || affiliateError) && (
                   <div className={`mb-3 rounded-xl border p-3 text-sm ${affiliateError ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-100 bg-emerald-50 text-emerald-900'}`} role="status">
-                    {affiliateError || (affiliateLoading ? 'Validando seu link de indicação…' : `Indicação de ${affiliateReferral?.partnerName}`)}
+                    {affiliateError || (affiliateLoading ? 'Validando seu link de indicação…' : `Indicação de ${affiliateReferral?.partnerName || affiliateReferral?.agencyName || 'uma parceria Vagafogo'}`)}
                     {affiliateError && <div className="mt-2 flex flex-wrap gap-3">
                       <button type="button" className="font-semibold underline" onClick={() => setAffiliateRetry((value) => value + 1)}>Tentar novamente</button>
                       <button type="button" className="underline" onClick={() => { clearAffiliateReferral(); setAffiliateReferral(null); setAffiliateError(''); setAffiliateLoading(false); }}>Reservar sem indicação</button>

@@ -45,6 +45,13 @@
   # Formularios publicos com identificador dinamico sao resolvidos pelo React Router.
   RewriteRule ^formulario/[^/]+$ /index.html [L]
 
+  # Links oficiais de agencias usam um unico nome na raiz, sem criar pastas.
+  # O backend valida existencia, status e indicacao antes de abrir o formulario.
+  # Esta regra vem depois das paginas conhecidas e dos arquivos reais.
+  RewriteRule ^(?=[^/]{3,60}/?$)[a-z0-9]+(?:-[a-z0-9]+)*/?$ - [E=VAGAFOGO_AGENCY_LINK:1,NC]
+  RewriteCond %{ENV:VAGAFOGO_AGENCY_LINK} =1
+  RewriteRule ^ /index.html [L]
+
   # URLs desconhecidas renderizam a pagina React de 404 mantendo status HTTP 404.
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
@@ -71,6 +78,8 @@
   SetEnvIf Request_URI "^/assets/" VAGAFOGO_VERSIONED_ASSET=1
   SetEnvIf Request_URI "^/(robots\.txt|sitemap\.xml)$" VAGAFOGO_DISCOVERY_FILE=1
   <IfModule mod_headers.c>
+    Header always set X-Robots-Tag "noindex, follow" env=VAGAFOGO_AGENCY_LINK
+    Header always set X-Robots-Tag "noindex, follow" env=REDIRECT_VAGAFOGO_AGENCY_LINK
     Header always set X-Robots-Tag "noindex, follow" env=VAGAFOGO_NOINDEX
     Header always set Cache-Control "public, max-age=31536000, immutable" env=VAGAFOGO_VERSIONED_ASSET
     Header always set Cache-Control "public, max-age=3600, must-revalidate" env=VAGAFOGO_DISCOVERY_FILE

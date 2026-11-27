@@ -4,8 +4,11 @@ import logo from "../assets/logo.jpg";
 import { BookingSection } from "../components/BookingSection";
 import { carregarCheckoutAgente, type AgentCheckoutHandoff } from "../features/agentCheckout";
 import { parseBookingPrefill } from "../utils/bookingPrefill";
+import type { AffiliateReferral } from "../features/affiliateReferral";
+import { AgencyLogo } from "../features/affiliates/AgencyLogo";
+import { brandThemeStyle } from "../features/affiliates/affiliateBranding";
 
-export function Reserva() {
+export function Reserva({ agencyReferral }: { agencyReferral?: AffiliateReferral } = {}) {
   const [searchParams] = useSearchParams();
   const initialPrefill = useMemo(() => parseBookingPrefill(searchParams), [searchParams]);
   const isCheckoutModal = searchParams.get("checkout_modal") === "1";
@@ -52,8 +55,8 @@ export function Reserva() {
 
   return (
     <div
-      className="reserva-page relative flex h-[100svh] min-h-[520px] flex-col overflow-clip bg-[#F7FAEF]"
-      style={{ background: "linear-gradient(145deg, #F7FAEF 0%, #f3efe7 52%, #eef5e7 100%)" }}
+      className={`reserva-page relative flex h-[100svh] min-h-[520px] flex-col overflow-clip bg-[#F7FAEF]${agencyReferral ? ' reserva-page--agency' : ''}`}
+      style={{ background: "linear-gradient(145deg, #F7FAEF 0%, #f3efe7 52%, #eef5e7 100%)", ...(agencyReferral ? brandThemeStyle(agencyReferral.agencyBranding) : {}) }}
     >
       <div className="pointer-events-none absolute -left-24 top-24 h-72 w-72 rounded-full bg-[#E0B13C]/10 blur-3xl" />
       <div className="pointer-events-none absolute -right-24 bottom-10 h-80 w-80 rounded-full bg-[#8B4F23]/10 blur-3xl" />
@@ -71,7 +74,7 @@ export function Reserva() {
             <span className="hidden sm:inline">Voltar</span>
           </Link>
 
-          <div className="flex min-w-0 items-center justify-center gap-2.5 text-center sm:gap-3">
+          {agencyReferral ? <div className="reserva-agency-brand"><img src={logo} alt="Vagafogo" width={46} height={46} /><i aria-hidden="true" /><AgencyLogo url={agencyReferral.agencyLogoUrl} name={agencyReferral.agencyName || 'Agência'} /><div className="reserva-agency-brand-text"><p>Reserva online · Vagafogo</p><h1 title={agencyReferral.agencyName || undefined}>{agencyReferral.agencyName}</h1></div></div> : <div className="flex min-w-0 items-center justify-center gap-2.5 text-center sm:gap-3">
             <img
               src={logo}
               alt="Vagafogo"
@@ -86,7 +89,7 @@ export function Reserva() {
                 <span className="hidden sm:inline">Sua experiência na Vagafogo</span>
               </h1>
             </div>
-          </div>
+          </div>}
 
           {isCheckoutModal ? (
             <div className="h-10 w-[78px] shrink-0 sm:w-[110px]" aria-hidden="true" />
@@ -95,7 +98,7 @@ export function Reserva() {
               type="button"
               onClick={() => window.dispatchEvent(new Event("vagafogo:open-chat"))}
               aria-label="Abrir Fale Conosco com a Jatobá"
-              className="inline-flex h-10 w-[78px] shrink-0 items-center justify-center gap-1 rounded-full bg-[#214f3e] px-1.5 text-[10px] font-semibold leading-[1.05] text-white shadow-sm transition hover:bg-[#17634b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#214f3e] sm:w-[110px] sm:gap-1.5 sm:px-2 sm:text-xs"
+              className="reserva-contact inline-flex h-10 w-[78px] shrink-0 items-center justify-center gap-1 rounded-full bg-[#214f3e] px-1.5 text-[10px] font-semibold leading-[1.05] text-white shadow-sm transition hover:bg-[#17634b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#214f3e] sm:w-[110px] sm:gap-1.5 sm:px-2 sm:text-xs"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5 8 8 0 0 1-3-.6L4 20l1.6-5.1A7.5 7.5 0 1 1 20 11.5Z" />

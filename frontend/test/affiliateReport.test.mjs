@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { affiliatePaymentLabel, affiliatePeriodPreset, affiliateSalesCsv, loadAffiliateSalesForExport } from '../src/features/affiliates/affiliateReportUtils.ts';
+import { affiliatePaymentLabel, affiliatePeriodPreset, affiliateSalesCsv, affiliateSellerLabel, loadAffiliateSalesForExport } from '../src/features/affiliates/affiliateReportUtils.ts';
 
 const sale = {
   id: 'reserva-original-123', reservationCode: 'reserva-original-123', createdAt: '2026-11-01T02:00:00Z',
@@ -17,6 +17,17 @@ test('exportação externa contém os dados de consulta e omite comissão e camp
   assert.doesNotMatch(csv, /comissão|31,55|CONFIDENTIAL|commission/i);
   assert.match(affiliateSalesCsv([sale], { includeCommission: true }), /"Percentual|10%/);
   assert.match(affiliateSalesCsv([sale], { includeCommission: true }), /"31,55"/);
+});
+
+test('venda direta da agência tem rótulo próprio e coluna Vendedor sem inventar parceiro nem expor comissão', () => {
+  const direct = { ...sale, agencyId: 'synthetic-agency', agencyName: 'Synthetic Agency', partnerId: null, partnerName: null };
+  assert.equal(affiliateSellerLabel(direct), 'Venda direta da agência');
+  assert.equal(affiliateSellerLabel(sale), 'Parceiro');
+  assert.equal(affiliateSellerLabel({ ...direct, agencyId: null }), 'Não informado');
+  const csv = affiliateSalesCsv([direct], { includeAgency: true, includePartner: true });
+  assert.match(csv.split('\r\n')[0], /"Agência";"Vendedor"$/);
+  assert.match(csv, /"Synthetic Agency";"Venda direta da agência"/);
+  assert.doesNotMatch(csv, /"null"|"Parceiro"|comissão|31,55|commission/i);
 });
 
 test('CSV preserva quebras/aspas e neutraliza fórmulas nas células de texto exportadas', () => {

@@ -6,7 +6,7 @@ export type AffiliateIdentity = { uid: string; email?: string; role: "admin" | "
 export type CommissionRule = { mode: "percent" | "fixed"; value: number };
 export type AffiliateBranding = { primaryColor: string; accentColor: string };
 export type CommercialAttribution = {
-  version: 1; agencyId: string | null; agencyName: string | null; partnerId: string; partnerName: string;
+  version: 1; agencyId: string | null; agencyName: string | null; partnerId: string | null; partnerName: string | null;
   linkId: string; contextId: string; capturedAt: string; bookedAt: string; commissionRule: CommissionRule | null;
   commissionBeneficiary: "agency" | "partner" | null; commissionBeneficiaryId: string | null;
 };
@@ -76,6 +76,7 @@ export const affiliateBranding = (value: unknown): AffiliateBranding | undefined
 const serialize = (id: string, raw: Record<string, any>, identity: AffiliateIdentity) => ({
   id, name: raw.name, email: raw.email, status: raw.status, agencyId: raw.agencyId ?? null,
   activated: Boolean(raw.memberUid), createdAt: affiliateIso(raw.createdAt), updatedAt: affiliateIso(raw.updatedAt),
+  ...(typeof raw.publicSlug === "string" ? { publicSlug: raw.publicSlug, linkUpdatedAt: affiliateIso(raw.linkUpdatedAt) } : {}),
   ...(affiliateAgencyLogoUrl(id, raw) ? { logoUrl: affiliateAgencyLogoUrl(id, raw), logoVersion: raw.logoVersion, logoUpdatedAt: affiliateIso(raw.logoUpdatedAt),
     ...(affiliateBranding(raw.branding) ? { branding: affiliateBranding(raw.branding) } : {}) } : {}),
   ...(identity.role === "admin" ? { commissionRule: raw.commissionRule ?? null } : {}),

@@ -3,8 +3,9 @@
 ## Funcionamento
 
 - Uirá continua como administrador geral no CRM e cria agências e parceiros independentes.
-- A agência gerencia somente seus próprios parceiros. Parceiros vinculados não recebem uma comissão individual adicional.
+- A agência gerencia somente seus próprios vendedores. Vendedores vinculados não recebem uma comissão individual adicional.
 - Cada parceiro possui um link de indicação para `/reservar` e acesso de leitura ao seu resumo de reservas pagas, pendentes e canceladas.
+- A agência também pode ter um link oficial próprio na raiz do site, por exemplo `/aquino-turismo`, sem criar um vendedor fictício. A agência configura em **Divulgação**; Uirá também configura em **CRM → Afiliados → Agências → Link oficial**. O exemplo não é criado automaticamente para uma conta real.
 - Uirá configura comissão percentual ou fixa por reserva para a agência ou para o parceiro independente. A regra é preservada na reserva; alterar a configuração não recalcula reservas anteriores.
 - Taxas e valores de comissão aparecem somente para Uirá. O pagamento é manual, fora do sistema; não existe split automático nem repasse automático da agência aos parceiros.
 - A comissão exige pagamento confirmado pelo provedor. Cancelamento/estorno deixa de ser elegível. A regra de afiliados não altera a comissão geral legada do checkout.
@@ -16,6 +17,8 @@ O cálculo geral de 1% inclui o checkout pago e as reservas pagas/confirmadas ma
 Ao registrar um novo pagamento pelo Admin, sua data é salva uma vez e preservada nas edições seguintes. Registros antigos já marcados sem data de pagamento usam a data de cadastro ou, na ausência dela, a visita. O período usa o dia de São Paulo. A comissão de afiliados permanece separada dessa apuração de 1%.
 
 ## Painel do parceiro independente
+
+Os três portais compartilham a estrutura visual refinada: navegação lateral no desktop, menu no celular, banner com fotografia real, atalhos com ilustrações geradas, indicadores com animação e tratamento de movimento reduzido. A agência tem **Visão geral**, **Reservas**, **Relatórios**, **Vendedores**, **Divulgação** e **Perfil e marca**. Vendedor e independente têm as quatro áreas de consulta e divulgação, com dados limitados ao próprio acesso.
 
 O independente possui quatro áreas: **Visão geral**, **Reservas**, **Relatórios** e **Divulgação**. A visão geral mostra valores pagos, reservas pagas, pendentes e canceladas/estornadas, ticket médio pago e taxa de pagamento. Essa taxa usa a proporção de reservas pagas entre todas as reservas do período; não representa conversão de visitantes do formulário.
 
@@ -32,6 +35,12 @@ Agências, independentes e parceiros vinculados têm acesso **somente de consult
 O CRM contém a aba **Afiliados**. As rotas externas são `/afiliados/login`, `/agencia` e `/parceiro`. O administrador gera um link de ativação para a pessoa criar a própria senha. O convite vence em 48 horas e só pode ser usado uma vez. Não são criadas contas reais nem enviadas mensagens nos testes locais.
 
 A indicação é validada no servidor; IDs e regras de comissão enviados pelo navegador não definem o vínculo. O contexto dura sete dias, é preservado no checkout e no atendimento vinculado à sessão e só é atribuído a perfis ativos. A reserva mantém o vínculo capturado na criação da cobrança.
+
+O link oficial mantém o endereço `/<nome-da-agencia>` enquanto abre o formulário existente, com nome, logo e cores da agência junto à marca Vagafogo. Nomes usam de 3 a 60 letras ASCII, números e hífens entre palavras. A unicidade é transacional, páginas do site são reservadas e endereços anteriores permanecem reservados ao mesmo titular. Alterar o nome invalida o link/contexto anterior para novas compras; reservas e cobranças já criadas preservam a indicação histórica.
+
+Uma venda pelo link oficial possui agência, sem vendedor (`partnerId` e `partnerName` nulos). A agência consulta essas vendas junto às vendas da equipe; o vendedor continua vendo somente suas próprias reservas. A interface e o CSV identificam **Venda direta da agência**. A comissão usa o valor total da reserva e a regra da agência, com elegibilidade somente após confirmação do provedor. A resolução pública devolve apenas contexto opaco, nome e identidade visual, sem contatos, taxas ou perfil privado.
+
+Na Hostinger, `.htaccess` encaminha nomes válidos de um segmento para o aplicativo depois das páginas conhecidas e arquivos físicos, antes do erro 404. O backend valida o nome antes de montar o formulário; erro ou outra indicação não herdam o contexto anterior. Links oficiais usam `noindex`. Caminhos com mais segmentos continuam sujeitos às regras existentes.
 
 A consulta pública exige **CPF + código da reserva**, sem pesquisar histórico pelo CPF. O comprovante, os links de consulta e a confirmação de pagamento disponibilizam o código.
 
@@ -53,8 +62,10 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-marcas-agencias.zip` contém os arquivos estáticos para a Hostinger, incluindo Perfil e marca da agência, o painel personalizado dos vendedores, a correção do Financeiro e o design do parceiro independente. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-portais-links-agencias.zip` contém os arquivos estáticos para a Hostinger, incluindo os três portais refinados, o link oficial da agência na raiz, Perfil e marca, a personalização dos vendedores e a correção do Financeiro. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
 
 O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 
 As prévias locais usam dados fictícios para os três perfis; os testes de Pix e cartão simulam o provedor e não geram cobrança real.
+
+Na entrega dos portais e links oficiais de 27/11, passaram 387 testes completos do backend, 87 testes unitários/contratos do frontend e 18 testes React dos acessos e portais. O checkout simulado cobriu cartão direto da agência, Pix do vendedor e cartão do independente, confirmação por webhook, estorno e preservação da cobrança após renomear o link. O contrato `.htaccess` foi verificado localmente; a execução Apache da Hostinger depende do envio manual do pacote. Os três portais foram inspecionados no navegador em 320, 390 e 1440 px.

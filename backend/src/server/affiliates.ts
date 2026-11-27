@@ -1,7 +1,7 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { exigirAfiliado, obterIdentidadeAfiliado, exigirIdentidadeFirebase, obterIdentidadeFirebase } from "../middleware/affiliateAuth";
 import { AffiliateError, affiliateMe, affiliatesEnabled, createAffiliateActivation, getAffiliateProfile, listAffiliates, previewAffiliateActivation, redeemAffiliateActivation, saveAffiliate } from "../services/affiliates";
-import { affiliateSummary, listAffiliateLinks, listAffiliateSales, resolveAffiliateLink } from "../services/affiliatesReferral";
+import { affiliateSummary, listAffiliateLinks, listAffiliateSales, resolveAffiliateAgencySlug, resolveAffiliateLink, saveAffiliateAgencyLink } from "../services/affiliatesReferral";
 import { assertAffiliateAgencyLogoAccess, deleteAffiliateAgencyLogo, readPublicAffiliateAgencyLogo, uploadAffiliateAgencyLogo } from "../services/affiliatesLogo";
 
 const router = Router();
@@ -47,6 +47,7 @@ router.use((req, res, next) => {
   res.status(503).json({ code: "AFFILIATES_NOT_ENABLED", error: "O portal de afiliados ainda nao esta disponivel." });
 });
 router.post("/public/resolve", run(async (req, res) => res.json(await resolveAffiliateLink(req.body?.referralToken))));
+router.post("/public/resolve-slug", run(async (req, res) => res.json(await resolveAffiliateAgencySlug(req.body?.slug))));
 router.get("/public/agencies/:id/logo", run(async (req, res) => {
   const logo = await readPublicAffiliateAgencyLogo(req.params.id, req.query.v);
   const etag = `"${logo.version}"`;
@@ -67,6 +68,8 @@ router.get("/me", run(async (_req, res) => {
 }));
 router.post("/agencies/:id/logo", run(async (req, res) => res.json({ item: await uploadAffiliateAgencyLogo(req.params.id, req.body, obterIdentidadeAfiliado(res)) })));
 router.delete("/agencies/:id/logo", run(async (req, res) => res.json({ item: await deleteAffiliateAgencyLogo(req.params.id, obterIdentidadeAfiliado(res)) })));
+router.post("/agencies/:id/link", run(async (req, res) => res.json({ item: await saveAffiliateAgencyLink(req.params.id, req.body, obterIdentidadeAfiliado(res)) })));
+router.patch("/agencies/:id/link", run(async (req, res) => res.json({ item: await saveAffiliateAgencyLink(req.params.id, req.body, obterIdentidadeAfiliado(res)) })));
 for (const [path, kind] of [["agencies", "agency"], ["partners", "partner"]] as const) {
   router.get(`/${path}`, run(async (req, res) => res.json(await listAffiliates(kind, obterIdentidadeAfiliado(res), req.query.limit, req.query.cursor, req.query.agencyId))));
   router.post(`/${path}`, run(async (req, res) => res.status(201).json({ item: await saveAffiliate(kind, null, req.body, obterIdentidadeAfiliado(res)) })));

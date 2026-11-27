@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { FaChartBar, FaCopy, FaEdit, FaPlus, FaSyncAlt, FaUserPlus, FaUsers } from 'react-icons/fa';
+import { FaChartBar, FaCopy, FaEdit, FaLink, FaPlus, FaSyncAlt, FaUserPlus, FaUsers } from 'react-icons/fa';
 import { AffiliateDialog } from './AffiliateDialog';
 import { AffiliateApiError, createAffiliateActivation, listAffiliateEntities, saveAffiliateEntity, saveAgencyLogo } from './affiliateService';
 import { useAffiliateProfile } from './AffiliateAccess';
 import { AgencyLogo } from './AgencyLogo';
 import { AgencyLogoInput } from './AgencyLogoInput';
+import { AgencyOfficialLink } from './AgencyOfficialLink';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
 import { affiliateDate, commissionLabel, parseCommissionRule } from './affiliateUtils';
 import type { AffiliateActivationLink, AffiliateEntity, AffiliateEntityInput, AgencyBranding } from './types';
@@ -83,6 +84,7 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
   const [generating, setGenerating] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [prepared, setPrepared] = useState(false);
+  const [linkAgency, setLinkAgency] = useState<AffiliateEntity | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(''); setPrepared(false);
@@ -156,6 +158,7 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
               <td className="aff-actions-cell"><div className="aff-actions aff-actions--end">
                 {onSelectAgency && <button type="button" className="aff-button aff-button--small aff-button--secondary" onClick={() => onSelectAgency(item)}><FaUsers /> Vendedores</button>}
                 {onReport && <button type="button" className="aff-button aff-button--small aff-button--secondary" onClick={() => onReport(item)}><FaChartBar /> Relatório</button>}
+                {isAdmin && kind === 'agencies' && <button type="button" className="aff-button aff-button--small aff-button--secondary" aria-label={`Link oficial de ${item.name}`} onClick={() => setLinkAgency(item)}><FaLink aria-hidden="true" /> Link oficial</button>}
                 <button type="button" className="aff-button aff-button--small aff-button--secondary" title="Editar cadastro" aria-label={`Editar ${item.name}`} onClick={() => setEditor({ entity: item })}><FaEdit /> Editar</button>
                 <button type="button" className="aff-button aff-button--small aff-button--secondary" title="Gerar link de ativação" aria-label={`Gerar acesso para ${item.name}`} disabled={generating !== null || item.status !== 'active'} onClick={() => void generate(item)}>{generating === item.id ? <FaSyncAlt className="aff-spin" /> : <FaUserPlus />} Acesso</button>
               </div></td>
@@ -165,6 +168,13 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
       </div>
       {nextCursor && <button type="button" className="aff-button aff-button--secondary aff-load-more" disabled={loadingMore} onClick={() => void more()}>{loadingMore ? 'Carregando…' : 'Carregar mais'}</button>}
       {editor && <EntityEditor key={`${editor.entity?.id ?? 'new'}-${editor.version ?? 0}`} entity={editor.entity} kind={kind} agencyId={agencyId} commissionVisible={commissionVisible} logoEditable={isAdmin && kind === 'agencies'} initialError={editor.error} onSave={save} onClose={() => setEditor(null)} />}
+      {linkAgency && isAdmin && kind === 'agencies' && <AffiliateDialog title="Endereço da agência" onClose={() => setLinkAgency(null)}>
+        <AgencyOfficialLink key={linkAgency.id} agency={linkAgency} compact onSaved={(link) => {
+          const update = (item: AffiliateEntity) => item.id === link.agencyId ? { ...item, publicSlug: link.slug, linkUpdatedAt: link.updatedAt } : item;
+          setItems((current) => current.map(update));
+          setLinkAgency((current) => current ? update(current) : null);
+        }} />
+      </AffiliateDialog>}
       {invite && <AffiliateDialog title={`Acesso de ${invite.name}`} onClose={() => setInvite(null)}>
         <div className="aff-form"><p>Compartilhe este link com o responsável para que ele defina a própria senha.</p><label>Link de ativação<input readOnly value={invite.url} onFocus={(event) => event.currentTarget.select()} /></label>
           <p className="aff-help">Válido até {affiliateDate(invite.expiresAt)}. Nenhum e-mail é enviado automaticamente.</p>

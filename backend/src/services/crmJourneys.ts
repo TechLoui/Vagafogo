@@ -130,7 +130,7 @@ export const registrarEventoJornada = async (input: JourneyEventInput) => {
     assertAffiliatesEnabled();
     const { context, agency, partner } = await validateAffiliateContext(input.affiliateContextToken);
     affiliateAttribution = affiliateJourneyIdentity({ agencyId: context.agencyId ?? null, agencyName: agency?.name ?? null,
-      partnerId: context.partnerId, partnerName: partner.name, linkId: context.linkId,
+      partnerId: context.partnerId ?? null, partnerName: partner?.name ?? null, linkId: context.linkId,
       contextId: affiliateHash(String(input.affiliateContextToken)) });
   }
   const ref = db.collection(COLLECTION).doc(journeyId(sessionId));

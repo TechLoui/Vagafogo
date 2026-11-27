@@ -179,6 +179,13 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: "/:agencySlug",
+        lazy: async () => {
+          const { AgencyReferral } = await import("./pages/AgencyReferral");
+          return { Component: AgencyReferral };
+        },
+      },
+      {
         path: "*",
         lazy: async () => {
           const { NotFound } = await import("./pages/NotFound");

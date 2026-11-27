@@ -3,6 +3,7 @@ import { FieldPath } from "firebase-admin/firestore";
 import {
   AffiliateError, AffiliateIdentity, CommercialAttribution, affiliateDb, affiliateHash, affiliateId, affiliateIso,
   affiliatePage, affiliatePublicBase, affiliateText, commissionAmount, normalizeCommissionRule, assertAffiliatesEnabled, affiliateAgencyLogoUrl,
+  affiliateBranding, requireAffiliateRole,
 } from "./affiliates";
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -11,13 +12,84 @@ const contextRef = (token: unknown) => {
   if (!TOKEN.test(clean)) throw new AffiliateError("AFFILIATE_CONTEXT_INVALID");
   return affiliateDb().collection("_affiliate_contexts").doc(affiliateHash(clean));
 };
-const activePartner = async (partnerId: string, agencyId: string | null) => {
+const RESERVED_AGENCY_SLUGS = new Set([
+  "admin", "administrator", "administrador", "crm", "api", "assets", "static", "public", "output", "backend", "frontend", "site", "app", "auth", "login", "logout",
+  "afiliados", "affiliate", "affiliates", "agencia", "agencias", "agency", "partner", "parceiro", "parceiros", "vendedor", "vendedores",
+  "agente", "reservar", "reserva", "reservas", "minha-reserva", "checkout", "checkout-agente", "pagamento", "pagamentos", "payment",
+  "formulario", "formularios", "form", "forms", "brunch", "trilha", "historia", "pirenopolis", "planeje-sua-visita", "educacao-ambiental",
+  "home", "inicio", "index", "contato", "sobre", "galeria", "faq", "ajuda", "help", "suporte", "support", "config", "settings",
+  "health", "status", "webhook", "favicon", "robots", "sitemap", "manifest", "vagafogo", "www", "mail", "email", "feed", "404",
+]);
+export const normalizeAffiliateAgencySlug = (value: unknown) => {
+  if (typeof value !== "string") throw new AffiliateError("AFFILIATE_SLUG_INVALID", 400);
+  const slug = value.trim().toLowerCase();
+  if (slug.length < 3 || slug.length > 60 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new AffiliateError("AFFILIATE_SLUG_INVALID", 400, "Use de 3 a 60 letras, números e hífens simples.");
+  if (RESERVED_AGENCY_SLUGS.has(slug)) throw new AffiliateError("AFFILIATE_SLUG_RESERVED", 400, "Este endereço está reservado ao site.");
+  return slug;
+};
+const agencyLinkId = (agencyId: string) => `agency_${affiliateHash(agencyId).slice(0, 32)}`;
+const affiliateLinkDto = (id: string, data: Record<string, any>) => ({
+  id, agencyId: data.agencyId ?? null, partnerId: data.partnerId ?? null,
+  kind: data.kind === "agency" ? "agency" : "partner", label: data.kind === "agency" ? "Link oficial da agência" : "Formulário de reserva",
+  status: data.status, ...(data.kind === "agency" ? { slug: data.slug } : {}),
+  url: data.kind === "agency" ? `${affiliatePublicBase()}/${encodeURIComponent(data.slug)}` : `${affiliatePublicBase()}/reservar?ref=${encodeURIComponent(data.token)}`,
+  createdAt: affiliateIso(data.createdAt), updatedAt: affiliateIso(data.updatedAt),
+});
+export const saveAffiliateAgencyLink = async (idValue: unknown, input: unknown, identity: AffiliateIdentity) => {
+  assertAffiliatesEnabled();
+  requireAffiliateRole(identity, ["admin", "agency"]);
+  const agencyId = affiliateId(idValue);
+  if (identity.role === "agency" && identity.agencyId !== agencyId) throw new AffiliateError("AFFILIATE_PERMISSION_REQUIRED", 403);
+  const raw = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  if (Object.keys(raw).some((key) => key !== "slug")) throw new AffiliateError("AFFILIATE_FIELD_INVALID", 400);
+  const slug = normalizeAffiliateAgencySlug(raw.slug);
+  const db = affiliateDb(), linkId = agencyLinkId(agencyId);
+  const agencyRef = db.collection("affiliate_agencies").doc(agencyId), linkRef = db.collection("affiliate_links").doc(linkId);
+  const slugRef = db.collection("_affiliate_agency_slugs").doc(slug);
+  const link = await db.runTransaction(async (tx) => {
+    const [agency, current, claimed] = await Promise.all([tx.get(agencyRef), tx.get(linkRef), tx.get(slugRef)]);
+    if (!agency.exists) throw new AffiliateError("AFFILIATE_NOT_FOUND", 404);
+    if (identity.role === "agency" && agency.data()?.status !== "active") throw new AffiliateError("AFFILIATE_ACCESS_DISABLED", 403);
+    if (claimed.exists && (claimed.data()?.agencyId !== agencyId || claimed.data()?.linkId !== linkId)) throw new AffiliateError("AFFILIATE_SLUG_IN_USE", 409, "Este endereço já pertence a outra agência.");
+    const previous = current.data();
+    if (previous && (previous.kind !== "agency" || previous.agencyId !== agencyId || previous.partnerId !== null)) throw new AffiliateError("AFFILIATE_LINK_CONFLICT", 409);
+    const oldSlug = previous?.slug && previous.slug !== slug ? normalizeAffiliateAgencySlug(previous.slug) : null;
+    const oldRef = oldSlug ? db.collection("_affiliate_agency_slugs").doc(oldSlug) : null;
+    const oldClaim = oldRef ? await tx.get(oldRef) : null;
+    if (oldClaim?.exists && (oldClaim.data()?.agencyId !== agencyId || oldClaim.data()?.linkId !== linkId)) throw new AffiliateError("AFFILIATE_LINK_CONFLICT", 409);
+    if (previous?.slug === slug && previous.status === "active" && TOKEN.test(previous.token) && claimed.data()?.status === "active" && agency.data()?.publicSlug === slug) return previous;
+    const now = new Date(), token = randomBytes(32).toString("base64url");
+    const data = { kind: "agency", partnerId: null, agencyId, slug, token, status: "active", createdAt: previous?.createdAt ?? now,
+      createdBy: previous?.createdBy ?? identity.uid, updatedAt: now, updatedBy: identity.uid };
+    if (oldRef) tx.set(oldRef, { agencyId, linkId, status: "retired", updatedAt: now }, { merge: true });
+    tx.set(slugRef, { agencyId, linkId, status: "active", createdAt: claimed.data()?.createdAt ?? now, updatedAt: now });
+    tx.set(linkRef, data);
+    tx.create(db.collection("_affiliate_link_tokens").doc(affiliateHash(token)), { linkId, agencyId, partnerId: null, createdAt: now });
+    tx.update(agencyRef, { publicSlug: slug, linkUpdatedAt: now, updatedAt: now, updatedBy: identity.uid });
+    return data;
+  });
+  return affiliateLinkDto(linkId, link);
+};
+const activePartner = async (partnerId: string | null, agencyId: string | null) => {
   const db = affiliateDb();
-  const partner = await db.collection("affiliate_partners").doc(partnerId).get();
-  if (!partner.exists || partner.data()?.status !== "active" || (partner.data()?.agencyId ?? null) !== agencyId) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  if (!partnerId && !agencyId) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  const partner = partnerId ? await db.collection("affiliate_partners").doc(affiliateId(partnerId)).get() : null;
+  if (partnerId && (!partner?.exists || partner.data()?.status !== "active" || (partner.data()?.agencyId ?? null) !== agencyId)) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
   const agency = agencyId ? await db.collection("affiliate_agencies").doc(agencyId).get() : null;
   if (agencyId && (!agency?.exists || agency.data()?.status !== "active")) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
-  return { partner: partner.data()!, agency: agency?.data() ?? null };
+  return { partner: partner?.data() ?? null, agency: agency?.data() ?? null };
+};
+const createAffiliateContext = async (linkId: string, link: Record<string, any>) => {
+  const { partner, agency } = await activePartner(link.partnerId ?? null, link.agencyId ?? null);
+  if (!partner && (link.kind !== "agency" || agency?.publicSlug !== link.slug)) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  const contextToken = randomBytes(32).toString("base64url"), capturedAt = new Date();
+  const expiresAt = new Date(capturedAt.getTime() + 7 * 86400000);
+  await contextRef(contextToken).create({ linkId, partnerId: link.partnerId ?? null, agencyId: link.agencyId ?? null, capturedAt, expiresAt,
+    ...(link.kind === "agency" ? { linkToken: link.token } : {}) });
+  return { contextToken, expiresAt: expiresAt.toISOString(), partnerName: partner?.name ?? null, agencyName: agency?.name ?? null,
+    ...(link.kind === "agency" ? { referralToken: link.token as string, agencySlug: link.slug as string } : {}),
+    ...(agency && affiliateAgencyLogoUrl(link.agencyId, agency) ? { agencyLogoUrl: affiliateAgencyLogoUrl(link.agencyId, agency),
+      ...(affiliateBranding(agency.branding) ? { agencyBranding: affiliateBranding(agency.branding) } : {}) } : {}) };
 };
 export const resolveAffiliateLink = async (tokenValue: unknown) => {
   assertAffiliatesEnabled();
@@ -29,13 +101,21 @@ export const resolveAffiliateLink = async (tokenValue: unknown) => {
   const link = lookup.data()!;
   const current = await db.collection("affiliate_links").doc(link.linkId).get();
   if (!current.exists || current.data()?.status !== "active" || current.data()?.token !== token) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
-  const { partner, agency } = await activePartner(link.partnerId, link.agencyId ?? null);
-  const contextToken = randomBytes(32).toString("base64url");
-  const capturedAt = new Date();
-  const expiresAt = new Date(capturedAt.getTime() + 7 * 86400000);
-  await contextRef(contextToken).create({ linkId: link.linkId, partnerId: link.partnerId, agencyId: link.agencyId ?? null, capturedAt, expiresAt });
-  return { contextToken, expiresAt: expiresAt.toISOString(), partnerName: partner.name, agencyName: agency?.name ?? null,
-    ...(agency && affiliateAgencyLogoUrl(link.agencyId, agency) ? { agencyLogoUrl: affiliateAgencyLogoUrl(link.agencyId, agency) } : {}) };
+  const data = current.data()!;
+  if ((link.partnerId ?? null) !== (data.partnerId ?? null) || (link.agencyId ?? null) !== (data.agencyId ?? null)) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  return createAffiliateContext(link.linkId, data);
+};
+export const resolveAffiliateAgencySlug = async (slugValue: unknown) => {
+  assertAffiliatesEnabled();
+  const slug = normalizeAffiliateAgencySlug(slugValue);
+  const index = await affiliateDb().collection("_affiliate_agency_slugs").doc(slug).get();
+  const lookup = index.data();
+  if (!lookup || lookup.status !== "active") throw new AffiliateError("AFFILIATE_LINK_INVALID", 404);
+  const current = await affiliateDb().collection("affiliate_links").doc(affiliateId(lookup.linkId)).get();
+  const link = current.data();
+  if (!link || link.status !== "active" || link.kind !== "agency" || link.partnerId !== null || link.agencyId !== lookup.agencyId
+    || link.slug !== slug || !TOKEN.test(link.token)) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  return createAffiliateContext(current.id, link);
 };
 export const validateAffiliateContext = async (token: unknown) => {
   const snapshot = await contextRef(token).get();
@@ -43,7 +123,11 @@ export const validateAffiliateContext = async (token: unknown) => {
   if (!context || (affiliateIso(context.expiresAt) ?? "") <= new Date().toISOString()) throw new AffiliateError("AFFILIATE_CONTEXT_EXPIRED", 410);
   const link = await affiliateDb().collection("affiliate_links").doc(context.linkId).get();
   if (!link.exists || link.data()?.status !== "active") throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
+  const data = link.data()!;
+  if ((data.partnerId ?? null) !== (context.partnerId ?? null) || (data.agencyId ?? null) !== (context.agencyId ?? null)
+    || (data.kind === "agency" && (!context.linkToken || context.linkToken !== data.token))) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
   const { partner, agency } = await activePartner(context.partnerId, context.agencyId ?? null);
+  if (!partner && (data.kind !== "agency" || agency?.publicSlug !== data.slug)) throw new AffiliateError("AFFILIATE_LINK_UNAVAILABLE", 410);
   return { context, partner, agency };
 };
 // Only this server function constructs commercial snapshots; request IDs are never accepted as ownership.
@@ -51,10 +135,10 @@ export const snapshotAffiliateContext = async (token: unknown): Promise<Commerci
   if (token === undefined || token === null || token === "") return undefined;
   assertAffiliatesEnabled();
   const { context, partner, agency } = await validateAffiliateContext(token);
-  const owner = agency ?? partner;
+  const owner = agency ?? partner!;
   return {
     version: 1, agencyId: context.agencyId ?? null, agencyName: agency?.name ?? null,
-    partnerId: context.partnerId, partnerName: partner.name, linkId: context.linkId, contextId: affiliateHash(String(token)),
+    partnerId: context.partnerId ?? null, partnerName: partner?.name ?? null, linkId: context.linkId, contextId: affiliateHash(String(token)),
     capturedAt: affiliateIso(context.capturedAt)!, bookedAt: new Date().toISOString(),
     commissionRule: normalizeCommissionRule(owner.commissionRule),
     commissionBeneficiary: context.agencyId ? "agency" : "partner",
@@ -83,20 +167,22 @@ export const obterContextoAfiliadoSessao = async (sessionValue: unknown) => {
 };
 export const listAffiliateLinks = async (identity: AffiliateIdentity, filters: Record<string, unknown>) => {
   const page = affiliatePage(filters.limit, filters.cursor);
+  if (identity.role === "agency") {
+    const id = agencyLinkId(affiliateId(identity.agencyId));
+    const link = await affiliateDb().collection("affiliate_links").doc(id).get();
+    const raw = link.data();
+    return { items: raw?.kind === "agency" && raw.agencyId === identity.agencyId && raw.partnerId === null && (!page.cursor || id > page.cursor)
+      ? [affiliateLinkDto(id, raw)] : [], nextCursor: null };
+  }
   let query: FirebaseFirestore.Query = affiliateDb().collection("affiliate_links");
   if (identity.role === "partner") query = query.where("partnerId", "==", identity.partnerId);
-  else if (identity.role === "agency") query = query.where("agencyId", "==", identity.agencyId);
   else if (filters.partnerId) query = query.where("partnerId", "==", affiliateId(filters.partnerId));
   else if (filters.agencyId) query = query.where("agencyId", "==", filters.agencyId === "null" ? null : affiliateId(filters.agencyId));
   query = query.orderBy(FieldPath.documentId());
   if (page.cursor) query = query.startAfter(page.cursor);
   const snapshot = await query.limit(page.limit + 1).get();
   const docs = snapshot.docs.slice(0, page.limit);
-  return { items: docs.map((doc) => {
-    const data = doc.data();
-    return { id: doc.id, partnerId: data.partnerId, label: "Formulário de reserva", status: data.status,
-      url: `${affiliatePublicBase()}/reservar?ref=${encodeURIComponent(data.token)}`, createdAt: affiliateIso(data.createdAt) };
-  }), nextCursor: snapshot.size > page.limit ? docs[docs.length - 1].id : null };
+  return { items: docs.map((doc) => affiliateLinkDto(doc.id, doc.data())), nextCursor: snapshot.size > page.limit ? docs[docs.length - 1].id : null };
 };
 
 const paid = (value: unknown) => ["pago", "confirmado", "paid", "confirmed", "received", "recebido", "approved", "aprovado"].includes(affiliateText(value).toLowerCase());

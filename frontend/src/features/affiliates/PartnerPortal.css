@@ -77,3 +77,7 @@
 .pps-partnership-note p,.pps-signout,.pps-logout-error,.pps-page-heading p,.pps-topbar-account strong{font-size:12px}
 .pps-page-heading>span,.pps-page-heading p,.pps-topbar-account small,.pps-page-footer{color:#647160}
 .pps-account strong{font-size:13px}.pps-account .pps-avatar,.pps-topbar-account .pps-avatar{font-size:11px}.pps-avatar{font-size:12px}
+
+.pps-sidebar{background-image:radial-gradient(ellipse at 0 0,#ffffff07,transparent 66%)}.pps-brand-mark{box-shadow:0 0 0 5px #ffffff07,0 6px 18px #00000010}.pps-navigation button{min-height:51px;border-radius:12px;letter-spacing:-.01em}.pps-navigation button[aria-current=page]{box-shadow:0 6px 18px #0000000d}.pps-navigation button>svg{width:20px;height:20px;flex-basis:20px}.pps-topbar{box-shadow:0 3px 18px #16332602}.pps-page-heading h1{font-size:27px;letter-spacing:-.05em}.pps-main{padding-top:28px}.pps-topbar-account .pps-avatar{box-shadow:0 0 0 4px #ffffff80}.pps-sidebar-footer{padding-top:28px}
+@media(max-width:1000px){.pps-navigation button{min-height:49px}.pps-page-heading h1{font-size:24px}.pps-main{padding-top:22px}}
+@media(max-width:640px){.pps-page-heading h1{font-size:21px}.pps-main{padding-top:18px}.pps-topbar{min-height:82px}.pps-topbar-account .pps-avatar{box-shadow:none}}

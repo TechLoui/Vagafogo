@@ -148,17 +148,28 @@ test('traceability: link resolution → real checkout → verified webhook → s
     execution: { firestore: 'in-memory shared Admin/Web SDK fixture', auth: 'mocked verified identities', provider: 'mocked Asaas, no forwarded request',
       ui: 'skipped', models: 'not called', outboundMessages: 'stubbed, not sent', realCharges: 0 }, scenarios: [], states: {}, checks: {} };
   const cases = [];
+  const official = await request('/api/affiliates/agencies/agency-a/link', { actor: 'agency', method: 'POST', body: { slug: 'aquino-turismo' } });
+  assert.equal(official.status, 200); assert.equal(official.body.item.partnerId, null);
   for (const [label, referralToken, method, actor, partnerId, agencyId] of [
     ['agency-partner', tokenAgency, 'PIX', 'partner', 'partner-a', 'agency-a'],
     ['independent-partner', tokenIndependent, 'CREDIT_CARD', 'independent', 'independent', null],
+    ['agency-direct', null, 'CREDIT_CARD', 'agency', null, 'agency-a'],
   ]) {
     const panelLinks = await request('/api/affiliates/links?agencyId=agency-b&partnerId=forged', { actor });
     assert.equal(panelLinks.status, 200);
     assert.equal(panelLinks.body.items.length, 1);
     const linkToken = new URL(panelLinks.body.items[0].url).searchParams.get('ref');
     assert.equal(linkToken, referralToken);
-    const resolved = await request('/api/affiliates/public/resolve', { method: 'POST', body: { referralToken: linkToken } });
+    const resolved = label === 'agency-direct'
+      ? await request('/api/affiliates/public/resolve-slug', { method: 'POST', body: { slug: 'aquino-turismo' } })
+      : await request('/api/affiliates/public/resolve', { method: 'POST', body: { referralToken: linkToken } });
     assert.equal(resolved.status, 200);
+    if (label === 'agency-direct') {
+      assert.equal(resolved.body.partnerName, null); assert.equal(resolved.body.agencySlug, 'aquino-turismo');
+      assert.match(resolved.body.referralToken, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal((await journeyEvent('traceability-agency-direct', 'iniciou', 0, resolved.body.contextToken)).status, 200);
+      assert.equal(fixture.value(journeyPath('traceability-agency-direct')).affiliateAttribution.partnerId, null);
+    }
     const body = checkout(resolved.body.contextToken, method, 'traceability-' + label);
     if (label === 'agency-partner') {
       const journeySession = body.atribuicao.sessionId;
@@ -196,22 +207,27 @@ test('traceability: link resolution → real checkout → verified webhook → s
     assert.equal(completedJourney.affiliateAttribution.partnerId, partnerId);
     assert.equal(completedJourney.affiliateAttribution.contextId, raw.commercialAttribution.contextId);
     assert.doesNotMatch(JSON.stringify(completedJourney.affiliateAttribution), /commission|cpf|telefone|email/);
-    if (label === 'agency-partner') {
-      // A later admin configuration must not reprice an already attributed sale.
-      fixture.rows.get('affiliate_agencies/agency-a').commissionRule = { mode: 'percent', value: 99 };
-    }
     const replay = await request('/criar-cobranca', { method: 'POST', body, key });
     assert.equal(replay.replayed, 'true');
     assert.deepEqual(replay.body, charge.body);
-    cases.push({ label, actor, body, key, charge, reservationId, paymentId });
+    cases.push({ label, actor, partnerId, agencyId, body, key, charge, reservationId, paymentId });
     evidence.scenarios.push({ label, paymentMethod: method, resolved: true, reservationFingerprint: fingerprint(reservationId),
       attribution: { partnerId, agencyId, beneficiary: raw.commercialAttribution.commissionBeneficiary, commissionRule: raw.commercialAttribution.commissionRule },
       checkoutRetryReused: true });
   }
-  assert.equal(chargePosts, 2);
+  // A later configuration affects future bookings, never either historical agency sale.
+  fixture.rows.get('affiliate_agencies/agency-a').commissionRule = { mode: 'percent', value: 99 };
+  const directHistorical = fixture.value('reservas/' + cases[2].reservationId).commercialAttribution;
+  const renamed = await request('/api/affiliates/agencies/agency-a/link', { actor: 'agency', method: 'PATCH', body: { slug: 'aquino-oficial' } });
+  assert.equal(renamed.status, 200);
+  assert.equal((await request('/api/affiliates/public/resolve-slug', { method: 'POST', body: { slug: 'aquino-turismo' } })).status, 404);
+  const directReplay = await request('/criar-cobranca', { method: 'POST', body: cases[2].body, key: cases[2].key });
+  assert.equal(directReplay.replayed, 'true'); assert.deepEqual(directReplay.body, cases[2].charge.body);
+  assert.deepEqual(fixture.value('reservas/' + cases[2].reservationId).commercialAttribution, directHistorical);
+  assert.equal(chargePosts, 3);
   evidence.states.pending = await metrics();
   assert.equal(evidence.states.pending.owner.paidCount, 0);
-  assert.equal(evidence.states.pending.owner.pendingCount, 2);
+  assert.equal(evidence.states.pending.owner.pendingCount, 3);
   assert.equal(evidence.states.pending.owner.commission, 0);
   evidence.checks.createdJourneyConversionDistinctFromPaidConversion = true;
   const webhook = async (item, event = 'PAYMENT_CONFIRMED') => request('/webhook', { method: 'POST', body: {
@@ -228,31 +244,39 @@ test('traceability: link resolution → real checkout → verified webhook → s
     await waitFor(() => fixture.value('reservas/' + item.reservationId)?.status === 'pago');
   }
   evidence.states.paid = await metrics();
-  assert.equal(evidence.states.paid.owner.paidCount, 2);
-  assert.equal(evidence.states.paid.owner.revenue, 360);
-  assert.equal(evidence.states.paid.owner.commission, 26.55);
+  assert.equal(evidence.states.paid.owner.paidCount, 3);
+  assert.equal(evidence.states.paid.owner.revenue, 540);
+  assert.equal(evidence.states.paid.owner.commission, 44.55);
   assert.deepEqual(await summary('owner', '?from=2026-11-24&to=2026-11-24'), evidence.states.paid.owner);
   assert.equal((await summary('owner', '?from=2026-11-23&to=2026-11-23')).paidCount, 0);
-  assert.equal((await summary('owner', '?agencyId=agency-a')).commission, 18);
+  assert.equal((await summary('owner', '?agencyId=agency-a')).commission, 36);
   assert.equal((await summary('owner', '?agencyId=null')).commission, 8.55);
   for (const actor of ['agency', 'partner', 'independent']) {
-    assert.equal(evidence.states.paid[actor].paidCount, 1);
-    assert.equal(evidence.states.paid[actor].revenue, 180);
+    assert.equal(evidence.states.paid[actor].paidCount, actor === 'agency' ? 2 : 1);
+    assert.equal(evidence.states.paid[actor].revenue, actor === 'agency' ? 360 : 180);
     assert.equal('commission' in evidence.states.paid[actor], false);
     const report = await request('/api/affiliates/sales?agencyId=agency-b&partnerId=wrong-partner', { actor });
     assert.equal(report.status, 200);
-    assert.equal(report.body.items.length, 1);
-    const own = actor === 'independent' ? cases[1] : cases[0];
-    assert.equal(report.body.items[0].id, own.reservationId);
+    const own = cases.filter((item) => actor === 'agency' ? item.agencyId === 'agency-a' : item.actor === actor);
+    assert.deepEqual(report.body.items.map((item) => item.id).sort(), own.map((item) => item.reservationId).sort());
     assert.doesNotMatch(JSON.stringify(report.body), /commission|LOCAL SYNTHETIC|cpf|telefone|email/);
   }
+  // The frontend CSV uses this same paginated DTO contract; all pages retain the server tenant scope.
+  const exportRows = []; let exportCursor = null;
+  do {
+    const page = await request('/api/affiliates/sales?limit=1&agencyId=agency-b' + (exportCursor ? '&cursor=' + exportCursor : ''), { actor: 'agency' });
+    assert.equal(page.status, 200); exportRows.push(...page.body.items); exportCursor = page.body.nextCursor;
+  } while (exportCursor);
+  assert.deepEqual(exportRows.map((item) => item.id).sort(), [cases[0].reservationId, cases[2].reservationId].sort());
+  assert.equal(exportRows.find((item) => item.id === cases[2].reservationId).partnerName, null);
+  assert.doesNotMatch(JSON.stringify(exportRows), /commission|LOCAL SYNTHETIC|cpf|telefone|email/);
   assert.equal(evidence.states.paid['other-agency'].paidCount, 0);
   assert.equal((await request('/api/affiliates/sales')).status, 401);
   for (const item of cases) await webhook(item);
-  await waitFor(() => providerVerifications >= 5);
+  await waitFor(() => providerVerifications >= 7);
   assert.deepEqual(await metrics(), evidence.states.paid);
-  assert.equal(chargePosts, 2);
-  assert.equal([...fixture.rows.keys()].filter((key) => key.startsWith('reservas/')).length, 2);
+  assert.equal(chargePosts, 3);
+  assert.equal([...fixture.rows.keys()].filter((key) => key.startsWith('reservas/')).length, 3);
   evidence.checks = { ...evidence.checks, providerVerifiedBeforePaid: true, retriesCreateNoExtraChargeOrReservation: true,
     duplicateWebhooksDoNotDuplicateMetrics: true, crossTenantFiltersIgnored: true, commissionsAdminOnly: true, customerDataNotExposed: true,
     reportDateFiltersMatchProviderPaymentDay: true, adminCanSeparateAgencyAndIndependent: true, laterRuleChangeDoesNotRepriceSale: true };
@@ -260,25 +284,33 @@ test('traceability: link resolution → real checkout → verified webhook → s
   await webhook(cases[0], 'PAYMENT_REFUNDED');
   await waitFor(() => fixture.value('_affiliate_payment_evidence/' + cases[0].reservationId)?.state === 'cancelled');
   evidence.states.afterRefund = await metrics();
-  assert.equal(evidence.states.afterRefund.owner.paidCount, 1);
+  assert.equal(evidence.states.afterRefund.owner.paidCount, 2);
   assert.equal(evidence.states.afterRefund.owner.cancelledCount, 1);
-  assert.equal(evidence.states.afterRefund.owner.commission, 8.55);
-  assert.equal(evidence.states.afterRefund.owner.revenue, 180);
+  assert.equal(evidence.states.afterRefund.owner.commission, 26.55);
+  assert.equal(evidence.states.afterRefund.owner.revenue, 360);
   Object.assign(provider.get(cases[1].paymentId), { status: 'DELETED', deleted: true });
   await webhook(cases[1], 'PAYMENT_DELETED');
   await waitFor(() => fixture.value('_affiliate_payment_evidence/' + cases[1].reservationId)?.state === 'cancelled');
+  assert.equal((await summary('owner')).commission, 18);
+  provider.get(cases[2].paymentId).status = 'REFUNDED';
+  await webhook(cases[2], 'PAYMENT_REFUNDED');
+  await waitFor(() => fixture.value('_affiliate_payment_evidence/' + cases[2].reservationId)?.state === 'cancelled');
   evidence.states.afterCancellation = await metrics();
   assert.equal(evidence.states.afterCancellation.owner.paidCount, 0);
-  assert.equal(evidence.states.afterCancellation.owner.cancelledCount, 2);
+  assert.equal(evidence.states.afterCancellation.owner.cancelledCount, 3);
   assert.equal(evidence.states.afterCancellation.owner.commission, 0);
   assert.equal(evidence.states.afterCancellation.owner.revenue, 0);
   Object.assign(provider.get(cases[0].paymentId), { status: 'CONFIRMED' });
   await webhook(cases[0]);
-  await waitFor(() => providerVerifications >= 8);
+  await waitFor(() => providerVerifications >= 11);
   assert.deepEqual(await metrics(), evidence.states.afterCancellation);
   evidence.checks.refundRemovesCommission = true;
   evidence.checks.cancellationRemovesCommission = true;
   evidence.checks.latePaidDoesNotReactivateRefund = true;
+  evidence.checks.agencyDirectHasNoFabricatedSeller = true;
+  evidence.checks.slugRenamePreservesExistingReservationAndChargeReplay = true;
+  evidence.checks.agencyIncludesDirectAndSellerWhileSellerOnlyOwn = true;
+  evidence.checks.paginatedExportCoversAllScopedAgencySales = true;
   const independentContext = cases[1].body.affiliateContextToken;
   const firstJourneySession = cases[0].body.atribuicao.sessionId;
   await journeyEvent(firstJourneySession, 'progresso', 1, independentContext);

@@ -25,3 +25,6 @@
 @media(prefers-reduced-motion:reduce){.asp-brand-card{animation:none}}
 .asp-brand-copy>span{font-size:11px}
 .asp-shell .pd-dashboard :is(button,a,input,select):focus-visible{outline:3px solid var(--aff-accent);outline-offset:3px}
+
+.asp-brand-card{border-radius:19px;box-shadow:0 6px 24px #173a2704}.asp-brand-pair{gap:15px}.asp-logo-pad{border-color:#e4e9df;box-shadow:0 2px 8px #173a2702}.asp-brand-copy h2{font-size:20px}.asp-shell .pd-feature-card:hover{border-color:var(--aff-border)}.asp-shell .pd-period-presets button[aria-pressed=true]{color:var(--aff-accent-text);background:#fff;border-color:var(--aff-border)}
+@media(max-width:640px){.asp-brand-card{padding:15px 17px;gap:12px}.asp-logo-pad{height:60px}.asp-brand-copy h2{font-size:17px;margin-block:4px}.asp-brand-copy p{display:none}.asp-brand-copy>span{font-size:11px}.asp-brand-pair{gap:12px}}

@@ -27,6 +27,7 @@ export const affiliatePaymentLabel = (method?: AffiliateSale['paymentMethod']) =
   : 'Não informado';
 
 export const affiliateReservationCode = (sale: AffiliateSale) => sale.reservationCode || sale.id;
+export const affiliateSellerLabel = (sale: AffiliateSale) => sale.partnerName || (sale.agencyId && sale.partnerId === null ? 'Venda direta da agência' : 'Não informado');
 
 /** The CSV is for the full selected period, never just the currently visible page. */
 export const affiliateSalesCsv = (sales: AffiliateSale[], options: {
@@ -36,14 +37,14 @@ export const affiliateSalesCsv = (sales: AffiliateSale[], options: {
 } = {}) => {
   const header = ['Reserva', 'Criação', 'Visita', 'Horário', 'Experiência', 'Visitantes', 'Status', 'Pagamento', 'Pagamento confirmado em', 'Valor (BRL)'];
   if (options.includeAgency) header.push('Agência');
-  if (options.includePartner) header.push('Parceiro');
+  if (options.includePartner) header.push('Vendedor');
   if (options.includeCommission) header.push('Regra de comissão', 'Comissão (BRL)');
   const rows = sales.map((sale) => {
     const row = [affiliateReservationCode(sale), affiliateDate(sale.createdAt), affiliateDate(sale.date), sale.time || '', sale.activity,
       sale.guestCount == null ? '' : String(sale.guestCount), affiliateStatusLabel(sale.status), affiliatePaymentLabel(sale.paymentMethod),
       sale.paidAt ? affiliateDate(sale.paidAt) : '', Number.isFinite(sale.value) ? sale.value.toFixed(2).replace('.', ',') : ''];
     if (options.includeAgency) row.push(sale.agencyName || 'Independente');
-    if (options.includePartner) row.push(sale.partnerName || '');
+    if (options.includePartner) row.push(affiliateSellerLabel(sale));
     if (options.includeCommission) row.push(commissionLabel(sale.commissionRule), sale.commission == null ? '' : sale.commission.toFixed(2).replace('.', ','));
     return row;
   });

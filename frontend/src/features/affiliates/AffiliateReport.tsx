@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { FaCreditCard, FaDownload, FaEye, FaPen, FaQrcode, FaSearch, FaSyncAlt } from 'react-icons/fa';
 import { hojeEmSaoPaulo } from '../../utils/financeiro';
 import { affiliateDate, affiliateMoney, affiliateStatusLabel } from './affiliateUtils';
-import { affiliatePaymentLabel, affiliatePeriodPreset, affiliateReservationCode, affiliateSalesCsv, loadAffiliateSalesForExport } from './affiliateReportUtils';
+import { affiliatePaymentLabel, affiliatePeriodPreset, affiliateReservationCode, affiliateSalesCsv, affiliateSellerLabel, loadAffiliateSalesForExport } from './affiliateReportUtils';
 import { AffiliateApiError, getAffiliateSales, getAffiliateSummary } from './affiliateService';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
 import { AffiliateDialog } from './AffiliateDialog';
@@ -26,6 +26,7 @@ function ReservationDetails({ sale, admin, onClose }: { sale: AffiliateSale; adm
         <div><dt>Horário</dt><dd>{sale.time || 'Não informado'}</dd></div>
         <div><dt>Visitantes</dt><dd>{sale.guestCount ?? 'Não informado'}</dd></div>
         <div><dt>Criada em</dt><dd>{affiliateDate(sale.createdAt)}</dd></div>
+        {sale.agencyId && <div><dt>Origem</dt><dd>{affiliateSellerLabel(sale)}</dd></div>}
         <div><dt>Pagamento</dt><dd><PaymentMethod method={sale.paymentMethod} /></dd></div>
         <div><dt>Valor da reserva</dt><dd>{affiliateMoney(sale.value)}</dd></div>
         <div><dt>Pagamento confirmado em</dt><dd>{sale.paidAt ? affiliateDate(sale.paidAt) : 'Sem confirmação'}</dd></div>
@@ -179,12 +180,12 @@ export function AffiliateReport({ admin = false, agencyId, partnerId, showPartne
     {view === 'reports' && <p className="aff-help">O CSV inclui todas as páginas com os filtros aplicados. Valores em reais; cada linha corresponde a uma reserva.</p>}
     {view !== 'reports' && !loading && <div className="aff-card aff-scroll" aria-busy={loadingMore}>
       {sales.length === 0 ? <div className="afr-empty"><FaSearch aria-hidden="true" /><h3>{error ? 'Não foi possível carregar as reservas' : total && cursor ? 'Há reservas nas próximas páginas' : 'Nenhuma reserva encontrada'}</h3><p>{error ? 'Atualize o relatório para tentar novamente.' : total && cursor ? 'Continue a consulta para ver os resultados dos filtros aplicados.' : filters.q || filters.status || filters.paymentMethod ? 'Tente outro período ou ajuste os filtros.' : 'As reservas feitas pelo seu link aparecerão aqui.'}</p></div> :
-        <table className="aff-table aff-table--responsive afr-table"><thead><tr><th>Reserva</th><th>Visita</th><th>Experiência</th>{admin && !agencyId && <th>Agência</th>}{showPartner && <th>Parceiro</th>}<th>Pagamento</th><th>Status</th><th>Valor</th>{admin && <th>Comissão</th>}<th><span className="afr-sr-only">Detalhes</span></th></tr></thead><tbody>
+        <table className="aff-table aff-table--responsive afr-table"><thead><tr><th>Reserva</th><th>Visita</th><th>Experiência</th>{admin && !agencyId && <th>Agência</th>}{showPartner && <th>Vendedor</th>}<th>Pagamento</th><th>Status</th><th>Valor</th>{admin && <th>Comissão</th>}<th><span className="afr-sr-only">Detalhes</span></th></tr></thead><tbody>
           {sales.map((sale) => <tr key={sale.id}>
             <td data-label="Reserva"><strong className="afr-code afr-code--table" title={affiliateReservationCode(sale)}>{affiliateReservationCode(sale)}</strong><span className="aff-table-subtitle">{sale.guestCount == null ? 'Visitantes não informados' : `${sale.guestCount} ${sale.guestCount === 1 ? 'visitante' : 'visitantes'}`}</span></td>
             <td className="aff-date" data-label="Visita">{affiliateDate(sale.date)}{sale.time && <span className="aff-table-subtitle">{sale.time}</span>}</td><td data-label="Experiência">{sale.activity || '—'}</td>
             {admin && !agencyId && <td data-label="Agência">{sale.agencyId ? <div className="aff-report-agency"><AgencyLogo url={sale.agencyLogoUrl} name={sale.agencyName || 'Agência'} /><span>{sale.agencyName || 'Agência'}</span></div> : 'Independente'}</td>}
-            {showPartner && <td data-label="Parceiro">{sale.partnerName || '—'}</td>}
+            {showPartner && <td data-label="Vendedor">{affiliateSellerLabel(sale)}</td>}
             <td data-label="Pagamento"><PaymentMethod method={sale.paymentMethod} /></td>
             <td data-label="Status"><span className={`aff-status ${sale.status === 'paid' ? 'is-active' : ''}`}>{affiliateStatusLabel(sale.status)}</span></td>
             <td data-label="Valor" className="aff-money">{affiliateMoney(sale.value)}</td>
