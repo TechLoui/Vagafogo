@@ -1,4 +1,4 @@
-# Afiliados: entrega de 25/11/2026
+# Afiliados e Financeiro: entrega de 27/11/2026
 
 ## Funcionamento
 
@@ -8,6 +8,12 @@
 - Uirá configura comissão percentual ou fixa por reserva para a agência ou para o parceiro independente. A regra é preservada na reserva; alterar a configuração não recalcula reservas anteriores.
 - Taxas e valores de comissão aparecem somente para Uirá. O pagamento é manual, fora do sistema; não existe split automático nem repasse automático da agência aos parceiros.
 - A comissão exige pagamento confirmado pelo provedor. Cancelamento/estorno deixa de ser elegível. A regra de afiliados não altera a comissão geral legada do checkout.
+
+## Financeiro do CRM
+
+O cálculo geral de 1% inclui o checkout pago e as reservas pagas/confirmadas marcadas pelo administrador como **Pago pelo Asaas**. A classificação financeira **Asaas** e o CSV usam a mesma regra. A reserva mantém sua origem manual para as demais operações e automações. Desmarcar Asaas retira uma reserva manual dessa base; pendentes, canceladas e estornadas não geram comissão.
+
+Ao registrar um novo pagamento pelo Admin, sua data é salva uma vez e preservada nas edições seguintes. Registros antigos já marcados sem data de pagamento usam a data de cadastro ou, na ausência dela, a visita. O período usa o dia de São Paulo. A comissão de afiliados permanece separada dessa apuração de 1%.
 
 ## Painel do parceiro independente
 
@@ -43,7 +49,7 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-25-parceiro-moderno.zip` contém os arquivos estáticos para a Hostinger, incluindo o novo design do painel independente com navegação lateral, fotos e adaptação ao celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-financeiro-asaas.zip` contém os arquivos estáticos para a Hostinger, incluindo a correção do Financeiro e o novo design do painel independente com navegação lateral, fotos e adaptação ao celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
 
 O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 

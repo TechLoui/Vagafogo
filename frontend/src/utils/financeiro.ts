@@ -1,5 +1,6 @@
 export type ReservaParaFinanceiro = {
   bookingSource: 'manual' | 'checkout' | 'other';
+  paymentRecordedInAsaas?: boolean;
   createdAt?: string;
   paidAt?: string;
   date: string;
@@ -22,6 +23,19 @@ const diaEmSaoPaulo = (data: Date) => {
 
 export const hojeEmSaoPaulo = () => diaEmSaoPaulo(new Date());
 
+export const pagamentoAsaasRegistrado = (
+  raw: { pagamentoRegistradoNoAsaas?: unknown; origem?: unknown; Origem?: unknown },
+  bookingSource: ReservaParaFinanceiro['bookingSource'],
+) => {
+  if (raw.pagamentoRegistradoNoAsaas != null) return raw.pagamentoRegistradoNoAsaas === true;
+  // O cadastro manual antigo usava origem=checkout para registrar o pagamento.
+  const origin = String(raw.origem || raw.Origem || '').trim().toLowerCase();
+  return bookingSource === 'manual' && origin === 'checkout';
+};
+
+export const classificacaoFinanceiraReserva = (reserva: ReservaParaFinanceiro) =>
+  reserva.paymentRecordedInAsaas === true ? 'checkout' : reserva.bookingSource;
+
 export const normalizarDiaFinanceiro = (valor: unknown): string => {
   if (!valor) return '';
   if (typeof valor === 'string') {
@@ -37,7 +51,7 @@ export const normalizarDiaFinanceiro = (valor: unknown): string => {
 };
 
 export const referenciaFinanceira = (reserva: ReservaParaFinanceiro) => {
-  if (reserva.bookingSource === 'checkout') {
+  if (classificacaoFinanceiraReserva(reserva) === 'checkout') {
     return reserva.paidAt || reserva.createdAt || reserva.date;
   }
   if (reserva.bookingSource === 'manual') {
@@ -53,14 +67,17 @@ export const reservaNoPeriodoFinanceiro = (
   return Boolean(dia && dia >= inicio && dia <= fim);
 };
 
-export const apurarComissaoCheckout = (
+export const reservaElegivelComissaoAsaas = (
+  reserva: ReservaParaFinanceiro, inicio: string, fim: string,
+) => classificacaoFinanceiraReserva(reserva) === 'checkout'
+  && statusPago(reserva.status)
+  && Boolean(reserva.paidAt || reserva.paymentRecordedInAsaas === true)
+  && reservaNoPeriodoFinanceiro(reserva, inicio, fim);
+
+export const apurarComissaoAsaas = (
   reservas: ReservaParaFinanceiro[], inicio: string, fim: string,
 ) => {
-  const elegiveis = reservas.filter((reserva) =>
-    reserva.bookingSource === 'checkout'
-    && statusPago(reserva.status)
-    && Boolean(reserva.paidAt)
-    && reservaNoPeriodoFinanceiro(reserva, inicio, fim));
+  const elegiveis = reservas.filter((reserva) => reservaElegivelComissaoAsaas(reserva, inicio, fim));
   const totalCentavos = elegiveis.reduce((total, reserva) =>
     total + (Number.isFinite(reserva.value) ? Math.max(0, Math.round(reserva.value * 100)) : 0), 0);
   return {

@@ -58,10 +58,13 @@ import { AffiliateAdminSection } from "../features/affiliates/AffiliateAdminSect
 import { AgencyReservationBadge } from "../components/AgencyReservationBadge";
 import { ReservaIdentificacaoBadges } from "../components/ReservaIdentificacaoBadges";
 import {
-  apurarComissaoCheckout,
+  apurarComissaoAsaas,
+  classificacaoFinanceiraReserva,
   hojeEmSaoPaulo,
   normalizarDiaFinanceiro,
+  pagamentoAsaasRegistrado,
   referenciaFinanceira,
+  reservaElegivelComissaoAsaas,
   reservaNoPeriodoFinanceiro,
 } from "../utils/financeiro";
 import "./CRM.css";
@@ -147,6 +150,7 @@ type RawReservation = Record<string, unknown> & {
   dominioOrigem?: unknown;
   agentSessionId?: unknown;
   criadaManualmente?: unknown;
+  pagamentoRegistradoNoAsaas?: unknown;
   reservaManual?: unknown;
   inseridaManualmente?: unknown;
   createdManually?: unknown;
@@ -177,6 +181,7 @@ type CRMReservation = {
   paidAt?: string;
   arrived?: boolean;
   paymentMethod?: string;
+  paymentRecordedInAsaas?: boolean;
   whatsappSent: boolean;
   campaignId?: string;
   paymentId?: string;
@@ -952,6 +957,7 @@ export function CRM() {
                 arrived:
                   typeof raw.chegou === "boolean" ? raw.chegou : undefined,
                 paymentMethod,
+                paymentRecordedInAsaas: pagamentoAsaasRegistrado(raw, bookingSource),
                 whatsappSent:
                   raw.whatsappEnviado === true ||
                   raw.whatsappBoasVindasEnviado === true ||
@@ -1263,7 +1269,7 @@ export function CRM() {
   }, [periodBounds, reservations]);
   const financialReservations = useMemo(
     () => financialPeriodReservations.filter((item) =>
-      financeOriginFilter === "all" || item.bookingSource === financeOriginFilter),
+      financeOriginFilter === "all" || classificacaoFinanceiraReserva(item) === financeOriginFilter),
     [financialPeriodReservations, financeOriginFilter],
   );
 
@@ -1501,7 +1507,9 @@ export function CRM() {
       tipoReserva: item.bookingSource === "manual" ? "Manual" : item.bookingSource === "checkout" ? "Checkout" : "Não identificada",
       ...(activeSection === "financeiro" ? {
         dataFechamento: normalizarDiaFinanceiro(referenciaFinanceira(item)),
-        baseComissao1PorCento: item.bookingSource === "checkout" && isPaid(item.status) && item.paidAt ? item.value : 0,
+        classificacaoFinanceira: classificacaoFinanceiraReserva(item) === "checkout" ? "Asaas" : item.bookingSource === "manual" ? "Manual" : "Não identificada",
+        pagamentoRegistradoNoAsaas: item.paymentRecordedInAsaas ? "Sim" : "Não",
+        baseComissao1PorCento: reservaElegivelComissaoAsaas(item, periodBounds.start.format("YYYY-MM-DD"), periodBounds.end.format("YYYY-MM-DD")) ? item.value : 0,
       } : {}),
       dominioOrigem: item.sourceDomain ?? "",
       campanhaId: item.campaignId ?? "",
@@ -5136,7 +5144,7 @@ function FinanceSection({
   const pending = selectedReservations.filter((item) => isPending(item.status));
   const cancelled = selectedReservations.filter((item) => isCancelled(item.status));
   const paidValue = paid.reduce((sum, item) => sum + item.value, 0);
-  const comissaoCheckout = apurarComissaoCheckout(selectedReservations, periodStart, periodEnd);
+  const comissaoAsaas = apurarComissaoAsaas(selectedReservations, periodStart, periodEnd);
   const pendingValue = pending.reduce((sum, item) => sum + item.value, 0);
   const cancelledValue = cancelled.reduce((sum, item) => sum + item.value, 0);
   const byExperience = ["Brunch", "Trilha", "Combo"].map((label) => ({
@@ -5176,16 +5184,16 @@ function FinanceSection({
           </button>
         }
       />
-      <div className="crm-finance-origin" role="group" aria-label="Filtrar financeiro por origem da reserva">
+      <div className="crm-finance-origin" role="group" aria-label="Filtrar financeiro por classificação do pagamento">
         <div>
-          <strong>Origem das reservas</strong>
-          <small>Os filtros acompanham o período selecionado. Checkout com pagamento registrado usa essa data; sem ela, aparece pela data de cadastro ou visita apenas para conferência. Manuais usam pagamento, cadastro ou visita nos registros antigos.</small>
+          <strong>Classificação financeira</strong>
+          <small>Asaas inclui o checkout e as reservas marcadas como “Pago pelo Asaas” no Admin. O período usa a data do pagamento; registros antigos marcados sem essa data usam cadastro ou visita. A origem da reserva é preservada.</small>
         </div>
         <div className="crm-finance-origin__options">
           {([
             ["all", "Todas"],
             ["manual", "Manuais"],
-            ["checkout", "Checkout"],
+            ["checkout", "Asaas"],
             ["other", "Não identificadas"],
           ] as const).map(([value, label]) => (
             <button
@@ -5196,7 +5204,7 @@ function FinanceSection({
               onClick={() => onOriginFilterChange(value)}
             >
               {label}
-              <span>{value === "all" ? reservations.length : reservations.filter((item) => item.bookingSource === value).length}</span>
+              <span>{value === "all" ? reservations.length : reservations.filter((item) => classificacaoFinanceiraReserva(item) === value).length}</span>
             </button>
           ))}
         </div>
@@ -5213,11 +5221,11 @@ function FinanceSection({
           <FaChartLine />
         </div>
         <div className="crm-finance-percent">
-          <span>Seu 1% do checkout</span>
+          <span>Seu 1% do Asaas</span>
           <strong className={!valuesVisible ? "is-private" : ""}>
-            {valuesVisible ? currencyWithCents.format(comissaoCheckout.comissao) : "R$ •••••"}
+            {valuesVisible ? currencyWithCents.format(comissaoAsaas.comissao) : "R$ •••••"}
           </strong>
-          <small>{comissaoCheckout.quantidade} reservas pagas pelo checkout · base de {displayMoney(comissaoCheckout.base)}. Manuais, pendentes e canceladas não entram. Checkout sem data de pagamento também fica fora do cálculo.</small>
+          <small>{comissaoAsaas.quantidade} reservas pagas pelo Asaas · base de {displayMoney(comissaoAsaas.base)}. Inclui as manuais marcadas como Asaas no Admin. Pendentes, canceladas e manuais sem essa marcação ficam fora. Checkout sem data de pagamento também não gera comissão.</small>
         </div>
       </div>
       <div className="crm-summary-strip">

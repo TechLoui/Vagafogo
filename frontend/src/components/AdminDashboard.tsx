@@ -15,6 +15,7 @@ import {
   reservaEhPreReserva as reservaTemStatusPreReserva,
   reservaEstaConfirmada,
 } from '../utils/reservaStatus';
+import { camposRegistroPagamentoManual, pagamentoAsaasNoEditor } from '../utils/registroPagamentoManual';
 import {
   compararHorariosComIndefinidosNoFim,
   compararTextoNumericamente,
@@ -589,6 +590,8 @@ interface Reserva {
   criadaManualmente?: boolean;
 
   pagamentoRegistradoNoAsaas?: boolean;
+
+  dataPagamento?: unknown;
 
   formaPagamento?: string;
 
@@ -1737,10 +1740,9 @@ export default function AdminDashboard() {
   const [idadesReservaEmEdicao, setIdadesReservaEmEdicao] = useState<Record<string, string[]>>({});
   const [campoIdadeComErro, setCampoIdadeComErro] = useState<string>();
 
-  const [reservaOriginalEmEdicao, setReservaOriginalEmEdicao] = useState<{
-    data: string;
-    horario: string;
-  } | null>(null);
+  const [reservaOriginalEmEdicao, setReservaOriginalEmEdicao] = useState<Pick<Reserva,
+    'data' | 'horario' | 'status' | 'confirmada' | 'origem' | 'criadaManualmente' | 'pagamentoRegistradoNoAsaas'
+  > | null>(null);
 
   const [modalReserva, setModalReserva] = useState(false);
   const [modalResumoDia, setModalResumoDia] = useState(false);
@@ -4079,9 +4081,7 @@ export default function AdminDashboard() {
 
       criadaManualmente,
 
-      pagamentoRegistradoNoAsaas:
-        reserva.pagamentoRegistradoNoAsaas === true
-        || (criadaManualmente && reserva.origem === 'checkout'),
+      pagamentoRegistradoNoAsaas: pagamentoAsaasNoEditor(reserva, criadaManualmente),
 
       ...(criadaManualmente ? { origem: 'manual' } : {}),
 
@@ -4090,6 +4090,11 @@ export default function AdminDashboard() {
     setReservaOriginalEmEdicao({
       data: normalizarDataReserva(reserva.data),
       horario: (reserva.horario ?? '').toString(),
+      status: reserva.status,
+      confirmada: reserva.confirmada,
+      origem: reserva.origem,
+      criadaManualmente,
+      pagamentoRegistradoNoAsaas: pagamentoAsaasNoEditor(reserva, criadaManualmente),
     });
 
     setIsEditingReserva(true);
@@ -5005,6 +5010,7 @@ export default function AdminDashboard() {
 
       const payload = {
         ...restante,
+        ...camposRegistroPagamentoManual({ ...editReserva, status: statusAtual }, reservaOriginalEmEdicao, new Date()),
         ...(reservaEhManual(editReserva) && Object.keys(idadesPorTipo).length > 0 ? { idadesPorTipo } : {}),
         ...(!isEditingReserva ? { criadoEm: new Date() } : {}),
         atividade,
@@ -11858,7 +11864,7 @@ export default function AdminDashboard() {
                         </span>
                         <span className="admin-manual-toggle-card__content">
                           <span className="admin-manual-toggle-card__label">Pago pelo Asaas</span>
-                          <span className="admin-manual-toggle-card__hint">Registra o pagamento sem alterar a origem manual nem ativar disparos</span>
+                          <span className="admin-manual-toggle-card__hint">Reservas pagas entram no Financeiro e na comissão geral de 1%</span>
                         </span>
                       </label>
                     </div>
