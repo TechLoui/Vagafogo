@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { obterStorageBucketAdmin } from "./firebaseAdmin";
-import { AffiliateError, AffiliateIdentity, affiliateAgencyLogoUrl, affiliateDb, affiliateId, getAffiliateProfile, readAffiliate, requireAffiliateRole } from "./affiliates";
+import { AffiliateBranding, AffiliateError, AffiliateIdentity, affiliateAgencyLogoUrl, affiliateBranding, affiliateDb, affiliateId, getAffiliateProfile, readAffiliate, requireAffiliateRole } from "./affiliates";
 
 export const AFFILIATE_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -91,15 +91,26 @@ export const validateAffiliateLogoBytes = (buffer: Buffer, mimeType: string): Lo
     || dimensions.width * dimensions.height > 16_000_000) throw new AffiliateError("AFFILIATE_LOGO_DIMENSIONS_INVALID", 400, "O logo deve ter entre 32 e 4096 pixels em cada lado.");
   return { buffer, mimeType, ...dimensions };
 };
-export const parseAffiliateLogo = (input: unknown): LogoImage => {
+export const parseAffiliateLogo = (input: unknown): LogoImage & { branding?: AffiliateBranding } => {
   const raw = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
-  if (Object.keys(raw).some((key) => key !== "dataUrl") || typeof raw.dataUrl !== "string") throw invalidContent();
+  if (Object.keys(raw).some((key) => !["dataUrl", "branding"].includes(key)) || typeof raw.dataUrl !== "string") throw invalidContent();
+  const branding = affiliateBranding(raw.branding);
+  if (Object.prototype.hasOwnProperty.call(raw, "branding") && !branding) throw new AffiliateError("AFFILIATE_BRANDING_INVALID", 400, "Informe as duas cores no formato #RRGGBB.");
   if (raw.dataUrl.length > Math.ceil(AFFILIATE_LOGO_MAX_BYTES / 3) * 4 + 80) throw new AffiliateError("AFFILIATE_LOGO_SIZE_INVALID", 400);
   const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(raw.dataUrl);
   if (!match) throw new AffiliateError("AFFILIATE_LOGO_TYPE_INVALID", 400, "Use PNG, JPEG ou WebP.");
   const buffer = Buffer.from(match[2], "base64");
   if (buffer.toString("base64") !== match[2]) throw invalidContent();
-  return validateAffiliateLogoBytes(buffer, match[1]);
+  return { ...validateAffiliateLogoBytes(buffer, match[1]), ...(branding ? { branding } : {}) };
+};
+export const assertAffiliateAgencyLogoAccess = (idValue: unknown, identity: AffiliateIdentity) => {
+  requireAffiliateRole(identity, ["admin", "agency"]);
+  const id = affiliateId(idValue);
+  if (identity.role === "agency" && identity.agencyId !== id) throw new AffiliateError("AFFILIATE_PERMISSION_REQUIRED", 403);
+  return id;
+};
+const assertAgencyActive = (data: Record<string, any>, identity: AffiliateIdentity) => {
+  if (identity.role === "agency" && data.status !== "active") throw new AffiliateError("AFFILIATE_ACCESS_DISABLED", 403);
 };
 const logoPath = (id: string, version: string, mimeType: string) => `affiliate-agency-logos/${id}/${version}.${EXTENSIONS[mimeType]}`;
 const removeUnusedLogo = async (agencyId: string, path: unknown) => {
@@ -110,8 +121,8 @@ const removeUnusedLogo = async (agencyId: string, path: unknown) => {
   } catch { console.warn("[affiliates] Nao foi possivel remover um logo antigo do storage."); }
 };
 export const uploadAffiliateAgencyLogo = async (id: unknown, input: unknown, identity: AffiliateIdentity) => {
-  requireAffiliateRole(identity, ["admin"]);
-  const agency = await readAffiliate("agency", id, identity);
+  const agency = await readAffiliate("agency", assertAffiliateAgencyLogoAccess(id, identity), identity);
+  assertAgencyActive(agency.data, identity);
   const image = parseAffiliateLogo(input);
   const bucket = obterStorageBucketAdmin();
   if (!bucket) throw new AffiliateError("AFFILIATE_LOGO_STORAGE_UNAVAILABLE", 503);
@@ -124,26 +135,28 @@ export const uploadAffiliateAgencyLogo = async (id: unknown, input: unknown, ide
     await affiliateDb().runTransaction(async (tx) => {
       const current = await tx.get(agency.ref);
       if (!current.exists) throw new AffiliateError("AFFILIATE_NOT_FOUND", 404);
+      assertAgencyActive(current.data()!, identity);
       previousPath = current.data()?.logoStoragePath;
       const fields = { logoVersion: version, logoMimeType: image.mimeType };
       tx.update(agency.ref, { ...fields, logoUrl: affiliateAgencyLogoUrl(agency.id, fields), logoUpdatedAt: now,
         logoStoragePath: path, logoSizeBytes: image.buffer.length, logoWidth: image.width, logoHeight: image.height,
-        logoUploadedBy: identity.uid, updatedAt: now, updatedBy: identity.uid });
+        logoUploadedBy: identity.uid, branding: image.branding ?? null, updatedAt: now, updatedBy: identity.uid });
     });
   } catch (error) { await removeUnusedLogo(agency.id, path); throw error; }
   if (previousPath !== path) await removeUnusedLogo(agency.id, previousPath);
   return getAffiliateProfile("agency", agency.id, identity);
 };
 export const deleteAffiliateAgencyLogo = async (id: unknown, identity: AffiliateIdentity) => {
-  requireAffiliateRole(identity, ["admin"]);
-  const agency = await readAffiliate("agency", id, identity);
+  const agency = await readAffiliate("agency", assertAffiliateAgencyLogoAccess(id, identity), identity);
+  assertAgencyActive(agency.data, identity);
   let previousPath: unknown;
   await affiliateDb().runTransaction(async (tx) => {
     const current = await tx.get(agency.ref);
     if (!current.exists) throw new AffiliateError("AFFILIATE_NOT_FOUND", 404);
+    assertAgencyActive(current.data()!, identity);
     previousPath = current.data()?.logoStoragePath;
     tx.update(agency.ref, { logoVersion: null, logoMimeType: null, logoUrl: null, logoUpdatedAt: null, logoStoragePath: null,
-      logoSizeBytes: null, logoWidth: null, logoHeight: null, logoUploadedBy: null, updatedAt: new Date(), updatedBy: identity.uid });
+      logoSizeBytes: null, logoWidth: null, logoHeight: null, logoUploadedBy: null, branding: null, updatedAt: new Date(), updatedBy: identity.uid });
   });
   await removeUnusedLogo(agency.id, previousPath);
   return getAffiliateProfile("agency", agency.id, identity);

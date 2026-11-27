@@ -4,6 +4,7 @@ import { obterAuthAdmin, obterFirestoreAdmin } from "./firebaseAdmin";
 
 export type AffiliateIdentity = { uid: string; email?: string; role: "admin" | "agency" | "partner"; agencyId: string | null; partnerId: string | null };
 export type CommissionRule = { mode: "percent" | "fixed"; value: number };
+export type AffiliateBranding = { primaryColor: string; accentColor: string };
 export type CommercialAttribution = {
   version: 1; agencyId: string | null; agencyName: string | null; partnerId: string; partnerName: string;
   linkId: string; contextId: string; capturedAt: string; bookedAt: string; commissionRule: CommissionRule | null;
@@ -65,10 +66,18 @@ export const affiliateAgencyLogoUrl = (id: string, raw: Record<string, any>): st
   if (!/^[a-f0-9]{24}$/.test(raw.logoVersion ?? "") || !["image/png", "image/jpeg", "image/webp"].includes(raw.logoMimeType)) return undefined;
   return `${affiliateApiBaseUrl()}/api/affiliates/public/agencies/${encodeURIComponent(affiliateId(id))}/logo?v=${raw.logoVersion}`;
 };
+export const affiliateBranding = (value: unknown): AffiliateBranding | undefined => {
+  const raw = record(value);
+  if (Object.keys(raw).length !== 2 || Object.keys(raw).some((key) => !["primaryColor", "accentColor"].includes(key))
+    || typeof raw.primaryColor !== "string" || !/^#[0-9a-fA-F]{6}$/.test(raw.primaryColor)
+    || typeof raw.accentColor !== "string" || !/^#[0-9a-fA-F]{6}$/.test(raw.accentColor)) return undefined;
+  return { primaryColor: raw.primaryColor.toUpperCase(), accentColor: raw.accentColor.toUpperCase() };
+};
 const serialize = (id: string, raw: Record<string, any>, identity: AffiliateIdentity) => ({
   id, name: raw.name, email: raw.email, status: raw.status, agencyId: raw.agencyId ?? null,
   activated: Boolean(raw.memberUid), createdAt: affiliateIso(raw.createdAt), updatedAt: affiliateIso(raw.updatedAt),
-  ...(affiliateAgencyLogoUrl(id, raw) ? { logoUrl: affiliateAgencyLogoUrl(id, raw), logoVersion: raw.logoVersion, logoUpdatedAt: affiliateIso(raw.logoUpdatedAt) } : {}),
+  ...(affiliateAgencyLogoUrl(id, raw) ? { logoUrl: affiliateAgencyLogoUrl(id, raw), logoVersion: raw.logoVersion, logoUpdatedAt: affiliateIso(raw.logoUpdatedAt),
+    ...(affiliateBranding(raw.branding) ? { branding: affiliateBranding(raw.branding) } : {}) } : {}),
   ...(identity.role === "admin" ? { commissionRule: raw.commissionRule ?? null } : {}),
 });
 export const readAffiliate = async (kind: "agency" | "partner", idValue: unknown, identity: AffiliateIdentity) => {

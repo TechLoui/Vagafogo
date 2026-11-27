@@ -1,3 +1,6 @@
+import { extractAgencyBranding } from './affiliateBranding.ts';
+import type { AgencyBranding } from './types';
+
 export const MAX_AGENCY_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -14,7 +17,7 @@ export function agencyLogoDimensions(width: number, height: number) {
   return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
-export async function readAgencyLogo(file: File): Promise<string> {
+export async function readAgencyIdentity(file: File): Promise<{ dataUrl: string; branding: AgencyBranding }> {
   validateAgencyLogo(file);
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -35,5 +38,12 @@ export async function readAgencyLogo(file: File): Promise<string> {
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Não foi possível preparar a imagem. Tente em outro navegador.');
   context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
-  return canvas.toDataURL('image/webp', 0.9);
+  let branding = extractAgencyBranding([]);
+  try { branding = extractAgencyBranding(context.getImageData(0, 0, canvas.width, canvas.height).data); }
+  catch { /* A readable logo can still be saved with the default palette. */ }
+  return { dataUrl: canvas.toDataURL('image/webp', 0.9), branding };
+}
+
+export async function readAgencyLogo(file: File): Promise<string> {
+  return (await readAgencyIdentity(file)).dataUrl;
 }

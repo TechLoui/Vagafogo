@@ -1,6 +1,7 @@
 export type AffiliateRole = 'admin' | 'agency' | 'partner';
 export type AffiliateStatus = 'active' | 'disabled';
 export type CommissionRule = { mode: 'percent' | 'fixed'; value: number };
+export type AgencyBranding = { primaryColor: string; accentColor: string };
 
 export type AffiliateIdentity = {
   uid: string;
@@ -22,6 +23,7 @@ export type AffiliateEntity = {
   logoUrl?: string | null;
   logoVersion?: string;
   logoUpdatedAt?: string;
+  branding?: AgencyBranding | null;
 };
 
 export type AffiliateProfile = {

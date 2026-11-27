@@ -37,7 +37,11 @@ A consulta pública exige **CPF + código da reserva**, sem pesquisar histórico
 
 ## Identidade das agências e rastreamento
 
-O administrador geral anexa, troca ou remove a logo no cadastro da agência. PNG, JPEG e WebP são aceitos até 2 MB, com validação de conteúdo e dimensões. A imagem fica em Storage privado e é servida pela API; agências e parceiros não recebem permissão de upload. A logo e o nome identificam a agência nas linhas de reserva e no relatório de repasse do Uirá. Sem imagem, a identificação usa as iniciais e o nome.
+O administrador geral mantém a gestão das logos. Cada agência ativa também pode anexar, trocar ou remover **somente a própria logo**, pela aba **Perfil e marca**. Sem logo, um convite para personalizar aparece no resumo e pode ser dispensado. PNG, JPEG e WebP são aceitos até 2 MB, com validação de conteúdo e dimensões. A imagem fica em Storage privado e é servida pela API autenticada; nenhum perfil externo recebe permissão direta no bucket. Vendedores não podem fazer upload.
+
+Ao escolher a imagem, a interface extrai duas cores predominantes e mostra uma prévia antes de salvar. A API aceita apenas cores hexadecimais completas e limita a atualização à agência autenticada. O painel dos vendedores vinculados herda a paleta e mostra as logos da Vagafogo e da agência lado a lado. Tons de botões e texto são ajustados para contraste; logos sem cores úteis usam a paleta padrão. A mudança é carregada quando o vendedor abre ou atualiza o painel. A remoção da logo limpa as cores e restaura a identidade padrão. O parceiro independente mantém sua identidade e permissões próprias.
+
+A logo e o nome continuam identificando a agência nas linhas de reserva e no relatório de repasse do Uirá. Sem imagem, a identificação usa as iniciais e o nome. O upload não altera comissões, reservas ou regras de pagamento.
 
 A indicação também acompanha a jornada do formulário antes da compra. O backend valida o contexto opaco e registra somente a identidade comercial, sem taxa de comissão ou contato sem consentimento. Entrar e sair do formulário não cria reserva nem soma venda. Criar a cobrança registra uma reserva, ainda pendente; somente a confirmação verificada pelo Asaas soma uma venda paga e comissão elegível.
 
@@ -49,7 +53,7 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-financeiro-asaas.zip` contém os arquivos estáticos para a Hostinger, incluindo a correção do Financeiro e o novo design do painel independente com navegação lateral, fotos e adaptação ao celular. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-marcas-agencias.zip` contém os arquivos estáticos para a Hostinger, incluindo Perfil e marca da agência, o painel personalizado dos vendedores, a correção do Financeiro e o design do parceiro independente. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
 
 O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 

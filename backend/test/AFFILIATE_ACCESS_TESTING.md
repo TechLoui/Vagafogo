@@ -97,6 +97,12 @@ The emulator tests assert:
   Logo operations use the authorized API's Admin SDK, outside these Rules;
   publicly displaying a logo does not expose the bucket path or grant access.
 
+Agency self-service branding uses that same private API path: administrators can
+manage any agency logo, and an active agency can manage only its own. Sellers
+remain denied. `affiliates.logo.test.js` covers cross-agency denial before the
+larger body parser, suspension during upload, validated two-color branding,
+private DTO fields, and palette removal. No broader Storage permission is needed.
+
 ## Coordinated rollout
 
 1. Keep `AFFILIATES_ENABLED=false` and do not create external users. First deploy

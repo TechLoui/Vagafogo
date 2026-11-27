@@ -33,6 +33,7 @@ async function buildRuntime(realPortal = false) {
     export {SessionContext} from ${JSON.stringify(path.join(frontend, 'src/features/affiliates/AffiliateAccess.ts'))};
     export {setAuth} from 'firebase/auth';
     export {setApi,getApiCalls} from ${JSON.stringify(path.join(frontend, 'src/features/affiliates/affiliateService.ts'))};
+    ${realPortal ? `export {AgencyLogoInput} from ${JSON.stringify(path.join(frontend, 'src/features/affiliates/AgencyLogoInput.tsx'))};` : ''}
   `;
   const build = await esbuild.build({
     stdin: { contents: entry, resolveDir: frontend, loader: 'tsx' },
@@ -267,7 +268,11 @@ test('successful account switch returns to the login form without reusing the pr
 
 const portalSession = (role, linked = false) => {
   const state = session(role);
-  const agency = { id: 'agency-a', name: 'Synthetic Agency', email: 'agency@example.test', status: 'active' };
+  const agency = {
+    id: 'agency-a', name: 'Synthetic Agency', email: 'agency@example.test', status: 'active',
+    logoUrl: '/api/affiliates/agencies/agency-a/branding?v=synthetic',
+    branding: { primaryColor: '#8A2040', accentColor: '#F5D263' },
+  };
   state.profile.identity.agencyId = role === 'agency' || linked ? agency.id : null;
   if (role === 'agency' || linked) state.profile.agency = agency;
   if (role === 'partner') state.profile.partner = {
@@ -297,8 +302,9 @@ const noBookingActions = (mounted) => {
   assert.ok(mounted.engine.getApiCalls().every((call) => ['getAffiliateSummary', 'getAffiliateSales', 'getAffiliateLinks', 'listAffiliateEntities'].includes(call.method)), 'Navigation must issue read APIs only');
 };
 const noPartnerManagement = (mounted) => {
-  assert.doesNotMatch(controlLabels(mounted.view), /(?:criar|novo|nova|editar|gerar acesso|ativar)\s+(?:um\s+|uma\s+)?(?:parceiro|usu[aá]rio|ag[eê]ncia|cadastro)/i);
+  assert.doesNotMatch(controlLabels(mounted.view), /(?:criar|novo|nova|editar|gerar acesso|ativar)\s+(?:um\s+|uma\s+)?(?:parceiro|vendedor|usu[aá]rio|ag[eê]ncia|cadastro)/i);
   assert.equal(mounted.engine.getApiCalls().some((call) => call.method === 'listAffiliateEntities'), false);
+  assert.equal(mounted.view.root.findAllByType('input').some((item) => item.props.type === 'file'), false, 'Partners cannot upload agency logos');
 };
 
 test('real independent portal navigates all four read-only sections without user management or booking actions', async (t) => {
@@ -335,9 +341,22 @@ test('real independent portal navigates all four read-only sections without user
   noPartnerManagement(mobile);
 });
 
-test('real linked partner retains its agency branding, link and reservation report without any user or booking management', async (t) => {
+test('real linked seller displays both brands and all four read-only sections without upload, user or booking management', async (t) => {
   const mounted = await mount(t, '/parceiro', portalSession('partner', true), { engine: portalRuntime, api: portalApi() });
   assert.match(text(mounted.view.toJSON()), /Synthetic Agency/);
+  const brandCard = mounted.view.root.findByProps({ 'aria-label': 'Parceria entre Vagafogo e Synthetic Agency' });
+  assert.ok(brandCard.findAllByType('img').some((item) => item.props.alt === 'Vagafogo'));
+  assert.ok(brandCard.findAllByType('img').some((item) => item.props.src === '/api/affiliates/agencies/agency-a/branding?v=synthetic'));
+  const shell = mounted.view.root.findAllByType('div').find((item) => item.props.className?.split(' ').includes('asp-shell'));
+  assert.equal(shell.props.style['--seller-primary'], '#8A2040');
+  assert.equal(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateSales'), false);
+  for (const label of ['Visão geral', 'Reservas', 'Relatórios', 'Divulgação']) {
+    await mounted.click(label);
+    assert.equal(button(mounted.view, label).props['aria-current'], 'page');
+    noBookingActions(mounted);
+    noPartnerManagement(mounted);
+    assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|repasse manual|9\.876,54/);
+  }
   assert.ok(mounted.view.root.findAllByType('input').some((item) => item.props.value === publicLink && item.props.readOnly));
   assert.ok(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateSales'));
   assert.equal(button(mounted.view, 'Parceiros'), undefined);
@@ -349,15 +368,15 @@ test('real linked partner retains its agency branding, link and reservation repo
 test('real agency keeps scoped partner administration while every reservation view remains read-only', async (t) => {
   const mounted = await mount(t, '/agencia', portalSession('agency'), { engine: portalRuntime, api: portalApi() });
   assert.ok(button(mounted.view, 'Resumo e reservas'));
-  assert.ok(button(mounted.view, 'Parceiros'));
+  assert.ok(button(mounted.view, 'Vendedores'));
   noBookingActions(mounted);
-  await mounted.click('Parceiros');
+  await mounted.click('Vendedores');
   const listing = mounted.engine.getApiCalls().find((call) => call.method === 'listAffiliateEntities');
   assert.ok(listing);
   assert.equal(listing.args[0], 'partners');
   assert.equal(listing.args[1], 'agency-a');
   assert.match(text(mounted.view.toJSON()), /Own Agency Partner/);
-  assert.match(controlLabels(mounted.view), /Criar parceiro|Novo parceiro/);
+  assert.match(controlLabels(mounted.view), /Criar vendedor|Novo vendedor/);
   assert.match(controlLabels(mounted.view), /Editar/);
   noBookingActions(mounted);
   assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|repasse manual|9\.876,54/);
@@ -388,4 +407,97 @@ test('real partner portal keeps read-only navigation when an awaited logout fail
   assert.equal(mounted.router.state.location.pathname, '/parceiro');
   assert.ok(button(mounted.view, 'Visão geral'));
   noBookingActions(mounted);
+});
+
+const logoData = 'data:image/png;base64,U3ludGhldGljT25seQ==';
+const selectedBranding = { primaryColor: '#A51D3D', accentColor: '#F3CB50' };
+const agencyShell = (mounted) => mounted.view.root.findAllByType('div').find((item) => item.props.className?.split(' ').includes('ap-agency'));
+const chooseLogo = async (mounted) => {
+  const input = mounted.view.root.findByType(mounted.engine.AgencyLogoInput);
+  await mounted.act(async () => {
+    // Image decoding has its own unit/browser checks. Exercise the real
+    // upload component's result callbacks without fabricating a canvas DOM.
+    input.props.onChange(logoData);
+    input.props.onBrandingChange(selectedBranding);
+  });
+};
+const submitIdentity = async (mounted, twice = false) => {
+  const form = mounted.view.root.findByType('form');
+  await mounted.act(async () => {
+    form.props.onSubmit({ preventDefault() {} });
+    if (twice) form.props.onSubmit({ preventDefault() {} });
+  });
+};
+
+test('agency without a logo can defer onboarding and continue reports without any profile mutation', async (t) => {
+  const state = portalSession('agency');
+  state.profile.agency = { ...state.profile.agency, logoUrl: null, branding: null };
+  const mounted = await mount(t, '/agencia', state, { engine: portalRuntime, api: portalApi() });
+  assert.ok(button(mounted.view, 'Adicionar logo'));
+  assert.ok(mounted.engine.getApiCalls().some((call) => call.method === 'getAffiliateSales'), 'Onboarding cannot block the existing report');
+  await mounted.click('Agora não');
+  assert.equal(button(mounted.view, 'Adicionar logo'), undefined);
+  await mounted.click('Perfil e marca');
+  assert.ok(mounted.view.root.findAllByType('input').some((item) => item.props.type === 'file'));
+  assert.equal(button(mounted.view, 'Salvar identidade').props.disabled, true);
+  assert.match(text(mounted.view.toJSON()), /Synthetic Agency/);
+  await mounted.click('Voltar ao resumo');
+  assert.equal(button(mounted.view, 'Resumo e reservas').props['aria-current'], 'page');
+  assert.equal(button(mounted.view, 'Adicionar logo'), undefined, 'Deferral lasts locally without pretending a profile was saved');
+  noBookingActions(mounted);
+  assert.equal(mounted.engine.getApiCalls().some((call) => call.method === 'saveAgencyLogo'), false);
+});
+
+test('agency saves and removes only its own logo, waits for the response and retains the confirmed identity after an error', async (t) => {
+  const state = portalSession('agency');
+  const pending = deferred();
+  let attempt = 0;
+  const savedLogo = '/api/affiliates/agencies/agency-a/branding?v=saved-synthetic';
+  const api = { ...portalApi(), saveAgencyLogo: async (id, dataUrl, branding) => {
+    assert.equal(id, state.profile.identity.agencyId);
+    attempt++;
+    if (attempt === 1) return pending.promise;
+    return { item: { ...state.profile.agency, logoUrl: dataUrl === null ? null : savedLogo,
+      branding: dataUrl === null ? null : branding, updatedAt: new Date().toISOString() } };
+  } };
+  const mounted = await mount(t, '/agencia', state, { engine: portalRuntime, api });
+  await mounted.click('Perfil e marca');
+  await chooseLogo(mounted);
+  assert.equal(agencyShell(mounted).props.style['--seller-primary'], '#8A2040', 'Preview must not overwrite the saved agency theme');
+  await submitIdentity(mounted, true);
+  assert.equal(attempt, 1, 'Repeated submit cannot issue two logo mutations');
+  assert.ok(button(mounted.view, 'Salvando…')?.props.disabled);
+  await mounted.act(async () => pending.reject(new Error('Synthetic upload failure')));
+  assert.match(text(mounted.view.root.findByProps({ role: 'alert' }).children), /Synthetic upload failure/);
+  assert.equal(agencyShell(mounted).props.style['--seller-primary'], '#8A2040');
+  await submitIdentity(mounted);
+  assert.equal(agencyShell(mounted).props.style['--seller-primary'], selectedBranding.primaryColor);
+  assert.ok(mounted.view.root.findByProps({ className: 'aff-portal-heading' }).findAllByType('img').some((item) => item.props.src === savedLogo));
+  const writes = mounted.engine.getApiCalls().filter((call) => call.method === 'saveAgencyLogo');
+  assert.equal(writes.length, 2);
+  for (const call of writes) assert.deepEqual(call.args, ['agency-a', logoData, selectedBranding]);
+  await mounted.click('Remover logo');
+  await submitIdentity(mounted);
+  assert.deepEqual(mounted.engine.getApiCalls().filter((call) => call.method === 'saveAgencyLogo').at(-1).args, ['agency-a', null, null]);
+  assert.equal(agencyShell(mounted).props.style['--seller-primary'], '#225F48');
+  assert.doesNotMatch(controlLabels(mounted.view), /(?:criar|editar|cancelar|excluir|remarcar)\s+(?:uma\s+)?reservas?/i);
+  assert.doesNotMatch(text(mounted.view.toJSON()), /Comissão|9\.876,54/);
+});
+
+test('agency profile rejects a successful logo response for another agency without replacing its current brand or identity', async (t) => {
+  const state = portalSession('agency');
+  const mounted = await mount(t, '/agencia', state, { engine: portalRuntime, api: {
+    ...portalApi(), saveAgencyLogo: async () => ({ item: {
+      ...state.profile.agency, id: 'other-agency', name: 'DO_NOT_APPLY_FOREIGN_AGENCY',
+      logoUrl: '/synthetic-foreign-logo', branding: selectedBranding,
+    } }),
+  } });
+  await mounted.click('Perfil e marca');
+  await chooseLogo(mounted);
+  await submitIdentity(mounted);
+  assert.match(text(mounted.view.root.findByProps({ role: 'alert' }).children), /não corresponde à sua agência/);
+  assert.equal(agencyShell(mounted).props.style['--seller-primary'], '#8A2040');
+  assert.doesNotMatch(text(mounted.view.toJSON()), /DO_NOT_APPLY_FOREIGN_AGENCY/);
+  assert.equal(mounted.router.state.location.pathname, '/agencia');
+  assert.ok(mounted.engine.getApiCalls().filter((call) => call.method === 'saveAgencyLogo').every((call) => call.args[0] === 'agency-a'));
 });

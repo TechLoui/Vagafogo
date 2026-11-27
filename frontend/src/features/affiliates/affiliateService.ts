@@ -1,7 +1,7 @@
 import { auth } from '../../../firebase';
 import type {
   AffiliateActivationLink, AffiliateEntity, AffiliateEntityInput, AffiliateInvitation,
-  AffiliateLink, AffiliatePage, AffiliateProfile, AffiliateReportQuery, AffiliateSale, AffiliateSummary,
+  AffiliateLink, AffiliatePage, AffiliateProfile, AffiliateReportQuery, AffiliateSale, AffiliateSummary, AgencyBranding,
 } from './types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE || 'https://vagafogo-production.up.railway.app').replace(/\/+$/, '');
@@ -21,6 +21,7 @@ const errorMessages: Record<string, string> = {
   AFFILIATE_ACTIVATION_ACCOUNT_MISMATCH: 'Use o e-mail e a conta criados para este convite. Uma conta anterior não pode ser vinculada.',
   AFFILIATE_COMMISSION_INVALID: 'Confira a comissão e use no máximo duas casas decimais.',
   AFFILIATE_COMMISSION_INHERITED: 'A comissão deste parceiro segue a regra da agência.',
+  AFFILIATE_BRANDING_INVALID: 'Não foi possível reconhecer as cores da marca. Escolha a imagem novamente e salve.',
   AFFILIATE_SERVICE_UNAVAILABLE: 'O serviço está temporariamente indisponível. Tente novamente.',
   AFFILIATE_RATE_LIMIT: 'Aguarde um minuto antes de tentar novamente.',
   AFFILIATE_FILTER_INVALID: 'Confira os filtros e use até 120 caracteres na busca.',
@@ -96,9 +97,9 @@ export const saveAffiliateEntity = (kind: 'agencies' | 'partners', input: Affili
     method: id ? 'PATCH' : 'POST', body: JSON.stringify(input),
   });
 
-export const saveAgencyLogo = (id: string, dataUrl: string | null) =>
+export const saveAgencyLogo = (id: string, dataUrl: string | null, branding?: AgencyBranding | null) =>
   request<{ item: AffiliateEntity }>(`/agencies/${encodeURIComponent(id)}/logo`, dataUrl === null
-    ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ dataUrl }) });
+    ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ dataUrl, ...(branding ? { branding } : {}) }) });
 
 export const createAffiliateActivation = (kind: 'agencies' | 'partners', id: string) =>
   request<AffiliateActivationLink>(`/${kind}/${encodeURIComponent(id)}/activation`, { method: 'POST' });

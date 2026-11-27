@@ -1,8 +1,8 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, RequestHandler } from "express";
 import { exigirAfiliado, obterIdentidadeAfiliado, exigirIdentidadeFirebase, obterIdentidadeFirebase } from "../middleware/affiliateAuth";
 import { AffiliateError, affiliateMe, affiliatesEnabled, createAffiliateActivation, getAffiliateProfile, listAffiliates, previewAffiliateActivation, redeemAffiliateActivation, saveAffiliate } from "../services/affiliates";
 import { affiliateSummary, listAffiliateLinks, listAffiliateSales, resolveAffiliateLink } from "../services/affiliatesReferral";
-import { deleteAffiliateAgencyLogo, readPublicAffiliateAgencyLogo, uploadAffiliateAgencyLogo } from "../services/affiliatesLogo";
+import { assertAffiliateAgencyLogoAccess, deleteAffiliateAgencyLogo, readPublicAffiliateAgencyLogo, uploadAffiliateAgencyLogo } from "../services/affiliatesLogo";
 
 const router = Router();
 type Handler = (req: Request, res: Response) => Promise<unknown>;
@@ -15,6 +15,18 @@ const run = (handler: Handler) => async (req: Request, res: Response) => {
     res.status(503).json({ code: "AFFILIATE_SERVICE_UNAVAILABLE", error: "Nao foi possivel concluir esta operacao. Tente novamente." });
   }
 };
+// Also used before the larger, logo-only JSON parser in the application entry point.
+export const exigirGestaoLogoAgencia: RequestHandler[] = [exigirAfiliado, (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    if (!affiliatesEnabled()) throw new AffiliateError("AFFILIATES_NOT_ENABLED", 503);
+    assertAffiliateAgencyLogoAccess(req.params.id, obterIdentidadeAfiliado(res));
+    next();
+  } catch (error) {
+    if (error instanceof AffiliateError) { res.status(error.status).json({ code: error.code, error: error.message }); return; }
+    res.status(503).json({ code: "AFFILIATE_SERVICE_UNAVAILABLE" });
+  }
+}];
 // Bound memory, rate limit shared by public link resolution and activation previews.
 const publicHits = new Map<string, { start: number; count: number }>();
 router.use((req, res, next) => {

@@ -9,7 +9,7 @@ import webhookRouter, {
   processarConfirmacaoReservaAgente,
 } from "./webhook";
 import apiRouter from "./api";
-import affiliatesRouter from "./affiliates";
+import affiliatesRouter, { exigirGestaoLogoAgencia } from "./affiliates";
 import { initializeBackendFirebaseAuth } from "../services/firebase";
 import {
   consultarOcupacaoPublica, consultarReservasPublicasTitular, cpfConsultaValido,
@@ -218,7 +218,7 @@ app.post('/crm/campanhas/midia', express.raw({ type: ['image/jpeg', 'image/png',
 // A 2 MB agency logo is transported as base64. Authenticate before accepting
 // its larger JSON body; other API requests keep the existing 1 MB limit.
 const parseAgencyLogo = express.json({ limit: '3mb' });
-app.post('/api/affiliates/agencies/:id/logo', exigirAdminCrm, (req, res, next) => {
+app.post('/api/affiliates/agencies/:id/logo', exigirGestaoLogoAgencia, (req: express.Request, res: Response, next: express.NextFunction) => {
   parseAgencyLogo(req, res, (error?: unknown) => {
     if (error) {
       const tooLarge = (error as { type?: string }).type === 'entity.too.large';

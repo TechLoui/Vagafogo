@@ -1,14 +1,17 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { FaImage, FaTrashAlt } from 'react-icons/fa';
-import { readAgencyLogo } from './affiliateLogo';
+import { readAgencyIdentity } from './affiliateLogo';
+import type { AgencyBranding } from './types';
 
-export function AgencyLogoInput({ currentUrl, value, disabled, onChange, onReading }: {
+export function AgencyLogoInput({ currentUrl, value, disabled, onChange, onReading, onBrandingChange }: {
   currentUrl?: string | null; value: string | null | undefined; disabled: boolean;
   onChange: (value: string | null) => void; onReading: (reading: boolean) => void;
+  onBrandingChange?: (value: AgencyBranding | null) => void;
 }) {
   const inputId = useId();
   const version = useRef(0);
   const [error, setError] = useState('');
+  useEffect(() => () => { version.current++; }, []);
   const preview = value === undefined ? currentUrl : value;
   return (
     <fieldset className="aff-logo-field" disabled={disabled}>
@@ -22,12 +25,12 @@ export function AgencyLogoInput({ currentUrl, value, disabled, onChange, onReadi
             if (!file) return;
             const selected = ++version.current;
             setError(''); onReading(true);
-            void readAgencyLogo(file).then((dataUrl) => { if (selected === version.current) onChange(dataUrl); })
+            void readAgencyIdentity(file).then(({ dataUrl, branding }) => { if (selected === version.current) { onChange(dataUrl); onBrandingChange?.(branding); } })
               .catch((caught) => { if (selected === version.current) setError(caught instanceof Error ? caught.message : 'Não foi possível abrir a imagem.'); })
               .finally(() => { if (selected === version.current) onReading(false); });
           }} />
           <p id={`${inputId}-help`} className="aff-help">PNG, JPG ou WebP, até 2 MB, de 32 a 4096 px por lado. Otimizada sem recorte e aplicada ao salvar.</p>
-          {preview && <button type="button" className="aff-text-button" onClick={() => { version.current++; setError(''); onReading(false); onChange(null); }}><FaTrashAlt aria-hidden="true" /> Remover logo</button>}
+          {preview && <button type="button" className="aff-text-button" onClick={() => { version.current++; setError(''); onReading(false); onChange(null); onBrandingChange?.(null); }}><FaTrashAlt aria-hidden="true" /> Remover logo</button>}
         </div>
       </div>
       {error && <p id={`${inputId}-error`} className="aff-alert aff-alert--error" role="alert">{error}</p>}

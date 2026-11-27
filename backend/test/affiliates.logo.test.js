@@ -6,7 +6,7 @@ const admin = require('../dist/services/firebaseAdmin');
 const domain = require('../dist/services/affiliates');
 const referral = require('../dist/services/affiliatesReferral');
 const logos = require('../dist/services/affiliatesLogo');
-const router = require('../dist/server/affiliates').default;
+const { default: router, exigirGestaoLogoAgencia } = require('../dist/server/affiliates');
 const { createAffiliateFirestore } = require('./helpers/affiliateFirestore');
 const OWNER = { uid: 'owner', role: 'admin', agencyId: null, partnerId: null };
 const AGENCY = { uid: 'agency', role: 'agency', agencyId: 'a1', partnerId: null };
@@ -36,6 +36,7 @@ const dataUrl = (buffer = png(), mime = 'image/png') => ({ dataUrl: `data:${mime
 async function setup(t) {
   const fixture = createAffiliateFirestore({
     'affiliate_agencies/a1': { name: 'Agência A', email: 'agency@example.test', status: 'active', commissionRule: { mode: 'percent', value: 10 } },
+    'affiliate_agencies/a2': { name: 'Agência B', email: 'other@example.test', status: 'active', commissionRule: { mode: 'fixed', value: 15 } },
     'affiliate_partners/p1': { name: 'Partner', email: 'partner@example.test', status: 'active', agencyId: 'a1' },
     'affiliate_memberships/agency': { role: 'agency', agencyId: 'a1', status: 'active' },
     'affiliate_memberships/partner': { role: 'partner', agencyId: 'a1', partnerId: 'p1', status: 'active' },
@@ -56,7 +57,7 @@ async function setup(t) {
   const previous = process.env.AFFILIATES_ENABLED; process.env.AFFILIATES_ENABLED = 'true';
   t.after(() => { if (previous === undefined) delete process.env.AFFILIATES_ENABLED; else process.env.AFFILIATES_ENABLED = previous; });
   const app = express();
-  app.post('/api/affiliates/agencies/:id/logo', express.json({ limit: '3mb' }), (_req, _res, next) => next());
+  app.post('/api/affiliates/agencies/:id/logo', exigirGestaoLogoAgencia, express.json({ limit: '3mb' }), (_req, _res, next) => next());
   app.use(express.json({ limit: '1mb' })); app.use('/api/affiliates', router);
   const server = await new Promise((resolve) => { const running = app.listen(0, '127.0.0.1', () => resolve(running)); });
   t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }));
@@ -85,15 +86,99 @@ test('rejects URL/SVG, MIME mismatch, corrupt/truncated images, invalid base64, 
     assert.throws(() => logos.parseAffiliateLogo(input), domain.AffiliateError);
   }
 });
-test('only Uirá/admin uploads/deletes a logo; linked agency and partner cannot mutate even their own agency', async (t) => {
+test('anonymous and partner cannot mutate logos; agencies cannot cross their authenticated scope or edit profile fields', async (t) => {
   const fixture = await setup(t);
-  for (const token of [undefined, 'agency', 'partner']) {
-    const result = await fixture.request('/agencies/a1/logo', token, 'POST', dataUrl());
-    assert.equal(result.status, token ? 403 : 401);
-    assert.equal((await fixture.request('/agencies/a1/logo', token, 'DELETE')).status, token ? 403 : 401);
+  for (const token of [undefined, 'partner']) {
+    for (const id of ['a1', 'a2']) {
+      assert.equal((await fixture.request(`/agencies/${id}/logo`, token, 'POST', dataUrl())).status, token ? 403 : 401);
+      assert.equal((await fixture.request(`/agencies/${id}/logo`, token, 'DELETE')).status, token ? 403 : 401);
+    }
   }
+  assert.equal((await fixture.request('/agencies/a2/logo', 'agency', 'POST', dataUrl())).status, 403);
+  assert.equal((await fixture.request('/agencies/a2/logo', 'agency', 'DELETE')).status, 403);
   assert.equal(fixture.objects.size, 0);
   assert.equal((await fixture.request('/agencies/a1', 'owner', 'PATCH', { logoUrl: 'https://evil.example/logo.png' })).status, 400);
+  assert.equal((await fixture.request('/agencies/a1', 'agency', 'PATCH', { name: 'Forged name' })).status, 403);
+  for (const forged of [{ agencyId: 'a2' }, { commissionRule: { mode: 'percent', value: 100 } }, { status: 'active' }]) {
+    assert.equal((await fixture.request('/agencies/a1/logo', 'agency', 'POST', { ...dataUrl(), ...forged })).status, 400);
+  }
+  assert.equal(fixture.objects.size, 0);
+});
+
+test('agency manages its own logo and validated branding; linked sellers receive branding without private fields', async (t) => {
+  const fixture = await setup(t);
+  fixture.records.get('affiliate_agencies/a1').memberUid = 'agency';
+  const upload = await fixture.request('/agencies/a1/logo', 'agency', 'POST', { ...dataUrl(), branding: { primaryColor: '#a1b2c3', accentColor: '#0a9f5c' } });
+  assert.equal(upload.status, 200);
+  assert.deepEqual(upload.body.item.branding, { primaryColor: '#A1B2C3', accentColor: '#0A9F5C' });
+  const stored = fixture.records.get('affiliate_agencies/a1');
+  assert.equal(stored.logoUploadedBy, 'agency'); assert.equal(stored.updatedBy, 'agency');
+  assert.equal(stored.name, 'Agência A'); assert.equal(stored.email, 'agency@example.test'); assert.equal(stored.memberUid, 'agency');
+  assert.deepEqual(stored.commissionRule, { mode: 'percent', value: 10 });
+  for (const token of ['agency', 'partner']) {
+    const me = await fixture.request('/me', token);
+    assert.deepEqual(me.body.agency.branding, upload.body.item.branding);
+    assert.equal(me.body.agency.logoUrl, upload.body.item.logoUrl);
+    for (const field of ['commissionRule', 'memberUid', 'logoStoragePath', 'logoUploadedBy', 'updatedBy']) assert.equal(field in me.body.agency, false);
+  }
+  const replacement = await fixture.request('/agencies/a1/logo', 'agency', 'POST', dataUrl(JPEG, 'image/jpeg'));
+  assert.equal(replacement.status, 200); assert.equal('branding' in replacement.body.item, false);
+  assert.equal(fixture.records.get('affiliate_agencies/a1').branding, null);
+  await fixture.request('/agencies/a1/logo', 'agency', 'POST', { ...dataUrl(), branding: { primaryColor: '#112233', accentColor: '#445566' } });
+  const removed = await fixture.request('/agencies/a1/logo', 'agency', 'DELETE');
+  assert.equal(removed.status, 200); assert.equal('branding' in removed.body.item, false);
+  assert.equal('logoUrl' in removed.body.item, false); assert.equal(fixture.records.get('affiliate_agencies/a1').branding, null);
+  assert.equal(fixture.records.get('affiliate_agencies/a1').updatedBy, 'agency'); assert.equal(fixture.objects.size, 0);
+  assert.equal('branding' in (await fixture.request('/me', 'partner')).body.agency, false);
+});
+
+test('branding accepts only two full hexadecimal colors and invalid requests leave storage and metadata untouched', async (t) => {
+  const fixture = await setup(t);
+  const before = structuredClone(fixture.records.get('affiliate_agencies/a1'));
+  const invalid = [null, [], '#112233', {}, { primaryColor: '#123456' },
+    { primaryColor: '#123', accentColor: '#456789' }, { primaryColor: '#12345678', accentColor: '#456789' },
+    { primaryColor: ' #123456', accentColor: '#456789' }, { primaryColor: '#12345G', accentColor: '#456789' },
+    { primaryColor: 'url(https://example.test/x)', accentColor: '#456789' }, { primaryColor: 123456, accentColor: '#456789' },
+    { primaryColor: '#123456', accentColor: '#456789', background: '#FFFFFF' }];
+  for (const branding of invalid) {
+    const result = await fixture.request('/agencies/a1/logo', 'agency', 'POST', { ...dataUrl(), branding });
+    assert.equal(result.status, 400); assert.equal(result.body.code, 'AFFILIATE_BRANDING_INVALID');
+  }
+  assert.equal(fixture.objects.size, 0); assert.deepEqual(fixture.records.get('affiliate_agencies/a1'), before);
+  const valid = await logos.uploadAffiliateAgencyLogo('a1', dataUrl(), OWNER);
+  fixture.records.get('affiliate_agencies/a1').branding = { primaryColor: 'red', accentColor: '#123456' };
+  const profile = await domain.getAffiliateProfile('agency', 'a1', OWNER);
+  assert.equal(profile.logoUrl, valid.logoUrl); assert.equal('branding' in profile, false);
+});
+
+test('disabled agencies cannot manage logos, including suspension during upload; admin retains access', async (t) => {
+  const fixture = await setup(t);
+  fixture.records.get('affiliate_agencies/a1').status = 'disabled';
+  for (const method of ['POST', 'DELETE']) {
+    const result = await fixture.request('/agencies/a1/logo', 'agency', method, method === 'POST' ? dataUrl() : undefined);
+    assert.equal(result.status, 403); assert.equal(result.body.code, 'AFFILIATE_ACCESS_DISABLED');
+  }
+  assert.equal((await fixture.request('/agencies/a1/logo', 'owner', 'POST', dataUrl())).status, 200);
+  assert.equal((await fixture.request('/agencies/a1/logo', 'owner', 'DELETE')).status, 200);
+  fixture.records.get('affiliate_agencies/a1').status = 'active';
+  const runTransaction = fixture.db.runTransaction.bind(fixture.db);
+  t.mock.method(fixture.db, 'runTransaction', async (callback) => {
+    fixture.records.get('affiliate_agencies/a1').status = 'disabled';
+    return runTransaction(callback);
+  });
+  await assert.rejects(logos.uploadAffiliateAgencyLogo('a1', dataUrl(), AGENCY), { code: 'AFFILIATE_ACCESS_DISABLED', status: 403 });
+  assert.equal(fixture.objects.size, 0); assert.equal(fixture.records.get('affiliate_agencies/a1').logoVersion, null);
+});
+
+test('upload authorization and rollout flag run before the larger JSON parser', async (t) => {
+  const fixture = await setup(t);
+  const oversized = { dataUrl: 'x'.repeat(3 * 1024 * 1024 + 1) };
+  assert.equal((await fixture.request('/agencies/a1/logo', 'partner', 'POST', oversized)).status, 403);
+  assert.equal((await fixture.request('/agencies/a2/logo', 'agency', 'POST', oversized)).status, 403);
+  process.env.AFFILIATES_ENABLED = 'false';
+  const disabled = await fixture.request('/agencies/a1/logo', 'agency', 'POST', oversized);
+  assert.equal(disabled.status, 503); assert.equal(disabled.body.code, 'AFFILIATES_NOT_ENABLED');
+  assert.equal(fixture.objects.size, 0);
 });
 test('admin upload persists safe metadata, /me exposes branding and public logo needs no login or bucket permission', async (t) => {
   const fixture = await setup(t);
@@ -112,11 +197,11 @@ test('admin upload persists safe metadata, /me exposes branding and public logo 
   assert.match(versioned.headers.get('cache-control'), /immutable/);
   assert.equal((await fixture.request('/public/agencies/a1/logo', undefined, 'GET', undefined, { 'If-None-Match': logo.headers.get('etag') })).status, 304);
 });
-test('local 3MB JSON parser accepts a valid image above global 1MB without widening other routes', async (t) => {
+test('authorized agency upload above global 1MB passes the local 3MB JSON parser', async (t) => {
   const fixture = await setup(t);
   const large = dataUrl(png(64, 64, 1_100_000));
   assert.ok(JSON.stringify(large).length > 1024 * 1024);
-  assert.equal((await fixture.request('/agencies/a1/logo', 'owner', 'POST', large)).status, 200);
+  assert.equal((await fixture.request('/agencies/a1/logo', 'agency', 'POST', large)).status, 200);
 });
 test('replacement rotates API cache version, deletes old private object and refuses stale versions', async (t) => {
   const fixture = await setup(t);

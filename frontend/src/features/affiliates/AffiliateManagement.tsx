@@ -7,12 +7,12 @@ import { AgencyLogo } from './AgencyLogo';
 import { AgencyLogoInput } from './AgencyLogoInput';
 import { AffiliatePreparedState } from './AffiliatePreparedState';
 import { affiliateDate, commissionLabel, parseCommissionRule } from './affiliateUtils';
-import type { AffiliateActivationLink, AffiliateEntity, AffiliateEntityInput } from './types';
+import type { AffiliateActivationLink, AffiliateEntity, AffiliateEntityInput, AgencyBranding } from './types';
 
 function EntityEditor({ entity, kind, agencyId, commissionVisible, logoEditable, initialError = '', onSave, onClose }: {
   entity: AffiliateEntity | null; kind: 'agencies' | 'partners'; agencyId?: string | null;
   commissionVisible: boolean; logoEditable: boolean; initialError?: string;
-  onSave: (input: AffiliateEntityInput, logo?: string | null) => Promise<void>; onClose: () => void;
+  onSave: (input: AffiliateEntityInput, logo?: string | null, branding?: AgencyBranding | null) => Promise<void>; onClose: () => void;
 }) {
   const [name, setName] = useState(entity?.name ?? '');
   const [email, setEmail] = useState(entity?.email ?? '');
@@ -23,7 +23,8 @@ function EntityEditor({ entity, kind, agencyId, commissionVisible, logoEditable,
   const [error, setError] = useState(initialError);
   const [logoChange, setLogoChange] = useState<string | null>();
   const [logoReading, setLogoReading] = useState(false);
-  const title = `${entity ? 'Editar' : 'Criar'} ${kind === 'agencies' ? 'agência' : agencyId ? 'parceiro' : 'parceiro independente'}`;
+  const [brandingChange, setBrandingChange] = useState<AgencyBranding | null>();
+  const title = `${entity ? 'Editar' : 'Criar'} ${kind === 'agencies' ? 'agência' : agencyId ? 'vendedor' : 'parceiro independente'}`;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -36,7 +37,7 @@ function EntityEditor({ entity, kind, agencyId, commissionVisible, logoEditable,
         name: name.trim(), email: email.trim().toLowerCase(), status,
         ...(kind === 'partners' ? { agencyId: agencyId ?? null } : {}),
         ...(commissionVisible ? { commissionRule: parseCommissionRule(mode, value) } : {}),
-      }, logoEditable ? logoChange : undefined);
+      }, logoEditable ? logoChange : undefined, brandingChange);
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Não foi possível salvar.'); }
     finally { setBusy(false); }
   };
@@ -48,7 +49,7 @@ function EntityEditor({ entity, kind, agencyId, commissionVisible, logoEditable,
         <label>Nome<input autoComplete="organization" value={name} onChange={(event) => setName(event.target.value)} maxLength={160} required /></label>
         <label>E-mail de acesso<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={240} required /></label>
         <label>Status<select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'disabled')}><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select></label>
-        {logoEditable && <AgencyLogoInput currentUrl={entity?.logoUrl} value={logoChange} disabled={busy} onChange={setLogoChange} onReading={setLogoReading} />}
+        {logoEditable && <AgencyLogoInput currentUrl={entity?.logoUrl} value={logoChange} disabled={busy} onChange={setLogoChange} onReading={setLogoReading} onBrandingChange={setBrandingChange} />}
         {commissionVisible && (
           <fieldset className="aff-commission-fields">
             <legend>Comissão para o relatório de repasse</legend>
@@ -102,12 +103,12 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
     finally { setGenerating(null); }
   };
 
-  const save = async (input: AffiliateEntityInput, logoChange?: string | null) => {
+  const save = async (input: AffiliateEntityInput, logoChange?: string | null, brandingChange?: AgencyBranding | null) => {
     const editing = editor?.entity;
     const activationPending = !editing || editor?.activationPending;
     let { item } = await saveAffiliateEntity(kind, input, editing?.id);
     if (isAdmin && kind === 'agencies' && logoChange !== undefined) {
-      try { ({ item } = await saveAgencyLogo(item.id, logoChange)); }
+      try { ({ item } = await saveAgencyLogo(item.id, logoChange, brandingChange)); }
       catch (caught) {
         setEditor({ entity: item, version: (editor?.version ?? 0) + 1, activationPending,
           error: `Cadastro salvo. A logo não foi atualizada. ${caught instanceof Error ? caught.message : 'Escolha a imagem novamente e salve.'}` });
@@ -140,7 +141,7 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
         <span className="aff-muted">{items.length} cadastro{items.length !== 1 ? 's' : ''}{nextCursor ? ' carregados' : ''}</span>
         <div className="aff-actions">
           <button type="button" className="aff-button aff-button--secondary" onClick={() => void load()} disabled={loading}><FaSyncAlt className={loading ? 'aff-spin' : ''} /> Atualizar</button>
-          <button type="button" className="aff-button" onClick={() => setEditor({ entity: null })}><FaPlus />{kind === 'agencies' ? 'Nova agência' : agencyId ? 'Novo parceiro' : 'Novo independente'}</button>
+          <button type="button" className="aff-button" onClick={() => setEditor({ entity: null })}><FaPlus />{kind === 'agencies' ? 'Nova agência' : agencyId ? 'Novo vendedor' : 'Novo independente'}</button>
         </div>
       </div>
       {notice && <p className="aff-alert" role="status">{notice}</p>}
@@ -153,7 +154,7 @@ export function AffiliateEntityManager({ kind, agencyId, commissionVisible = fal
               <td data-label="Status"><span className={`aff-status ${item.status === 'active' ? 'is-active' : ''}`}>{item.status === 'active' ? 'Ativo' : 'Desabilitado'}</span></td>
               {commissionVisible && <td data-label="Comissão">{commissionLabel(item.commissionRule)}</td>}
               <td className="aff-actions-cell"><div className="aff-actions aff-actions--end">
-                {onSelectAgency && <button type="button" className="aff-button aff-button--small aff-button--secondary" onClick={() => onSelectAgency(item)}><FaUsers /> Parceiros</button>}
+                {onSelectAgency && <button type="button" className="aff-button aff-button--small aff-button--secondary" onClick={() => onSelectAgency(item)}><FaUsers /> Vendedores</button>}
                 {onReport && <button type="button" className="aff-button aff-button--small aff-button--secondary" onClick={() => onReport(item)}><FaChartBar /> Relatório</button>}
                 <button type="button" className="aff-button aff-button--small aff-button--secondary" title="Editar cadastro" aria-label={`Editar ${item.name}`} onClick={() => setEditor({ entity: item })}><FaEdit /> Editar</button>
                 <button type="button" className="aff-button aff-button--small aff-button--secondary" title="Gerar link de ativação" aria-label={`Gerar acesso para ${item.name}`} disabled={generating !== null || item.status !== 'active'} onClick={() => void generate(item)}>{generating === item.id ? <FaSyncAlt className="aff-spin" /> : <FaUserPlus />} Acesso</button>
