@@ -130,7 +130,7 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
   if (hasBariatric) instructions.push("• Bariátrica: apresente a carteirinha na recepção no dia da visita; não é necessário enviar foto pelo WhatsApp.");
   const normalizeQuestion = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const customAnswers = Array.isArray(reserva.perguntasPersonalizadas)
-    ? reserva.perguntasPersonalizadas.filter((item: unknown) => item && typeof item === "object") as Array<Record<string, any>>
+    ? reserva.perguntasPersonalizadas.filter((item: unknown) => item && typeof item === "object" && (item as Record<string, unknown>).respostaAutomatica !== true) as Array<Record<string, any>>
     : [];
   const joinTableAnswer = customAnswers.find((item) => {
     const question = normalizeQuestion(item.pergunta);
@@ -143,6 +143,7 @@ const mensagemConfirmacaoAgente = async (reservaId: string, reserva: Record<stri
       return question.includes("outra reserva") && /nome|titular|responsavel|quem/.test(question);
     });
     const conditional = joinTableAnswer.perguntaCondicional && typeof joinTableAnswer.perguntaCondicional === "object"
+      && joinTableAnswer.perguntaCondicional.respostaAutomatica !== true
       ? joinTableAnswer.perguntaCondicional as Record<string, unknown>
       : {};
     const otherReservationOwner = String(separateOwnerAnswer?.resposta ?? conditional.resposta ?? "").trim().slice(0, 120);

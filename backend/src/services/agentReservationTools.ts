@@ -466,7 +466,9 @@ const customQuestionAnswers = (value: unknown) => Array.isArray(value)
   ? value.slice(0, 40).map((raw) => {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
       const item = raw as Record<string, unknown>;
+      if (item.respostaAutomatica === true) return null;
       const conditional = item.perguntaCondicional && typeof item.perguntaCondicional === "object" && !Array.isArray(item.perguntaCondicional)
+        && (item.perguntaCondicional as Record<string, unknown>).respostaAutomatica !== true
         ? item.perguntaCondicional as Record<string, unknown>
         : null;
       const answer = {
@@ -693,7 +695,9 @@ export const validarParticipacaoSite = async (input: Pick<AgentAvailabilityInput
 };
 
 const validateRequiredQuestions = (packages: PackageRecord[], input: AgentAvailabilityInput) => {
-  const answers = Array.isArray(input.perguntasPersonalizadas) ? input.perguntasPersonalizadas as Array<Record<string, unknown>> : [];
+  const answers = Array.isArray(input.perguntasPersonalizadas)
+    ? (input.perguntasPersonalizadas as Array<Record<string, unknown>>).filter((item) => item && typeof item === "object" && item.respostaAutomatica !== true)
+    : [];
   const pending: string[] = [];
   const questions: ReturnType<typeof serializeQuestion>[] = [];
   packages.forEach(({ id, raw }) => {
@@ -713,6 +717,7 @@ const validateRequiredQuestions = (packages: PackageRecord[], input: AgentAvaila
       const conditional = question.perguntaCondicional;
       if (valid && conditional && conditional.obrigatoria && value === normalizeText(conditional.condicao)) {
         const conditionalAnswer = answer?.perguntaCondicional && typeof answer.perguntaCondicional === "object"
+          && (answer.perguntaCondicional as Record<string, unknown>).respostaAutomatica !== true
           ? answer.perguntaCondicional as Record<string, unknown>
           : undefined;
         const conditionalValue = clean(conditionalAnswer?.resposta, 1000).toLowerCase();

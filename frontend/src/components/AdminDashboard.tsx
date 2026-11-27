@@ -16,6 +16,9 @@ import {
   reservaEstaConfirmada,
 } from '../utils/reservaStatus';
 import { camposRegistroPagamentoManual, pagamentoAsaasNoEditor } from '../utils/registroPagamentoManual';
+import { reservaManualNaExibicao } from '../utils/classificacaoPagamentoReserva';
+import { preencherReservaAsaas } from '../utils/preenchimentoReservaAsaas';
+import { RegistroPagamentoAsaas, ReservaRespostasEditor } from './RegistroPagamentoAsaas';
 import {
   compararHorariosComIndefinidosNoFim,
   compararTextoNumericamente,
@@ -278,6 +281,8 @@ interface PerguntaPersonalizadaResposta {
 
   resposta: string;
 
+  respostaAutomatica?: boolean;
+
   emojiSim?: string;
 
   emojiNao?: string;
@@ -291,6 +296,8 @@ interface PerguntaPersonalizadaResposta {
     obrigatoria: boolean;
 
     resposta: string;
+
+    respostaAutomatica?: boolean;
 
     emojiSim?: string;
 
@@ -595,6 +602,8 @@ interface Reserva {
 
   formaPagamento?: string;
 
+  formaPagamentoAutomatica?: boolean;
+
   canalOrigem?: string;
 
   dominioOrigem?: string;
@@ -843,23 +852,21 @@ function ReservaPerguntasResumo({
   };
 
   // Coleta todas as respostas (principal + condicional) num array plano
-  const respostas: string[] = [];
+  const respostas: Array<{ texto: string; automatica?: boolean }> = [];
   perguntas.forEach((p) => {
-    if (p.resposta) respostas.push(formatarResposta(p.pergunta, p.resposta));
+    if (p.resposta) respostas.push({ texto: p.respostaAutomatica ? p.resposta.trim() : formatarResposta(p.pergunta, p.resposta), automatica: p.respostaAutomatica });
     if (p.perguntaCondicional?.resposta) {
-      respostas.push(
-        formatarResposta(
+      respostas.push({ texto: p.perguntaCondicional.respostaAutomatica ? p.perguntaCondicional.resposta.trim() : formatarResposta(
           p.perguntaCondicional.pergunta,
           p.perguntaCondicional.resposta
-        )
-      );
+        ), automatica: p.perguntaCondicional.respostaAutomatica });
     }
   });
 
   return (
     <div className="admin-reservas-answers-inline">
       {respostas.map((r, i) => (
-        <span key={i} className="admin-reservas-answer-chip">{r}</span>
+        <span key={i} className="admin-reservas-answer-chip" title={r.automatica ? 'Resposta preenchida automaticamente; confirmar com o visitante.' : undefined}>{r.texto}{r.automatica ? ' · automática' : ''}</span>
       ))}
     </div>
   );
@@ -911,13 +918,15 @@ function ReservaRespostasDetalhes({
   const respostas = perguntas.flatMap((pergunta) => {
     const principal = {
       pergunta: pergunta.pergunta,
-      resposta: formatarResposta(pergunta.pergunta, pergunta.resposta),
+      resposta: pergunta.respostaAutomatica ? pergunta.resposta.trim() : formatarResposta(pergunta.pergunta, pergunta.resposta),
+      automatica: pergunta.respostaAutomatica,
       emoji: obterEmojiDaResposta(pergunta.resposta, pergunta.emojiSim, pergunta.emojiNao),
     };
     const condicional = pergunta.perguntaCondicional?.pergunta && pergunta.perguntaCondicional.resposta?.trim()
       ? [{
           pergunta: pergunta.perguntaCondicional.pergunta,
-          resposta: formatarResposta(
+          automatica: pergunta.perguntaCondicional.respostaAutomatica,
+          resposta: pergunta.perguntaCondicional.respostaAutomatica ? pergunta.perguntaCondicional.resposta.trim() : formatarResposta(
             pergunta.perguntaCondicional.pergunta,
             pergunta.perguntaCondicional.resposta
           ),
@@ -952,7 +961,7 @@ function ReservaRespostasDetalhes({
                   {resposta.emoji}
                 </span>
               ) : null}
-              <span>{resposta.resposta}</span>
+              <span>{resposta.resposta}{resposta.automatica ? ' · automática' : ''}</span>
             </p>
           </div>
         ))}
@@ -1521,11 +1530,11 @@ const reservaEhManual = (reserva?: Partial<Reserva>) => {
 
 const reservaEhPagaNoCheckout = (
   reserva?: Pick<Reserva, 'origem' | 'status' | 'confirmada'>
-) => !reservaEhManual(reserva) && statusEhConfirmado(reserva);
+) => !reservaManualNaExibicao(reserva, reservaEhManual(reserva)) && statusEhConfirmado(reserva);
 
 const reservaAtendeFiltroOrigem = (reserva: Reserva, filtro: OrigemReservaFiltro) => {
   if (filtro === 'todas') return true;
-  if (filtro === 'manual') return reservaEhManual(reserva);
+  if (filtro === 'manual') return reservaManualNaExibicao(reserva, reservaEhManual(reserva));
   return reservaEhPagaNoCheckout(reserva);
 };
 
@@ -1600,7 +1609,7 @@ const obterBadgeStatus = (reserva: Reserva) => {
 };
 
 const obterApresentacaoReserva = (reserva: Reserva, participantes: number) => {
-  if (reservaEhManual(reserva)) {
+  if (reservaManualNaExibicao(reserva, reservaEhManual(reserva))) {
     return {
       Icon: FaClipboardList,
       label: reserva.educativo ? 'Reserva manual educativa' : 'Reserva manual',
@@ -4056,9 +4065,14 @@ export default function AdminDashboard() {
 
     const criadaManualmente = reservaEhManual(reserva);
 
+    const registroAsaas = pagamentoAsaasNoEditor(reserva, criadaManualmente);
+    const pacotesDaReserva = pacotes.filter((pacote) => pacote.id && inferirPacoteIdsReserva(reserva).includes(pacote.id));
+    const preenchimentoAsaas = criadaManualmente && registroAsaas ? preencherReservaAsaas(reserva, pacotesDaReserva) : {};
+
     setEditReserva({
 
       ...reserva,
+      ...preenchimentoAsaas,
 
       status: reserva.status ?? (reserva.confirmada ? 'confirmado' : 'pre_reserva'),
       pacoteIds: inferirPacoteIdsReserva(reserva),
@@ -4081,7 +4095,7 @@ export default function AdminDashboard() {
 
       criadaManualmente,
 
-      pagamentoRegistradoNoAsaas: pagamentoAsaasNoEditor(reserva, criadaManualmente),
+      pagamentoRegistradoNoAsaas: registroAsaas,
 
       ...(criadaManualmente ? { origem: 'manual' } : {}),
 
@@ -5010,6 +5024,8 @@ export default function AdminDashboard() {
 
       const payload = {
         ...restante,
+        ...(reservaEhManual(editReserva) && editReserva.pagamentoRegistradoNoAsaas === true
+          ? preencherReservaAsaas(editReserva, pacotesSelecionados) : {}),
         ...camposRegistroPagamentoManual({ ...editReserva, status: statusAtual }, reservaOriginalEmEdicao, new Date()),
         ...(reservaEhManual(editReserva) && Object.keys(idadesPorTipo).length > 0 ? { idadesPorTipo } : {}),
         ...(!isEditingReserva ? { criadoEm: new Date() } : {}),
@@ -9228,7 +9244,6 @@ export default function AdminDashboard() {
                                   const valorFormatado = formatarValor(reserva.valor);
                                   const telefoneExibicao = reserva.telefone?.trim() || 'Sem telefone';
                                   const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
-                                  const reservaManual = reservaEhManual(reserva);
                                   const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
                                   const perguntasRespondidas = obterPerguntasComResposta(reserva);
                                   const apresentacaoReserva = obterApresentacaoReserva(reserva, participantes);
@@ -9248,12 +9263,7 @@ export default function AdminDashboard() {
                                                 <div className="admin-reservas-identity-card__title-row">
                                                   <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
                                                   <AgencyReservationBadge attribution={reserva.commercialAttribution} />
-                                                  {reservaManual && (
-                                                    <span className="admin-reservas-origin-badge">
-                                                      <FaClipboardList className="h-3 w-3" />
-                                                      <span>Manual</span>
-                                                    </span>
-                                                  )}
+                                                  <ReservaIdentificacaoBadges formaPagamento={reserva.formaPagamento} criadaManualmente={reservaEhManual(reserva)} origem={reserva.origem} pagamentoRegistradoNoAsaas={reserva.pagamentoRegistradoNoAsaas} formaPagamentoAutomatica={reserva.formaPagamentoAutomatica} />
                                                 </div>
 
                                                 <div className="admin-reservas-identity-card__meta">
@@ -10006,7 +10016,6 @@ export default function AdminDashboard() {
                             const pacotesEtiquetas = etiquetasAtividadeReserva(reserva);
                             const valorFormatado = formatarValor(reserva.valor);
                             const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
-                            const reservaManual = reservaEhManual(reserva);
                             const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
                             const perguntasRespondidas = obterPerguntasComResposta(reserva);
                             const apresentacaoReserva = obterApresentacaoReserva(reserva, participantes);
@@ -10024,12 +10033,7 @@ export default function AdminDashboard() {
                                         <div className="admin-reservas-identity-card__title-row">
                                           <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
                                           <AgencyReservationBadge attribution={reserva.commercialAttribution} />
-                                          {reservaManual && (
-                                            <span className="admin-reservas-origin-badge">
-                                              <FaClipboardList className="h-3 w-3" />
-                                              <span>Manual</span>
-                                            </span>
-                                          )}
+                                          <ReservaIdentificacaoBadges formaPagamento={reserva.formaPagamento} criadaManualmente={reservaEhManual(reserva)} origem={reserva.origem} pagamentoRegistradoNoAsaas={reserva.pagamentoRegistradoNoAsaas} formaPagamentoAutomatica={reserva.formaPagamentoAutomatica} />
                                         </div>
 
                                         <div className="admin-reservas-identity-card__meta">
@@ -10310,6 +10314,9 @@ export default function AdminDashboard() {
                                 <ReservaIdentificacaoBadges
                                   formaPagamento={reserva.formaPagamento}
                                   criadaManualmente={reservaEhManual(reserva)}
+                                  origem={reserva.origem}
+                                  pagamentoRegistradoNoAsaas={reserva.pagamentoRegistradoNoAsaas}
+                                  formaPagamentoAutomatica={reserva.formaPagamentoAutomatica}
                                 />
                                 <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                 {chegou && (
@@ -10600,7 +10607,6 @@ export default function AdminDashboard() {
 
                             const podeEnviarWhatsapp = Boolean(normalizarTelefoneWhatsapp(reserva.telefone));
 
-                            const reservaManual = reservaEhManual(reserva);
                             const reservaKey = reserva.id ?? `${reserva.nome || 'reserva'}-${reserva.cpf || 'cpf'}-${reserva.horario}-${normalizarDataReserva(reserva.data)}`;
 
                             const perguntasRespondidas = obterPerguntasComResposta(reserva);
@@ -10627,12 +10633,7 @@ export default function AdminDashboard() {
                                             <p className="admin-reservas-identity-card__title">{reserva.nome || '---'}</p>
                                             <AgencyReservationBadge attribution={reserva.commercialAttribution} />
                                             <div className="admin-reservas-identity-card__badges">
-                                              {reservaManual && (
-                                                <span className="admin-reservas-origin-badge">
-                                                  <FaClipboardList className="h-3 w-3" />
-                                                  <span>Manual</span>
-                                                </span>
-                                              )}
+                                              <ReservaIdentificacaoBadges formaPagamento={reserva.formaPagamento} criadaManualmente={reservaEhManual(reserva)} origem={reserva.origem} pagamentoRegistradoNoAsaas={reserva.pagamentoRegistradoNoAsaas} formaPagamentoAutomatica={reserva.formaPagamentoAutomatica} />
                                               <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadge.classes}`}>
                                                 {statusBadge.label}
                                               </span>
@@ -10953,6 +10954,9 @@ export default function AdminDashboard() {
                                             <ReservaIdentificacaoBadges
                                               formaPagamento={r.formaPagamento}
                                               criadaManualmente={reservaEhManual(r)}
+                                              origem={r.origem}
+                                              pagamentoRegistradoNoAsaas={r.pagamentoRegistradoNoAsaas}
+                                              formaPagamentoAutomatica={r.formaPagamentoAutomatica}
                                             />
                                             <AgencyReservationBadge attribution={r.commercialAttribution} />
                                           </div>
@@ -11835,40 +11839,16 @@ export default function AdminDashboard() {
                       </label>
                     </div>
 
-                    <div className="admin-manual-choice-panel">
-                      <div className="admin-manual-choice-panel__header">
-                        <span className="admin-manual-choice-panel__icon">
-                          <FaCreditCard className="h-4 w-4" />
-                        </span>
-                        <div>
-                          <p className="admin-manual-choice-panel__eyebrow">Pagamento</p>
-                          <h5 className="admin-manual-choice-panel__title">Registrar como Asaas</h5>
-                        </div>
-                      </div>
-
-                      <label className={`admin-manual-toggle-card ${editReserva.pagamentoRegistradoNoAsaas === true ? 'is-active' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={editReserva.pagamentoRegistradoNoAsaas === true}
-                          onChange={(e) =>
-                            setEditReserva({
-                              ...editReserva,
-                              pagamentoRegistradoNoAsaas: e.target.checked,
-                              origem: editReserva.criadaManualmente === true ? 'manual' : editReserva.origem,
-                            })
-                          }
-                          className="sr-only"
-                        />
-                        <span className="admin-manual-toggle-card__indicator" aria-hidden="true">
-                          {editReserva.pagamentoRegistradoNoAsaas === true ? <FaCheck className="h-3 w-3" /> : null}
-                        </span>
-                        <span className="admin-manual-toggle-card__content">
-                          <span className="admin-manual-toggle-card__label">Pago pelo Asaas</span>
-                          <span className="admin-manual-toggle-card__hint">Reservas pagas entram no Financeiro e na comissão geral de 1%</span>
-                        </span>
-                      </label>
-                    </div>
+                    {reservaEhManual(editReserva) && <RegistroPagamentoAsaas
+                      registrado={editReserva.pagamentoRegistradoNoAsaas === true}
+                      formaPagamento={editReserva.formaPagamento}
+                      formaPagamentoAutomatica={editReserva.formaPagamentoAutomatica}
+                      onRegistrar={() => setEditReserva({ ...editReserva, ...preencherReservaAsaas(editReserva, pacotesSelecionadosEmEdicao), pagamentoRegistradoNoAsaas: true })}
+                      onMetodo={(formaPagamento) => setEditReserva({ ...editReserva, formaPagamento, formaPagamentoAutomatica: false })}
+                    />}
                   </div>
+
+                  {(editReserva.perguntasPersonalizadas?.length ?? 0) > 0 && <ReservaRespostasEditor respostas={editReserva.perguntasPersonalizadas ?? []} onChange={(perguntasPersonalizadas) => setEditReserva({ ...editReserva, perguntasPersonalizadas })} />}
 
                   <div className="hidden">
                   <div className="text-xs font-semibold uppercase text-slate-500">
@@ -15274,6 +15254,9 @@ export default function AdminDashboard() {
                         <ReservaIdentificacaoBadges
                           formaPagamento={resultado.formaPagamento}
                           criadaManualmente={reservaEhManual(resultado)}
+                          origem={resultado.origem}
+                          pagamentoRegistradoNoAsaas={resultado.pagamentoRegistradoNoAsaas}
+                          formaPagamentoAutomatica={resultado.formaPagamentoAutomatica}
                         />
                         <AgencyReservationBadge attribution={resultado.commercialAttribution} />
                       </div>

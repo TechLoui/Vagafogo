@@ -16,6 +16,12 @@ O cálculo geral de 1% inclui o checkout pago e as reservas pagas/confirmadas ma
 
 Ao registrar um novo pagamento pelo Admin, sua data é salva uma vez e preservada nas edições seguintes. Registros antigos já marcados sem data de pagamento usam a data de cadastro ou, na ausência dela, a visita. O período usa o dia de São Paulo. A comissão de afiliados permanece separada dessa apuração de 1%.
 
+Na edição administrativa, marcar **Pago pelo Asaas** substitui o controle de conversão por um resumo com Pix ou cartão. O método ausente é sorteado uma vez, conforme solicitado, e recebe `formaPagamentoAutomatica:true`; um método já conhecido é preservado. O administrador pode corrigir o método antes de salvar. Após salvar, o selo e o filtro Manual deixam de incluir a reserva; reservas confirmadas passam ao filtro de checkout. A origem técnica de criação continua preservada para auditoria e para evitar disparos indevidos de mensagens. A classificação visível do CRM e seu CSV identificam o registro Asaas e o método automático.
+
+O mesmo registro completa somente perguntas vazias dos pacotes selecionados. Perguntas sim/não recebem uma opção aleatória; campos de texto recebem marcadores de informação não coletada, sem inventar nomes, contatos ou idades. O preenchimento é identificado em cada resposta e pode ser revisado no editor. Respostas existentes e idades obrigatórias permanecem preservadas. Reabrir não sorteia novamente os dados já preenchidos. Respostas automáticas não são tratadas pelo bot como informações coletadas nem como pedidos reais de junção de mesa.
+
+Essa operação registra uma classificação administrativa: não gera cobrança no provedor, não altera o status de pagamento e não cria evidência financeira para comissão de afiliados. Pendentes, canceladas e estornadas continuam fora da apuração de 1%.
+
 ## Painel do parceiro independente
 
 Os três portais compartilham a estrutura visual refinada: navegação lateral no desktop, menu no celular, banner com fotografia real, atalhos com ilustrações geradas, indicadores com animação e tratamento de movimento reduzido. A agência tem **Visão geral**, **Reservas**, **Relatórios**, **Vendedores**, **Divulgação** e **Perfil e marca**. Vendedor e independente têm as quatro áreas de consulta e divulgação, com dados limitados ao próprio acesso.
@@ -62,10 +68,12 @@ A revisão visual cobriu os três logins em 320, 390, 768 e 1440 px e as nove ab
 
 ## Publicação
 
-O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-portais-links-agencias.zip` contém os arquivos estáticos para a Hostinger, incluindo os três portais refinados, o link oficial da agência na raiz, Perfil e marca, a personalização dos vendedores e a correção do Financeiro. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
+O pacote atualizado `output/Vagafogo-Hostinger-2026-11-27-conversao-asaas.zip` contém os arquivos estáticos para a Hostinger, incluindo a conversão administrativa para Asaas, os três portais refinados, o link oficial da agência na raiz, Perfil e marca, a personalização dos vendedores e a correção do Financeiro. Extrair o conteúdo diretamente em `public_html`, incluindo `.htaccess`; não enviar backend, segredos ou `node_modules`. Esta versão substitui os pacotes anteriores. O envio à Hostinger será realizado manualmente pelo responsável.
 
 O portal está ativo em produção desde 25/11/2026, com backend autenticado e regras privadas do Firestore e Storage. O módulo continua desabilitado por padrão em novos ambientes até terminar a migração coordenada. A ordem de publicação e os controles estão em `frontend/FIRESTORE_RULES.md` e `backend/test/AFFILIATE_ACCESS_TESTING.md`. Publicar no GitHub não envia automaticamente os arquivos à Hostinger nem publica as regras Firebase.
 
 As prévias locais usam dados fictícios para os três perfis; os testes de Pix e cartão simulam o provedor e não geram cobrança real.
 
 Na entrega dos portais e links oficiais de 27/11, passaram 387 testes completos do backend, 87 testes unitários/contratos do frontend e 18 testes React dos acessos e portais. O checkout simulado cobriu cartão direto da agência, Pix do vendedor e cartão do independente, confirmação por webhook, estorno e preservação da cobrança após renomear o link. O contrato `.htaccess` foi verificado localmente; a execução Apache da Hostinger depende do envio manual do pacote. Os três portais foram inspecionados no navegador em 320, 390 e 1440 px.
+
+Na correção posterior da conversão Asaas, passaram 393 testes completos do backend, 104 testes unitários/contratos do frontend e 2 testes React do editor. A prévia isolada usa os componentes reais, dados fictícios e persistência local: foram conferidos conversão, remoção do filtro Manual, retorno em Checkout, apuração de R$ 3,20 sobre uma reserva de R$ 320, reabertura, cancelamento da edição e larguras de 320, 390 e 1280 px. O TypeScript passou; o arquivo administrativo mantém os mesmos 22 erros e 10 avisos de lint preexistentes, sem diagnóstico novo, e os componentes/helpers novos passam no lint.

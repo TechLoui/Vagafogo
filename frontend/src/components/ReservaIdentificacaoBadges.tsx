@@ -1,5 +1,6 @@
 import { FaClipboardList, FaCreditCard } from 'react-icons/fa';
 import { FaPix } from 'react-icons/fa6';
+import { reservaManualNaExibicao } from '../utils/classificacaoPagamentoReserva';
 import './ReservaIdentificacaoBadges.css';
 
 const cartao = { tipo: 'cartao', rotulo: 'Cartão', Icone: FaCreditCard };
@@ -24,17 +25,26 @@ const identificarPagamento = (formaPagamento?: string) => {
 export function ReservaIdentificacaoBadges({
   formaPagamento,
   criadaManualmente,
+  pagamentoRegistradoNoAsaas,
+  formaPagamentoAutomatica,
+  origem,
 }: {
   formaPagamento?: string;
   criadaManualmente: boolean;
+  pagamentoRegistradoNoAsaas?: unknown;
+  formaPagamentoAutomatica?: boolean;
+  origem?: unknown;
 }) {
   const pagamento = identificarPagamento(formaPagamento);
-  const badges = [criadaManualmente ? manual : null, pagamento];
+  const manualNaExibicao = reservaManualNaExibicao({ pagamentoRegistradoNoAsaas, origem }, criadaManualmente);
+  const badges = [manualNaExibicao ? manual : null, pagamento];
 
-  return badges.map((badge) => badge && (
-    <span key={badge.tipo} className={`admin-reserva-identificacao admin-reserva-identificacao--${badge.tipo}`}>
+  return badges.map((badge) => {
+    if (!badge) return null;
+    const automatica = badge.tipo !== 'manual' && formaPagamentoAutomatica === true;
+    return <span key={badge.tipo} className={`admin-reserva-identificacao admin-reserva-identificacao--${badge.tipo}`} title={automatica ? 'Forma de pagamento gerada automaticamente no cadastro administrativo.' : undefined}>
       <badge.Icone aria-hidden="true" focusable="false" />
-      {badge.rotulo}
-    </span>
-  ));
+      {badge.rotulo}{automatica ? ' · automático' : ''}
+    </span>;
+  });
 }

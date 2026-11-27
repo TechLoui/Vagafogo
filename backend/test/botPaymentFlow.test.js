@@ -572,3 +572,101 @@ test("correção do rascunho não perde a associação de uma reserva já paga",
   assert.equal(changed.dados.reservaId, "paid-reservation");
   assert.equal(changed.dados.pagamentoId, "paid-payment");
 });
+
+test("resposta automática não satisfaz pergunta obrigatória; resposta coletada continua válida", async (t) => {
+  const memory = setup(t);
+  memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], perguntasPersonalizadas: [
+    { id: "restricao", pergunta: "Há alguma restrição alimentar?", tipo: "sim_nao", obrigatoria: true },
+  ] });
+  const answer = { pacoteId: "brunch", perguntaId: "restricao", resposta: "nao" };
+  const automatic = await agent.simularReservaAgente(draft({ perguntasPersonalizadas: [{ ...answer, respostaAutomatica: true }] }));
+  assert.equal(automatic.prontoParaPagamento, false);
+  assert.match(JSON.stringify(automatic.requisitosPendentes), /Responda a pergunta obrigatoria/);
+  const collected = await agent.simularReservaAgente(draft({ perguntasPersonalizadas: [{ ...answer, respostaAutomatica: false }] }));
+  assert.equal(collected.prontoParaPagamento, true);
+  assert.equal(memory.providerPosts.length, 0);
+});
+
+test("resposta condicional automática é considerada não coletada sem descartar a resposta principal real", async (t) => {
+  const memory = setup(t);
+  memory.rows.set("pacotes/brunch", { ...SEED["pacotes/brunch"], perguntasPersonalizadas: [
+    { id: "restricao", pergunta: "Há alguma restrição alimentar?", tipo: "sim_nao", obrigatoria: true,
+      perguntaCondicional: { pergunta: "Informe a restrição", tipo: "texto", obrigatoria: true, condicao: "sim" } },
+  ] });
+  const answer = { pacoteId: "brunch", perguntaId: "restricao", resposta: "sim",
+    perguntaCondicional: { resposta: "Não coletado", respostaAutomatica: true } };
+  const automatic = await agent.simularReservaAgente(draft({ perguntasPersonalizadas: [answer] }));
+  assert.equal(automatic.prontoParaPagamento, false);
+  assert.equal(automatic.requisitosPendentes.length, 1);
+  assert.match(automatic.requisitosPendentes[0], /pergunta complementar/);
+  const collected = await agent.simularReservaAgente(draft({ perguntasPersonalizadas: [{ ...answer,
+    perguntaCondicional: { resposta: "Sem lactose", respostaAutomatica: false } }] }));
+  assert.equal(collected.prontoParaPagamento, true);
+});
+
+test("rascunho e handoff não transportam respostas automáticas como declarações reais", async (t) => {
+  const memory = setup(t);
+  const input = draft({ perguntasPersonalizadas: [
+    { pacoteId: "brunch", perguntaId: "automatica", resposta: "sim", respostaAutomatica: true },
+    { pacoteId: "brunch", perguntaId: "principal-real", resposta: "sim", perguntaCondicional: { resposta: "Não coletado", respostaAutomatica: true } },
+    { pacoteId: "brunch", perguntaId: "coletada", resposta: "nao", perguntaCondicional: { resposta: "Texto real", respostaAutomatica: false } },
+  ] });
+  const original = structuredClone(input);
+  const saved = await agent.salvarRascunhoReservaAgente(input);
+  const link = await agent.criarLinkCartaoAgente(input);
+  const handoff = await agent.obterCheckoutAgente(new URL(link.url).searchParams.get("agent_checkout"));
+  const expected = [
+    { pacoteId: "brunch", perguntaId: "principal-real", resposta: "sim" },
+    { pacoteId: "brunch", perguntaId: "coletada", resposta: "nao", perguntaCondicional: { resposta: "Texto real" } },
+  ];
+  assert.deepEqual(saved.dados.perguntasPersonalizadas, expected);
+  assert.deepEqual(handoff.perguntasPersonalizadas, expected);
+  assert.deepEqual(handoff.participantesPorTipo, PEOPLE); assert.deepEqual(handoff.idadesPorTipo, AGES);
+  assert.deepEqual(input, original); assert.equal(memory.providerPosts.length, 0);
+});
+
+const confirmedReservationWithAnswers = (answers) => ({
+  ...checkout(), status: "pago", confirmada: true, origem: "checkout", perguntasPersonalizadas: answers,
+});
+test("confirmação ignora sim e não automáticos de mesa e ainda pergunta a preferência ao visitante", async (t) => {
+  const memory = setup(t);
+  for (const response of ["sim", "nao"]) {
+    const id = "automatic-table-" + response;
+    const answers = [{ pacoteId: "brunch", perguntaId: "mesa", pergunta: "Deseja juntar mesa com outra reserva?", resposta: response,
+      respostaAutomatica: true, perguntaCondicional: { resposta: "TITULAR AUTOMATICO" } }];
+    memory.rows.set("reservas/" + id, confirmedReservationWithAnswers(answers));
+    const result = await processarConfirmacaoReservaAgente(id);
+    assert.equal(result.enviado, true);
+    const text = memory.gatewayMessages.at(-1).text;
+    assert.match(text, /Você quer sentar junto com alguém/);
+    assert.doesNotMatch(text, /solicitada acomodação|TITULAR AUTOMATICO/);
+    assert.deepEqual(memory.value("reservas/" + id).perguntasPersonalizadas, answers);
+    assert.equal(memory.value("reservas/" + id).origem, "checkout");
+  }
+});
+
+test("confirmação preserva pedido real de mesa mas não anuncia titular automático separado ou condicional", async (t) => {
+  const memory = setup(t);
+  const answers = [
+    { pergunta: "Deseja juntar mesa com outra reserva?", resposta: "sim",
+      perguntaCondicional: { resposta: "TITULAR CONDICIONAL AUTOMATICO", respostaAutomatica: true } },
+    { pergunta: "Nome do titular da outra reserva", resposta: "TITULAR SEPARADO AUTOMATICO", respostaAutomatica: true },
+  ];
+  memory.rows.set("reservas/real-table-auto-owner", confirmedReservationWithAnswers(answers));
+  assert.equal((await processarConfirmacaoReservaAgente("real-table-auto-owner")).enviado, true);
+  const text = memory.gatewayMessages[0].text;
+  assert.match(text, /Mesa: foi solicitada acomodação com outra reserva/);
+  assert.doesNotMatch(text, /TITULAR|Você quer sentar junto com alguém/);
+  assert.deepEqual(memory.value("reservas/real-table-auto-owner").perguntasPersonalizadas, answers);
+});
+
+test("confirmação continua anunciando titular e preferência de mesa realmente coletados", async (t) => {
+  const memory = setup(t);
+  memory.rows.set("reservas/real-table-owner", confirmedReservationWithAnswers([
+    { pergunta: "Deseja juntar mesa com outra reserva?", resposta: "sim", respostaAutomatica: false,
+      perguntaCondicional: { resposta: "Titular Real", respostaAutomatica: false } },
+  ]));
+  assert.equal((await processarConfirmacaoReservaAgente("real-table-owner")).enviado, true);
+  assert.match(memory.gatewayMessages[0].text, /solicitada acomodação com a reserva de Titular Real/);
+  assert.doesNotMatch(memory.gatewayMessages[0].text, /Você quer sentar junto com alguém/);
+});

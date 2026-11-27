@@ -151,6 +151,7 @@ type RawReservation = Record<string, unknown> & {
   agentSessionId?: unknown;
   criadaManualmente?: unknown;
   pagamentoRegistradoNoAsaas?: unknown;
+  formaPagamentoAutomatica?: unknown;
   reservaManual?: unknown;
   inseridaManualmente?: unknown;
   createdManually?: unknown;
@@ -182,6 +183,7 @@ type CRMReservation = {
   arrived?: boolean;
   paymentMethod?: string;
   paymentRecordedInAsaas?: boolean;
+  automaticPaymentMethod?: boolean;
   whatsappSent: boolean;
   campaignId?: string;
   paymentId?: string;
@@ -958,6 +960,7 @@ export function CRM() {
                   typeof raw.chegou === "boolean" ? raw.chegou : undefined,
                 paymentMethod,
                 paymentRecordedInAsaas: pagamentoAsaasRegistrado(raw, bookingSource),
+                automaticPaymentMethod: raw.formaPagamentoAutomatica === true,
                 whatsappSent:
                   raw.whatsappEnviado === true ||
                   raw.whatsappBoasVindasEnviado === true ||
@@ -1504,7 +1507,9 @@ export function CRM() {
       valor: item.value,
       status: statusLabel(item.status),
       origem: originLabel(item.origin),
-      tipoReserva: item.bookingSource === "manual" ? "Manual" : item.bookingSource === "checkout" ? "Checkout" : "Não identificada",
+      tipoReserva: item.paymentRecordedInAsaas ? "Checkout (Asaas)" : item.bookingSource === "manual" ? "Manual" : item.bookingSource === "checkout" ? "Checkout" : "Não identificada",
+      formaPagamento: item.paymentMethod ?? "",
+      metodoPreenchidoAutomaticamente: item.automaticPaymentMethod ? "Sim" : "Não",
       ...(activeSection === "financeiro" ? {
         dataFechamento: normalizarDiaFinanceiro(referenciaFinanceira(item)),
         classificacaoFinanceira: classificacaoFinanceiraReserva(item) === "checkout" ? "Asaas" : item.bookingSource === "manual" ? "Manual" : "Não identificada",
@@ -2930,9 +2935,9 @@ function ReservationsSection({
                       </td>
                       <td data-label="Origem">
                         <span className="crm-origin-badge">
-                          {reservationFlowLabel(item.flow)}
+                          {item.paymentRecordedInAsaas && item.bookingSource === 'manual' ? 'Checkout · Asaas' : reservationFlowLabel(item.flow)}
                         </span>
-                        <div className="crm-reservation-payment"><ReservaIdentificacaoBadges formaPagamento={item.paymentMethod} criadaManualmente={item.origin === 'manual'} /></div>
+                        <div className="crm-reservation-payment"><ReservaIdentificacaoBadges formaPagamento={item.paymentMethod} criadaManualmente={item.origin === 'manual'} pagamentoRegistradoNoAsaas={item.paymentRecordedInAsaas} formaPagamentoAutomatica={item.automaticPaymentMethod} /></div>
                       </td>
                       <td data-label="Domínio">
                         <strong>{item.sourceDomain ?? "—"}</strong>
