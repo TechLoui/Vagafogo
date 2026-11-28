@@ -22,6 +22,16 @@ O mesmo registro completa somente perguntas vazias dos pacotes selecionados. Per
 
 Essa operação registra uma classificação administrativa: não gera cobrança no provedor, não altera o status de pagamento e não cria evidência financeira para comissão de afiliados. Pendentes, canceladas e estornadas continuam fora da apuração de 1%.
 
+## Resumo diário de brunch no WhatsApp — 28/11/2026
+
+O resumo matinal passa a mostrar somente participantes do brunch, incluindo combos com brunch, agrupados pelo horário dessa experiência. Cada reserva apresenta o total antes do nome e a composição por extenso: adultos, crianças, pessoas bariátricas, idosos, não pagantes e demais tipos cadastrados. Crianças e não pagantes já integram o total; as linhas de composição não são quantidades adicionais. Tipos com quantidade zero não aparecem.
+
+O modelo usa emojis, divisões entre horários, subtotais e total do dia. O catálogo completo permite recuperar os nomes de categorias históricas e personalizadas. As regras de contagem seguem o Admin, incluindo o não pagante manual legado e a prevenção de duplicação do espelho online. Grupos exclusivos de trilha não entram no brunch. Horário e composição desconhecidos são identificados explicitamente, sem inventar adultos ou atribuir quantidades de outra atividade.
+
+A seleção continua restrita às reservas confirmadas da data, com o horário configurado e fuso de São Paulo. O corpo é enviado diretamente pelo modelo `brunch_por_horario_v2`, com deduplicação diária e a mesma chave idempotente. Resumos já enviados no dia permanecem preservados; o novo formato vale para os próximos envios agendados. Falhas usam o retry existente. No limite de 3.850 caracteres, a mensagem informa os registros não exibidos e mantém os totais completos e a referência à agenda do Admin.
+
+Esta atualização é aplicada no backend; os arquivos estáticos da Hostinger permanecem compatíveis.
+
 ## Painel do parceiro independente
 
 Os três portais compartilham a estrutura visual refinada: navegação lateral no desktop, menu no celular, banner com fotografia real, atalhos com ilustrações geradas, indicadores com animação e tratamento de movimento reduzido. A agência tem **Visão geral**, **Reservas**, **Relatórios**, **Vendedores**, **Divulgação** e **Perfil e marca**. Vendedor e independente têm as quatro áreas de consulta e divulgação, com dados limitados ao próprio acesso.

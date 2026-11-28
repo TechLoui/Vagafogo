@@ -4,6 +4,7 @@ import type { ResultadoEnvio } from "./whatsapp";
 import { enviarMensagemTransacionalPeloAgente } from "./agentTransactionalWhatsapp";
 import { reservaEhManual, reservaPodeReceberDisparoAutomatico } from "./reservaOrigem";
 import { variarMensagemAutomatica } from "./whatsappMessageVariation";
+import { buildBrunchDailyEntries } from "./brunchDailySummary";
 
 const DESTINATION_DEFAULT = "5562991150376";
 const TIMEZONE = "America/Sao_Paulo";
@@ -125,79 +126,103 @@ const confirmedReservationForSummary = (reservation: FirebaseFirestore.DocumentD
   && ["pago", "confirmada", "confirmado"].includes(clean(reservation.status, 40).toLowerCase())
   && reservationDate(reservation.data ?? reservation.Data) === today;
 
-const packageLabel = (reservation: FirebaseFirestore.DocumentData) => {
-  const activity = clean(reservation.atividade ?? reservation.Atividade, 300);
-  if (!activity) return "Pacote não informado";
-  const combo = /\(combo:\s*([^)]*?)(?:\s+-\s+(?:adulto|bari[aá]trico|crian[cç]a|idoso)|\))/i.exec(activity);
-  if (combo?.[1]) return clean(combo[1], 100);
-  return clean(activity.replace(/\s*\(combo:.*$/i, ""), 100) || "Pacote não informado";
+type CatalogoResumoBrunch = Parameters<typeof buildBrunchDailyEntries>[1];
+type DocumentoResumoBrunch = Parameters<typeof buildBrunchDailyEntries>[0][number];
+const CATALOGO_RESUMO_VAZIO: CatalogoResumoBrunch = { pacotes: [], combos: [], tiposClientes: [] };
+const SUMMARY_MAX_LENGTH = 3850;
+const SUMMARY_FOOTER_BUDGET = 400;
+const SUMMARY_DIVIDER = "━━━━━━━━━━━━━━━━";
+const summaryText = (value: unknown, maximum: number) => clean(value, maximum)
+  .replace(/[\r\n\t]+/g, " ").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
+const pluralPeople = (count: number) => `${count} pessoa${count === 1 ? "" : "s"}`;
+const labelParticipant = (label: string, count: number) => {
+  const original = summaryText(label, 120);
+  const normalized = original.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const labels: Record<string, [string, string]> = {
+    adulto: ["adulto", "adultos"], adultos: ["adulto", "adultos"],
+    crianca: ["criança", "crianças"], criancas: ["criança", "crianças"],
+    infantil: ["criança", "crianças"],
+    bariatrica: ["pessoa bariátrica", "pessoas bariátricas"], bariatricas: ["pessoa bariátrica", "pessoas bariátricas"],
+    bariatrico: ["pessoa bariátrica", "pessoas bariátricas"],
+    idoso: ["idoso", "idosos"], idosos: ["idoso", "idosos"], idosa: ["idosa", "idosas"],
+    "nao pagante": ["não pagante", "não pagantes"], "nao pagantes": ["não pagante", "não pagantes"],
+    isento: ["isento", "isentos"], isenta: ["isenta", "isentas"],
+    bebe: ["bebê", "bebês"], bebes: ["bebê", "bebês"],
+    participante: ["participante sem tipo informado", "participantes sem tipo informado"],
+    "participantes sem tipo informado": ["participante sem tipo informado", "participantes sem tipo informado"],
+  };
+  const names = labels[normalized];
+  return names ? `${count} ${names[count === 1 ? 0 : 1]}` : `${count} × ${original || "Participante"}`;
+};
+const summaryTime = (value: string) => {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!match) return "⚠️ *Sem horário informado*";
+  const hour = Number(match[1]);
+  const clocks = ["🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"];
+  return `${match[2] === "00" ? clocks[hour % 12] : "⏰"} *${String(hour).padStart(2, "0")}h${match[2] === "00" ? "" : match[2]}*`;
+};
+
+/** Same data drives the message and deduplication metadata; only brunch attendees are counted. */
+export const montarResumoDiarioReservasComDados = (
+  today: string,
+  reservations: DocumentoResumoBrunch[],
+  catalog: CatalogoResumoBrunch = CATALOGO_RESUMO_VAZIO,
+) => {
+  const data = buildBrunchDailyEntries(reservations, catalog);
+  const header = `🌿 *BRUNCH · VAGAFOGO*\n📅 ${formatDateBr(today)}`;
+  const metadata = { reservaIds: data.reservationIds, totalReservas: data.reservationIds.length, totalParticipantes: data.totalParticipants };
+  if (!data.entries.length) return { ...metadata, mensagem: `${header}\n\nNenhuma reserva de brunch confirmada para hoje.` };
+  const ordered = [...data.entries].sort((left, right) => {
+    const time = parseMinutes(left.time, 24 * 60) - parseMinutes(right.time, 24 * 60);
+    return time || right.total - left.total || left.name.localeCompare(right.name, "pt-BR");
+  });
+  const groups = new Map<string, typeof ordered>();
+  ordered.forEach((entry) => groups.set(entry.time, [...(groups.get(entry.time) ?? []), entry]));
+  let message = header;
+  let included = 0;
+  let limitReached = false;
+  for (const [time, entries] of groups) {
+    const groupTotal = entries.reduce((total, entry) => total + entry.total, 0);
+    const incompleteGroup = entries.some((entry) => !(entry.total > 0));
+    const groupFooter = `\n\n📊 Total ${incompleteGroup ? "informado no" : "do"} horário: ${pluralPeople(groupTotal)}`;
+    let group = `\n\n${SUMMARY_DIVIDER}\n${summaryTime(time)}\n${SUMMARY_DIVIDER}`;
+    let groupIncluded = 0;
+    for (const entry of entries) {
+      const composition = entry.categories.map((category) => labelParticipant(category.label, category.quantity)).join(" + ");
+      const quantity = entry.total > 0 ? pluralPeople(entry.total) : "Quantidade não informada";
+      const line = `\n👥 ${quantity} — ${summaryText(entry.name, 90) || "Nome não informado"}${composition ? `\n   ↳ ${composition}` : ""}`;
+      if (message.length + group.length + line.length + groupFooter.length + SUMMARY_FOOTER_BUDGET > SUMMARY_MAX_LENGTH) {
+        limitReached = true;
+        break;
+      }
+      group += line;
+      groupIncluded++;
+      included++;
+    }
+    if (groupIncluded) {
+      const remaining = entries.length - groupIncluded;
+      group += remaining ? `\n… ${remaining} reserva(s) deste horário no Admin.` : "";
+      message += group + groupFooter;
+    }
+    if (limitReached) break;
+  }
+  const omitted = ordered.length - included;
+  const missingQuantity = ordered.filter((entry) => !(entry.total > 0)).length;
+  const footer = [
+    `\n\n${SUMMARY_DIVIDER}`,
+    omitted ? `📋 ${omitted} registro(s) não exibido(s). Consulte a agenda completa no Admin.` : "",
+    `🌿 *${missingQuantity ? "TOTAL INFORMADO" : "TOTAL DO DIA"}: ${data.totalParticipants} ${data.totalParticipants === 1 ? "PESSOA" : "PESSOAS"}*`,
+    missingQuantity ? `⚠️ ${missingQuantity} registro(s) com quantidade não informada.` : "",
+    "Os totais já incluem todos os tipos de participantes.",
+  ].filter(Boolean).join("\n");
+  return { ...metadata, mensagem: `${message}${footer}` };
 };
 
 export const montarResumoDiarioReservas = (
   today: string,
-  reservations: FirebaseFirestore.QueryDocumentSnapshot[],
-) => {
-  const ordered = [...reservations].sort((left, right) => {
-    const timeDifference = parseMinutes(left.data().horario ?? left.data().Horario, 24 * 60)
-      - parseMinutes(right.data().horario ?? right.data().Horario, 24 * 60);
-    if (timeDifference) return timeDifference;
-    return clean(left.data().nome ?? left.data().Nome, 160)
-      .localeCompare(clean(right.data().nome ?? right.data().Nome, 160), "pt-BR");
-  });
-  const participants = ordered.reduce(
-    (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
-    0,
-  );
-  const header = [
-    `🌿 Resumo das reservas de hoje — ${formatDateBr(today)}`,
-    "",
-    `${ordered.length} reserva${ordered.length === 1 ? "" : "s"} • ${participants} participante${participants === 1 ? "" : "s"}`,
-    "",
-  ].join("\n");
-  if (ordered.length === 0) return `${header}Nenhuma reserva confirmada para hoje.`;
-
-  const groups = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
-  ordered.forEach((document) => {
-    const label = packageLabel(document.data());
-    const current = groups.get(label) ?? [];
-    current.push(document);
-    groups.set(label, current);
-  });
-
-  let message = header;
-  let includedLines = 0;
-  let reachedLimit = false;
-  for (const [label, documents] of groups.entries()) {
-    const groupParticipants = documents.reduce<number>(
-      (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
-      0,
-    );
-    const groupHeader = `*${label}* — ${documents.length} reserva${documents.length === 1 ? "" : "s"}, ${groupParticipants} pessoa${groupParticipants === 1 ? "" : "s"}\n`;
-    if ((message + groupHeader).length > 3850) {
-      reachedLimit = true;
-      break;
-    }
-    message += `${message.endsWith("\n\n") ? "" : "\n"}${groupHeader}`;
-
-    for (const document of documents) {
-      const reservation = document.data();
-      const time = clean(reservation.horario ?? reservation.Horario, 20) || "Sem horário";
-      const name = clean(reservation.nome ?? reservation.Nome, 90) || "Nome não informado";
-      const quantity = numberValue(reservation.participantes ?? reservation.Participantes);
-      const line = `• ${time} • ${quantity} pessoa${quantity === 1 ? "" : "s"} • ${name}\n`;
-      if ((message + line).length > 3850) {
-        reachedLimit = true;
-        break;
-      }
-      message += line;
-      includedLines += 1;
-    }
-    if (reachedLimit) break;
-  }
-  const omitted = ordered.length - includedLines;
-  if (omitted > 0) message += `\n… e mais ${omitted} reserva${omitted === 1 ? "" : "s"}. Consulte a agenda no Admin.`;
-  return message.trim();
-};
+  reservations: DocumentoResumoBrunch[],
+  catalog: CatalogoResumoBrunch = CATALOGO_RESUMO_VAZIO,
+) => montarResumoDiarioReservasComDados(today, reservations, catalog).mensagem;
 
 const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => {
   const db = obterFirestoreAdmin();
@@ -215,10 +240,25 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
   const nextAttempt = timestampMillis(current.data()?.proximaTentativaEm);
   if (nextAttempt > Date.now()) return false;
 
-  const reservations = await db.collection("reservas").where("data", "==", today).limit(500).get();
+  const [reservations, packageSnapshot, comboSnapshot, customerTypeSnapshot] = await Promise.all([
+    db.collection("reservas").where("data", "==", today).limit(500).get(),
+    db.collection("pacotes").get(),
+    db.collection("combos").get(),
+    db.collection("tipos_clientes").get(),
+  ]);
   const eligible = reservations.docs.filter((document) => confirmedReservationForSummary(document.data(), today));
-  const reservationIds = eligible.map((document) => document.id);
-  const message = variarMensagemAutomatica(montarResumoDiarioReservas(today, eligible), "resumo", today);
+  const summary = montarResumoDiarioReservasComDados(today, eligible, {
+    pacotes: packageSnapshot.docs.map((document) => ({
+      id: document.id, nome: String(document.data().nome ?? ""), tipo: String(document.data().tipo ?? ""),
+    })),
+    combos: comboSnapshot.docs.map((document) => ({
+      id: document.id, nome: String(document.data().nome ?? ""),
+      pacoteIds: Array.isArray(document.data().pacoteIds) ? document.data().pacoteIds.map(String) : [],
+    })),
+    tiposClientes: customerTypeSnapshot.docs.map((document) => ({ id: document.id, nome: String(document.data().nome ?? "") })),
+  });
+  const reservationIds = summary.reservaIds;
+  const message = summary.mensagem;
   const attempts = Number(current.data()?.tentativas ?? 0) + 1;
   const acquired = await db.runTransaction(async (transaction) => {
     const fresh = await transaction.get(summaryRef);
@@ -230,11 +270,9 @@ const processMorningSummary = async (config: FirebaseFirestore.DocumentData) => 
       status: "enviando",
       tentativas: attempts,
       reservaIds: reservationIds,
-      totalReservas: eligible.length,
-      totalParticipantes: eligible.reduce<number>(
-        (total, document) => total + numberValue(document.data().participantes ?? document.data().Participantes),
-        0,
-      ),
+      totalReservas: summary.totalReservas,
+      totalParticipantes: summary.totalParticipantes,
+      modelo: "brunch_por_horario_v2",
       mensagem: message,
       ultimaTentativaEm: FieldValue.serverTimestamp(),
       criadoEm: fresh.data()?.criadoEm ?? FieldValue.serverTimestamp(),
